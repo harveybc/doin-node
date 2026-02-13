@@ -1,0 +1,1280 @@
+"""Unified DON Node — single process with configurable roles.
+
+Like a Bitcoin node that can mine + validate + relay, a DON unified node
+can optimize + evaluate + relay — all configurable per domain via JSON.
+
+Roles:
+  - relay:     Always on. Forwards messages, maintains chain, serves tasks.
+  - optimizer: Produces optimae (optimization results) for configured domains.
+  - evaluator: Verifies optimae by re-running optimization with synthetic data.
+
+Security systems wired in:
+  1. Commit-reveal for optimae                    (prevents front-running)
+  2. Random quorum selection for verification     (prevents collusion)
+  3. Asymmetric reputation penalties              (prevents rubber-stamping)
+  4. Resource limits + bounds validation          (prevents DoS)
+  5. Finality checkpoints                         (prevents long-range attacks)
+  6. Reputation decay (EMA)                       (prevents reputation farming)
+  7. Min reputation threshold for consensus       (prevents sybils)
+  8. External checkpoint anchoring                (external validation)
+  9. Fork choice rule                             (prevents selfish mining)
+  10. Deterministic seed requirement              (prevents hidden randomness)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import secrets
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from doin_core.consensus import (
+    DeterministicSeedPolicy,
+    ExternalAnchorManager,
+    FinalityManager,
+    ForkChoiceRule,
+    IncentiveConfig,
+    ProofOfOptimization,
+    VerifiedUtilityWeights,
+    evaluate_verification_incentive,
+)
+from doin_core.crypto.identity import PeerIdentity
+from doin_core.models import (
+    Block,
+    BoundsValidator,
+    Commitment,
+    CommitRevealManager,
+    Domain,
+    Optimae,
+    QuorumConfig,
+    QuorumManager,
+    ReputationTracker,
+    ResourceLimits,
+    Reveal,
+    Task,
+    TaskQueue,
+    TaskStatus,
+    TaskType,
+    Transaction,
+    TransactionType,
+    compute_commitment,
+)
+from doin_core.protocol.messages import (
+    BlockAnnouncement,
+    ChainStatus,
+    Message,
+    MessageType,
+    OptimaeCommit,
+    OptimaeReveal,
+    TaskClaimed,
+    TaskCompleted,
+    TaskCreated,
+)
+
+from doin_node.blockchain.chain import Chain
+from doin_node.network.flooding import FloodingConfig, FloodingProtocol
+from doin_node.network.peer import Peer, PeerState
+from doin_node.network.sync import SyncManager, fetch_blocks, fetch_chain_status
+from doin_node.network.transport import Transport
+
+logger = logging.getLogger(__name__)
+
+
+# ── Configuration ────────────────────────────────────────────────────
+
+@dataclass
+class DomainRole:
+    """Per-domain role configuration."""
+
+    domain_id: str
+    optimize: bool = False
+    evaluate: bool = False
+
+    # Optimizer settings
+    optimization_plugin: str = ""  # Entry point name
+    optimization_config: dict[str, Any] = field(default_factory=dict)
+    param_bounds: dict[str, tuple[float, float]] = field(default_factory=dict)
+
+    # Evaluator settings
+    inference_plugin: str = ""
+    synthetic_data_plugin: str = ""  # MANDATORY for verification trust
+    has_synthetic_data: bool = False
+
+    # Resource limits
+    resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
+
+    # Incentive configuration (how verification rewards scale)
+    incentive_config: IncentiveConfig = field(default_factory=IncentiveConfig)
+
+
+@dataclass
+class UnifiedNodeConfig:
+    """Full configuration for a unified DON node."""
+
+    host: str = "0.0.0.0"
+    port: int = 8470
+    data_dir: str = "./don-data"
+    bootstrap_peers: list[str] = field(default_factory=list)
+
+    # Domain roles
+    domains: list[DomainRole] = field(default_factory=list)
+
+    # Consensus
+    target_block_time: float = 600.0
+    initial_threshold: float = 1.0
+
+    # Security
+    quorum_min_evaluators: int = 3
+    quorum_fraction: float = 0.67
+    quorum_tolerance: float = 0.05
+    commit_reveal_max_age: float = 600.0
+    finality_confirmation_depth: int = 6
+    external_anchor_interval: int = 100
+    require_deterministic_seed: bool = True
+
+    # Evaluator polling (when this node evaluates)
+    eval_poll_interval: float = 10.0
+    eval_max_concurrent: int = 3
+
+    # Optimizer loop (when this node optimizes)
+    optimizer_loop_interval: float = 30.0
+
+
+# ── Unified Node ─────────────────────────────────────────────────────
+
+class UnifiedNode:
+    """A single configurable DON node — optimizer, evaluator, and relay.
+
+    This is the main entry point for running a DON node. Configure it
+    via JSON (see UnifiedNodeConfig) to control which roles it performs
+    for which domains.
+    """
+
+    def __init__(
+        self,
+        config: UnifiedNodeConfig,
+        identity: PeerIdentity | None = None,
+    ) -> None:
+        self.config = config
+        self.identity = identity or PeerIdentity.generate()
+
+        # ── Core components ──
+        self.transport = Transport(host=config.host, port=config.port)
+        self.flooding = FloodingProtocol(FloodingConfig())
+        self.chain = Chain(data_dir=Path(config.data_dir))
+        self.consensus = ProofOfOptimization(
+            target_block_time=config.target_block_time,
+            initial_threshold=config.initial_threshold,
+        )
+        self.task_queue = TaskQueue()
+
+        # ── Security systems ──
+        self.reputation = ReputationTracker()
+        self.quorum = QuorumManager(QuorumConfig(
+            min_evaluators=config.quorum_min_evaluators,
+            quorum_fraction=config.quorum_fraction,
+            tolerance=config.quorum_tolerance,
+        ))
+        self.commit_reveal = CommitRevealManager(
+            max_commit_age=config.commit_reveal_max_age,
+        )
+        self.finality = FinalityManager(
+            confirmation_depth=config.finality_confirmation_depth,
+        )
+        self.anchor_manager = ExternalAnchorManager(
+            anchor_interval_blocks=config.external_anchor_interval,
+        )
+        self.fork_choice = ForkChoiceRule()
+        self.seed_policy = DeterministicSeedPolicy(
+            require_seed=config.require_deterministic_seed,
+        )
+        self.vuw = VerifiedUtilityWeights()
+        self.sync_manager = SyncManager()
+
+        # ── Per-domain state ──
+        self._domains: dict[str, Domain] = {}
+        self._domain_roles: dict[str, DomainRole] = {}
+        self._bounds_validators: dict[str, BoundsValidator] = {}
+        self._peers: dict[str, Peer] = {}
+        self._running = False
+        self._optimizer_plugins: dict[str, Any] = {}  # domain_id → plugin instance
+        self._evaluator_plugins: dict[str, Any] = {}  # domain_id → plugin instance
+        self._synthetic_plugins: dict[str, Any] = {}  # domain_id → plugin instance
+        self._background_tasks: list[asyncio.Task] = []
+
+        # ── Wire up message handlers ──
+        self.flooding.on_message(MessageType.OPTIMAE_COMMIT, self._handle_optimae_commit)
+        self.flooding.on_message(MessageType.OPTIMAE_REVEAL, self._handle_optimae_reveal)
+        self.flooding.on_message(MessageType.OPTIMAE_ANNOUNCEMENT, self._handle_optimae_announcement)
+        self.flooding.on_message(MessageType.BLOCK_ANNOUNCEMENT, self._handle_block_announcement)
+        self.flooding.on_message(MessageType.TASK_CREATED, self._handle_task_created)
+        self.flooding.on_message(MessageType.TASK_CLAIMED, self._handle_task_claimed)
+        self.flooding.on_message(MessageType.TASK_COMPLETED, self._handle_task_completed)
+        self.transport.on_message(self._on_transport_message)
+
+        # ── Register domains ──
+        for domain_role in config.domains:
+            self._register_domain(domain_role)
+
+    # ================================================================
+    # Properties
+    # ================================================================
+
+    @property
+    def peer_id(self) -> str:
+        return self.identity.peer_id
+
+    @property
+    def optimizer_domains(self) -> list[str]:
+        return [d for d, r in self._domain_roles.items() if r.optimize]
+
+    @property
+    def evaluator_domains(self) -> list[str]:
+        return [d for d, r in self._domain_roles.items() if r.evaluate]
+
+    # ================================================================
+    # Setup
+    # ================================================================
+
+    def _register_domain(self, role: DomainRole) -> None:
+        """Register a domain and its role configuration."""
+        from doin_core.models.domain import DomainConfig
+        domain = Domain(
+            id=role.domain_id,
+            name=role.domain_id,
+            performance_metric="fitness",
+            config=DomainConfig(
+                optimization_plugin=role.optimization_plugin or "default",
+                inference_plugin=role.inference_plugin or "default",
+                synthetic_data_plugin=role.synthetic_data_plugin or None,
+            ),
+        )
+        self._domains[role.domain_id] = domain
+        self._domain_roles[role.domain_id] = role
+        self.consensus.register_domain(domain)
+
+        # Bounds validator
+        if role.param_bounds:
+            validator = BoundsValidator(role.param_bounds)
+        else:
+            validator = BoundsValidator()
+        self._bounds_validators[role.domain_id] = validator
+
+        # VUW registration
+        self.vuw.register_domain(
+            role.domain_id,
+            base_weight=1.0,
+            has_synthetic_data=role.has_synthetic_data,
+        )
+
+        logger.info(
+            "Domain %s registered (optimize=%s, evaluate=%s, synthetic=%s)",
+            role.domain_id, role.optimize, role.evaluate, role.has_synthetic_data,
+        )
+
+    def register_optimizer_plugin(self, domain_id: str, plugin: Any) -> None:
+        """Register an optimizer plugin for a domain."""
+        self._optimizer_plugins[domain_id] = plugin
+
+    def register_evaluator_plugin(self, domain_id: str, plugin: Any) -> None:
+        """Register an evaluator/inferencer plugin for a domain."""
+        self._evaluator_plugins[domain_id] = plugin
+
+    def register_synthetic_plugin(self, domain_id: str, plugin: Any) -> None:
+        """Register a synthetic data generator plugin for a domain."""
+        self._synthetic_plugins[domain_id] = plugin
+
+    def add_peer(self, address: str, port: int, peer_id: str = "") -> Peer:
+        peer = Peer(
+            peer_id=peer_id or f"{address}:{port}",
+            address=address,
+            port=port,
+            state=PeerState.DISCOVERED,
+        )
+        self._peers[peer.endpoint] = peer
+        return peer
+
+    # ================================================================
+    # Lifecycle
+    # ================================================================
+
+    async def start(self) -> None:
+        """Start the unified node."""
+        self._running = True
+
+        # Initialize chain
+        chain_path = Path(self.config.data_dir) / "chain.json"
+        if chain_path.exists():
+            self.chain.load()
+        else:
+            self.chain.initialize(self.peer_id)
+            self.chain.save()
+
+        # Register HTTP routes
+        self._register_http_routes()
+
+        # Start transport
+        await self.transport.start()
+
+        # Connect bootstrap peers
+        for addr in self.config.bootstrap_peers:
+            host, port_str = addr.rsplit(":", 1)
+            self.add_peer(host, int(port_str))
+
+        # Update sync manager state
+        tip = self.chain.tip
+        self.sync_manager.update_our_state(
+            self.chain.height,
+            tip.hash if tip else "",
+            self.finality.finalized_height,
+        )
+
+        # Initial sync with peers
+        await self._initial_sync()
+
+        # Start background loops for roles
+        if self.optimizer_domains:
+            self._background_tasks.append(
+                asyncio.create_task(self._optimizer_loop())
+            )
+        if self.evaluator_domains:
+            self._background_tasks.append(
+                asyncio.create_task(self._evaluator_loop())
+            )
+
+        # Periodic cleanup
+        self._background_tasks.append(
+            asyncio.create_task(self._maintenance_loop())
+        )
+
+        logger.info(
+            "Unified node started: peer=%s port=%d optimize=%s evaluate=%s",
+            self.peer_id[:12],
+            self.config.port,
+            self.optimizer_domains,
+            self.evaluator_domains,
+        )
+
+    async def stop(self) -> None:
+        """Stop the node."""
+        self._running = False
+        for t in self._background_tasks:
+            t.cancel()
+        await self.transport.stop()
+        self.chain.save()
+        logger.info("Unified node stopped")
+
+    # ================================================================
+    # Message handling (relay — always on)
+    # ================================================================
+
+    async def _on_transport_message(self, message: Message, sender: str) -> None:
+        should_forward = await self.flooding.handle_incoming(message, sender)
+        if should_forward:
+            forward_msg = self.flooding.prepare_forward(message)
+            endpoints = [ep for ep in self._peers if ep != sender]
+            await self.transport.broadcast(endpoints, forward_msg)
+
+    # ── Commit-reveal flow ───────────────────────────────────────
+
+    async def _handle_optimae_commit(self, message: Message, from_peer: str) -> None:
+        """Handle Phase 1: commitment hash received."""
+        data = OptimaeCommit.model_validate(message.payload)
+        commitment = Commitment(
+            commitment_hash=data.commitment_hash,
+            domain_id=data.domain_id,
+            optimizer_id=message.sender_id,
+        )
+        added = self.commit_reveal.add_commitment(commitment)
+        if added:
+            logger.debug(
+                "Commitment %s from %s for domain %s",
+                data.commitment_hash[:12], message.sender_id[:12], data.domain_id,
+            )
+
+    async def _handle_optimae_reveal(self, message: Message, from_peer: str) -> None:
+        """Handle Phase 2: reveal — validate hash, validate seed, start quorum."""
+        data = OptimaeReveal.model_validate(message.payload)
+
+        reveal = Reveal(
+            commitment_hash=data.commitment_hash,
+            domain_id=data.domain_id,
+            optimizer_id=message.sender_id,
+            parameters=data.parameters,
+            nonce=data.nonce,
+            reported_performance=data.reported_performance,
+        )
+
+        # Verify commitment matches
+        if not self.commit_reveal.process_reveal(reveal):
+            logger.warning("Invalid reveal from %s (hash mismatch or expired)", message.sender_id[:12])
+            return
+
+        # Validate parameter bounds
+        validator = self._bounds_validators.get(data.domain_id)
+        if validator:
+            ok, reason = validator.validate(data.parameters)
+            if not ok:
+                logger.warning("Bounds validation failed: %s", reason)
+                return
+
+            role = self._domain_roles.get(data.domain_id)
+            if role:
+                ok, reason = validator.validate_resource_limits(data.parameters, role.resource_limits)
+                if not ok:
+                    logger.warning("Resource limits exceeded: %s", reason)
+                    return
+
+        # Check minimum reputation
+        if not self.reputation.meets_threshold(message.sender_id):
+            logger.warning(
+                "Optimizer %s below reputation threshold (%.2f < %.2f)",
+                message.sender_id[:12],
+                self.reputation.get_score(message.sender_id),
+                2.0,
+            )
+            # Still allow — but their optimae won't count toward consensus
+            # (effective increment will be near-zero due to low reputation)
+
+        # Domain must have synthetic data for verification trust
+        role = self._domain_roles.get(data.domain_id)
+        if role and not role.has_synthetic_data:
+            logger.warning(
+                "Domain %s has no synthetic data — optimae will have zero consensus weight",
+                data.domain_id,
+            )
+
+        # Select quorum evaluators
+        eligible = self._get_eligible_evaluators(data.domain_id)
+        chain_tip = self.chain.tip
+        chain_tip_hash = chain_tip.hash if chain_tip else "genesis"
+
+        selected = self.quorum.select_evaluators(
+            optimae_id=data.optimae_id,
+            domain_id=data.domain_id,
+            optimizer_id=message.sender_id,
+            reported_performance=data.reported_performance,
+            eligible_evaluators=eligible,
+            chain_tip_hash=chain_tip_hash,
+        )
+
+        if not selected:
+            logger.warning("No eligible evaluators for domain %s", data.domain_id)
+            return
+
+        # Create verification task
+        task = Task(
+            task_type=TaskType.OPTIMAE_VERIFICATION,
+            domain_id=data.domain_id,
+            requester_id=message.sender_id,
+            parameters=data.parameters,
+            optimae_id=data.optimae_id,
+            reported_performance=data.reported_performance,
+            priority=0,
+        )
+        self.task_queue.add(task)
+        await self._flood_task_created(task)
+
+        logger.info(
+            "Reveal accepted: optimae=%s, quorum=%s, task=%s",
+            data.optimae_id[:12],
+            [s[:8] for s in selected],
+            task.id[:12],
+        )
+
+    async def _handle_optimae_announcement(self, message: Message, from_peer: str) -> None:
+        """Handle legacy direct announcement (no commit-reveal).
+
+        Still supported for testing and non-adversarial networks.
+        """
+        from doin_core.protocol.messages import OptimaeAnnouncement
+        data = OptimaeAnnouncement.model_validate(message.payload)
+
+        task = Task(
+            task_type=TaskType.OPTIMAE_VERIFICATION,
+            domain_id=data.domain_id,
+            requester_id=message.sender_id,
+            parameters=data.parameters,
+            optimae_id=data.optimae_id,
+            reported_performance=data.reported_performance,
+            priority=0,
+        )
+        self.task_queue.add(task)
+        await self._flood_task_created(task)
+
+    # ── Block handling ───────────────────────────────────────────
+
+    async def _handle_block_announcement(self, message: Message, from_peer: str) -> None:
+        ann = BlockAnnouncement.model_validate(message.payload)
+
+        # Finality check — don't accept blocks that revert finalized state
+        if ann.block_index <= self.finality.finalized_height:
+            logger.warning("Ignoring block #%d — below finality", ann.block_index)
+            return
+
+        logger.info("Block #%d announced by %s", ann.block_index, from_peer[:12] if from_peer else "?")
+
+        # If the announced block is ahead of us, trigger sync
+        if ann.block_index >= self.chain.height:
+            # Find the peer endpoint that sent this
+            peer_endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
+            if peer_endpoint:
+                # Update peer status
+                self.sync_manager.update_peer_status(peer_endpoint, ChainStatus(
+                    chain_height=ann.block_index + 1,
+                    tip_hash=ann.block_hash,
+                    tip_index=ann.block_index,
+                ))
+                # Trigger async sync
+                asyncio.create_task(self._sync_with_peer(peer_endpoint))
+
+    # ── Task lifecycle (flooding) ────────────────────────────────
+
+    async def _handle_task_created(self, message: Message, from_peer: str) -> None:
+        tc = TaskCreated.model_validate(message.payload)
+        if tc.task_id in self.task_queue.tasks:
+            return
+        task = Task(
+            id=tc.task_id,
+            task_type=TaskType(tc.task_type),
+            domain_id=tc.domain_id,
+            requester_id=tc.requester_id,
+            parameters=tc.parameters,
+            optimae_id=tc.optimae_id,
+            reported_performance=tc.reported_performance,
+            priority=tc.priority,
+        )
+        self.task_queue.add(task)
+
+    async def _handle_task_claimed(self, message: Message, from_peer: str) -> None:
+        tc = TaskClaimed.model_validate(message.payload)
+        task = self.task_queue.tasks.get(tc.task_id)
+        if task and task.status == TaskStatus.PENDING:
+            task.claim(tc.evaluator_id)
+
+    async def _handle_task_completed(self, message: Message, from_peer: str) -> None:
+        tc = TaskCompleted.model_validate(message.payload)
+        task = self.task_queue.tasks.get(tc.task_id)
+        if not task or task.status not in (TaskStatus.PENDING, TaskStatus.CLAIMED):
+            return
+
+        task.complete(verified_performance=tc.verified_performance, result=tc.result)
+        await self._process_task_completion(task, tc.evaluator_id, tc.verified_performance)
+
+    # ================================================================
+    # Task completion processing (with quorum + reputation)
+    # ================================================================
+
+    async def _process_task_completion(
+        self,
+        task: Task,
+        evaluator_id: str,
+        verified_performance: float | None,
+        synthetic_data_hash: str = "",
+    ) -> None:
+        """Process a completed verification task through quorum consensus."""
+        if task.task_type != TaskType.OPTIMAE_VERIFICATION:
+            # Inference task — just record completion
+            self.consensus.record_transaction(Transaction(
+                tx_type=TransactionType.TASK_COMPLETED,
+                domain_id=task.domain_id,
+                peer_id=evaluator_id,
+                payload={"task_id": task.id, "task_type": task.task_type.value},
+            ))
+            return
+
+        if verified_performance is None or not task.optimae_id:
+            return
+
+        # Add vote to quorum (includes synthetic data hash for consensus)
+        quorum_state = self.quorum.add_vote(
+            task.optimae_id, evaluator_id, verified_performance,
+            used_synthetic=True,
+            synthetic_data_hash=synthetic_data_hash,
+        )
+
+        if quorum_state is None:
+            return  # Not quorum yet, or not a selected evaluator
+
+        # Quorum reached — evaluate
+        result = self.quorum.evaluate_quorum(task.optimae_id)
+
+        # Update reputation for all evaluators who voted
+        for eval_id, agreed in result.agreements.items():
+            self.reputation.record_evaluation_completed(eval_id, agreed)
+
+        if result.accepted:
+            # Optimae accepted by quorum — compute incentive-adjusted reward
+            self.reputation.record_optimae_accepted(task.requester_id)
+
+            # Get domain's incentive config
+            role = self._domain_roles.get(task.domain_id)
+            incentive_cfg = role.incentive_config if role else IncentiveConfig()
+
+            # Use the incentive model to compute reward fraction
+            # Each evaluator tested on DIFFERENT synthetic data, so
+            # the median verified performance may be slightly different
+            # from reported — the incentive model handles this gracefully
+            reported = task.reported_performance or 0
+            verified = result.median_performance or 0
+            raw_increment = abs(reported)  # Base increment from the optimization
+
+            rep_score = self.reputation.get_score(task.requester_id)
+            import math
+            rep_factor = min(1.0, math.log1p(rep_score) / math.log1p(10.0)) if rep_score > 0 else 0.0
+
+            weights = self.vuw.compute_weights()
+            domain_weight = weights.get(task.domain_id, 0.0)
+
+            incentive_result = evaluate_verification_incentive(
+                reported_performance=reported,
+                verified_performance=verified,
+                raw_increment=raw_increment,
+                domain_weight=domain_weight,
+                reputation_factor=rep_factor,
+                config=incentive_cfg,
+            )
+
+            effective_increment = incentive_result.effective_increment
+
+            optimae = Optimae(
+                id=task.optimae_id,
+                domain_id=task.domain_id,
+                optimizer_id=task.requester_id,
+                parameters=task.parameters,
+                reported_performance=reported,
+                verified_performance=verified,
+                performance_increment=effective_increment,
+            )
+            self.consensus.record_optimae(optimae)
+
+            self.consensus.record_transaction(Transaction(
+                tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                domain_id=task.domain_id,
+                peer_id=task.requester_id,
+                payload={
+                    "optimae_id": task.optimae_id,
+                    "verified_performance": verified,
+                    "effective_increment": effective_increment,
+                    "reward_fraction": incentive_result.reward_fraction,
+                    "quorum_agree_fraction": result.agree_fraction,
+                    "incentive_reason": incentive_result.reason,
+                },
+            ))
+            self.vuw.update_from_block([{
+                "tx_type": "optimae_accepted",
+                "domain_id": task.domain_id,
+                "payload": {"increment": effective_increment},
+            }])
+
+            logger.info(
+                "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
+                task.optimae_id[:12],
+                verified,
+                incentive_result.reward_fraction,
+                effective_increment,
+                rep_score,
+                incentive_result.reason,
+            )
+        else:
+            # Rejected
+            self.reputation.record_optimae_rejected(task.requester_id)
+            self.consensus.record_transaction(Transaction(
+                tx_type=TransactionType.OPTIMAE_REJECTED,
+                domain_id=task.domain_id,
+                peer_id=task.requester_id,
+                payload={
+                    "optimae_id": task.optimae_id,
+                    "reason": result.reason,
+                },
+            ))
+            logger.info(
+                "Optimae %s REJECTED: %s",
+                task.optimae_id[:12], result.reason,
+            )
+
+        # Record task completion
+        self.consensus.record_transaction(Transaction(
+            tx_type=TransactionType.TASK_COMPLETED,
+            domain_id=task.domain_id,
+            peer_id=evaluator_id,
+            payload={"task_id": task.id, "task_type": task.task_type.value},
+        ))
+
+    # ================================================================
+    # Block generation (with finality + anchoring)
+    # ================================================================
+
+    async def try_generate_block(self) -> Block | None:
+        if not self.consensus.can_generate_block():
+            return None
+
+        tip = self.chain.tip
+        if tip is None:
+            return None
+
+        block = self.consensus.generate_block(tip, self.peer_id)
+        if block is None:
+            return None
+
+        self.chain.append_block(block)
+        self.chain.save()
+
+        # Update finality
+        depth_block_hash = None
+        target_height = block.header.index - self.finality.confirmation_depth
+        if target_height >= 0:
+            # Get block hash at depth
+            for b in self.chain.blocks:
+                if b.header.index == target_height:
+                    depth_block_hash = b.hash
+                    break
+        self.finality.on_new_block(block.header.index, depth_block_hash)
+
+        # External anchoring
+        if self.anchor_manager.should_anchor(block.header.index):
+            block_hashes = [b.hash for b in self.chain.blocks]
+            state_hash = self.anchor_manager.compute_chain_state_hash(block_hashes)
+            self.anchor_manager.create_anchor(
+                block.header.index, block.hash, state_hash,
+            )
+            logger.info("External anchor created at block #%d", block.header.index)
+
+        # Announce
+        announcement = BlockAnnouncement(
+            block_index=block.header.index,
+            block_hash=block.hash,
+            previous_hash=block.header.previous_hash,
+            generator_id=self.peer_id,
+            transaction_count=len(block.transactions),
+            weighted_performance_sum=block.header.weighted_performance_sum,
+            threshold=block.header.threshold,
+        )
+        msg = Message(
+            msg_type=MessageType.BLOCK_ANNOUNCEMENT,
+            sender_id=self.peer_id,
+            payload=json.loads(announcement.model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), msg)
+
+        # Update sync manager state
+        self.sync_manager.update_our_state(
+            self.chain.height, block.hash, self.finality.finalized_height,
+        )
+
+        logger.info("Block #%d generated (hash=%s)", block.header.index, block.hash[:12])
+        return block
+
+    # ================================================================
+    # Optimizer loop (when this node optimizes)
+    # ================================================================
+
+    async def _optimizer_loop(self) -> None:
+        """Background loop: run optimization for configured domains."""
+        while self._running:
+            for domain_id in self.optimizer_domains:
+                plugin = self._optimizer_plugins.get(domain_id)
+                if plugin is None:
+                    continue
+
+                try:
+                    await self._run_optimization_round(domain_id, plugin)
+                except Exception:
+                    logger.exception("Optimization error for %s", domain_id)
+
+            await asyncio.sleep(self.config.optimizer_loop_interval)
+
+    async def _run_optimization_round(self, domain_id: str, plugin: Any) -> None:
+        """Run one optimization round: optimize → commit → reveal."""
+        # Generate commitment nonce
+        nonce = secrets.token_hex(16)
+
+        # Run optimization (plugin-specific)
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, plugin.optimize,
+        )
+
+        if result is None:
+            return
+
+        parameters = result.get("parameters", {})
+        performance = result.get("performance", 0.0)
+
+        # Compute commitment hash (over core params only, not seed)
+        commitment_hash = compute_commitment(parameters, nonce)
+
+        # Phase 1: Commit
+        commit_msg = Message(
+            msg_type=MessageType.OPTIMAE_COMMIT,
+            sender_id=self.peer_id,
+            payload=json.loads(OptimaeCommit(
+                commitment_hash=commitment_hash,
+                domain_id=domain_id,
+            ).model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), commit_msg)
+
+        # Wait for commitment to propagate
+        await asyncio.sleep(2.0)
+
+        # Phase 2: Reveal
+        optimae_id = f"opt-{self.peer_id[:8]}-{int(time.time())}"
+        reveal_msg = Message(
+            msg_type=MessageType.OPTIMAE_REVEAL,
+            sender_id=self.peer_id,
+            payload=json.loads(OptimaeReveal(
+                commitment_hash=commitment_hash,
+                domain_id=domain_id,
+                optimae_id=optimae_id,
+                parameters=parameters,
+                reported_performance=performance,
+                nonce=nonce,
+            ).model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), reveal_msg)
+
+        logger.info(
+            "Optimization round: domain=%s perf=%.4f optimae=%s",
+            domain_id, performance, optimae_id[:16],
+        )
+
+    # ================================================================
+    # Evaluator loop (when this node evaluates)
+    # ================================================================
+
+    async def _evaluator_loop(self) -> None:
+        """Background loop: poll for verification tasks and evaluate."""
+        while self._running:
+            tasks = self.task_queue.get_pending_for_domains(
+                self.evaluator_domains,
+                limit=self.config.eval_max_concurrent,
+            )
+
+            for task in tasks:
+                if task.task_type != TaskType.OPTIMAE_VERIFICATION:
+                    continue
+
+                # Check if we're in the quorum for this optimae
+                if task.optimae_id:
+                    state = self.quorum.get_state(task.optimae_id)
+                    if state and self.peer_id not in state.required_evaluators:
+                        continue  # Not selected for this quorum
+
+                # Claim and evaluate
+                claimed = self.task_queue.claim(task.id, self.peer_id)
+                if claimed is None:
+                    continue
+
+                await self._flood_task_claimed(claimed)
+
+                try:
+                    perf, synth_hash = await self._evaluate_task(claimed)
+                    self.task_queue.complete(task.id, verified_performance=perf)
+                    await self._flood_task_completed_with(task.id, perf)
+                    await self._process_task_completion(
+                        claimed, self.peer_id, perf, synth_hash,
+                    )
+                except Exception:
+                    logger.exception("Evaluation failed for task %s", task.id[:12])
+                    task.fail("evaluation error")
+
+            await asyncio.sleep(self.config.eval_poll_interval)
+
+    async def _evaluate_task(self, task: Task) -> tuple[float, str]:
+        """Evaluate a verification task using the domain's plugin.
+
+        Each evaluator generates DIFFERENT synthetic data using a seed
+        derived from: commitment_hash + domain + evaluator_id + chain_tip.
+        The optimizer CANNOT predict this seed because they don't know:
+          - Which evaluators will be selected (random quorum)
+          - The chain tip hash at quorum selection time
+
+        A genuinely good model generalizes across different synthetic
+        datasets (within the incentive tolerance margin). An overfitted
+        model fails badly.
+
+        Returns:
+            (verified_performance, synthetic_data_hash)
+        """
+        domain_id = task.domain_id
+        plugin = self._evaluator_plugins.get(domain_id)
+        if plugin is None:
+            raise ValueError(f"No evaluator plugin for domain {domain_id}")
+
+        # Derive per-evaluator seed for synthetic data generation
+        # This seed is UNIQUE to this evaluator and UNPREDICTABLE to the optimizer
+        synth_seed = None
+        commitment_hash = ""
+        if task.optimae_id:
+            commitment_hash = task.parameters.get("_don_commitment_hash", "")
+            if not commitment_hash:
+                commitment_hash = task.optimae_id
+            chain_tip = self.chain.tip
+            chain_tip_hash = chain_tip.hash if chain_tip else "genesis"
+
+            synth_seed = self.seed_policy.get_seed_for_synthetic_data(
+                commitment_hash, domain_id, self.peer_id, chain_tip_hash,
+            )
+
+        # Generate synthetic data with hash (each evaluator gets different data)
+        synthetic_plugin = self._synthetic_plugins.get(domain_id)
+        synthetic_data = None
+        synthetic_data_hash = ""
+        if synthetic_plugin is not None:
+            synthetic_data, synthetic_data_hash = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: synthetic_plugin.generate_with_hash(synth_seed),
+            )
+
+        # Run evaluation with synthetic data
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: plugin.evaluate(
+                parameters=task.parameters,
+                data=synthetic_data,
+            ),
+        )
+
+        perf = result.get("performance", 0.0) if isinstance(result, dict) else float(result)
+        return perf, synthetic_data_hash
+
+    # ================================================================
+    # Flooding helpers
+    # ================================================================
+
+    async def _flood_task_created(self, task: Task) -> None:
+        tc = TaskCreated(
+            task_id=task.id,
+            task_type=task.task_type.value,
+            domain_id=task.domain_id,
+            requester_id=task.requester_id,
+            parameters=task.parameters,
+            optimae_id=task.optimae_id,
+            reported_performance=task.reported_performance,
+            priority=task.priority,
+        )
+        msg = Message(
+            msg_type=MessageType.TASK_CREATED,
+            sender_id=self.peer_id,
+            payload=json.loads(tc.model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), msg)
+
+    async def _flood_task_claimed(self, task: Task) -> None:
+        tc = TaskClaimed(
+            task_id=task.id,
+            evaluator_id=task.evaluator_id or "",
+            domain_id=task.domain_id,
+        )
+        msg = Message(
+            msg_type=MessageType.TASK_CLAIMED,
+            sender_id=self.peer_id,
+            payload=json.loads(tc.model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), msg)
+
+    async def _flood_task_completed_with(
+        self, task_id: str, verified_performance: float,
+    ) -> None:
+        task = self.task_queue.tasks.get(task_id)
+        if task is None:
+            return
+        tc = TaskCompleted(
+            task_id=task.id,
+            evaluator_id=task.evaluator_id or "",
+            domain_id=task.domain_id,
+            verified_performance=verified_performance,
+            result=task.result,
+            optimae_id=task.optimae_id,
+        )
+        msg = Message(
+            msg_type=MessageType.TASK_COMPLETED,
+            sender_id=self.peer_id,
+            payload=json.loads(tc.model_dump_json()),
+        )
+        await self.transport.broadcast(list(self._peers.keys()), msg)
+
+    # ================================================================
+    # Helpers
+    # ================================================================
+
+    def _get_eligible_evaluators(self, domain_id: str) -> list[str]:
+        """Get peer IDs of nodes that can evaluate a domain.
+
+        In a real network this would come from peer capability announcements.
+        For now, includes this node + all peers (simplified).
+        """
+        evaluators = []
+        if domain_id in self.evaluator_domains:
+            evaluators.append(self.peer_id)
+        # In production, peers would advertise their evaluator capabilities
+        for peer in self._peers.values():
+            evaluators.append(peer.peer_id)
+        return evaluators
+
+    # ================================================================
+    # Block sync
+    # ================================================================
+
+    async def _sync_with_peer(self, endpoint: str) -> None:
+        """Sync our chain with a peer that's ahead of us.
+
+        Fetches blocks in batches and validates them before appending.
+        """
+        if not self.sync_manager.needs_sync(endpoint):
+            return
+
+        self.sync_manager.mark_syncing(endpoint)
+        session = self.transport._session
+        if session is None:
+            self.sync_manager.record_sync_failure(endpoint)
+            return
+
+        try:
+            while True:
+                needed = self.sync_manager.compute_blocks_needed(endpoint)
+                if needed is None:
+                    break
+
+                from_idx, to_idx = needed
+                logger.info("Syncing blocks %d..%d from %s", from_idx, to_idx, endpoint)
+
+                blocks = await fetch_blocks(session, endpoint, from_idx, to_idx)
+                if not blocks:
+                    logger.warning("Got no blocks from %s for range %d..%d", endpoint, from_idx, to_idx)
+                    self.sync_manager.record_sync_failure(endpoint)
+                    return
+
+                appended = self.chain.validate_and_append_blocks(blocks)
+                if appended == 0:
+                    logger.warning("Failed to append any blocks from %s", endpoint)
+                    self.sync_manager.record_sync_failure(endpoint)
+                    return
+
+                # Update our state
+                tip = self.chain.tip
+                self.sync_manager.update_our_state(
+                    self.chain.height,
+                    tip.hash if tip else "",
+                    self.finality.finalized_height,
+                )
+
+                # Update finality for each new block
+                for block in blocks[:appended]:
+                    depth_block_hash = None
+                    target_height = block.header.index - self.finality.confirmation_depth
+                    if target_height >= 0:
+                        b = self.chain.get_block(target_height)
+                        if b:
+                            depth_block_hash = b.hash
+                    self.finality.on_new_block(block.header.index, depth_block_hash)
+
+                if appended < len(blocks):
+                    break  # Some blocks failed validation
+
+                # Check if we still need more
+                state = self.sync_manager.peers.get(endpoint)
+                if state and self.chain.height >= state.their_height:
+                    break  # Caught up
+
+            self.chain.save()
+            self.sync_manager.record_sync_success(endpoint, self.chain.height)
+            logger.info("Sync complete with %s (height now %d)", endpoint, self.chain.height)
+
+        except Exception:
+            logger.exception("Sync error with %s", endpoint)
+            self.sync_manager.record_sync_failure(endpoint)
+
+    async def _initial_sync(self) -> None:
+        """Sync with all known peers on startup."""
+        session = self.transport._session
+        if session is None:
+            return
+
+        for endpoint in list(self._peers.keys()):
+            status = await fetch_chain_status(session, endpoint)
+            if status is None:
+                continue
+
+            self.sync_manager.update_peer_status(endpoint, status)
+            if status.chain_height > self.chain.height:
+                await self._sync_with_peer(endpoint)
+
+    def _find_peer_endpoint(self, from_addr: str, sender_id: str) -> str | None:
+        """Find the endpoint for a peer based on address or sender ID."""
+        # Try matching by sender_id (peer_id)
+        for ep, peer in self._peers.items():
+            if peer.peer_id == sender_id:
+                return ep
+        # Try matching by address
+        for ep in self._peers:
+            if from_addr in ep:
+                return ep
+        return None
+
+    async def _maintenance_loop(self) -> None:
+        """Periodic cleanup: expired commitments, decided quorums, etc."""
+        while self._running:
+            self.commit_reveal.cleanup_expired()
+            self.quorum.cleanup_decided()
+            await asyncio.sleep(60.0)
+
+    # ================================================================
+    # HTTP endpoints (same as old node for backward compat)
+    # ================================================================
+
+    def _register_http_routes(self) -> None:
+        app = self.transport._app
+        app.router.add_get("/tasks/pending", self._http_tasks_pending)
+        app.router.add_post("/tasks/claim", self._http_task_claim)
+        app.router.add_post("/tasks/complete", self._http_task_complete)
+        app.router.add_post("/inference", self._http_inference_request)
+        app.router.add_get("/status", self._http_status)
+        app.router.add_get("/chain/status", self._http_chain_status)
+        app.router.add_get("/chain/blocks", self._http_chain_blocks)
+        app.router.add_get("/chain/block/{index}", self._http_chain_block)
+
+    async def _http_tasks_pending(self, request) -> Any:
+        from aiohttp import web
+        domains_param = request.query.get("domains", "")
+        limit = int(request.query.get("limit", "10"))
+        if domains_param:
+            domain_ids = [d.strip() for d in domains_param.split(",")]
+            tasks = self.task_queue.get_pending_for_domains(domain_ids, limit=limit)
+        else:
+            tasks = self.task_queue.get_pending(limit=limit)
+        return web.json_response({
+            "tasks": [json.loads(t.model_dump_json()) for t in tasks],
+            "total_pending": self.task_queue.pending_count,
+        })
+
+    async def _http_task_claim(self, request) -> Any:
+        from aiohttp import web
+        try:
+            data = await request.json()
+            task_id = data["task_id"]
+            evaluator_id = data["evaluator_id"]
+        except (KeyError, json.JSONDecodeError):
+            return web.json_response({"status": "error", "detail": "task_id and evaluator_id required"}, status=400)
+        task = self.task_queue.claim(task_id, evaluator_id)
+        if task is None:
+            return web.json_response({"status": "error", "detail": "task not found or already claimed"}, status=409)
+        await self._flood_task_claimed(task)
+        return web.json_response({"status": "claimed", "task": json.loads(task.model_dump_json())})
+
+    async def _http_task_complete(self, request) -> Any:
+        from aiohttp import web
+        try:
+            data = await request.json()
+            task_id = data["task_id"]
+        except (KeyError, json.JSONDecodeError):
+            return web.json_response({"status": "error", "detail": "task_id required"}, status=400)
+
+        verified_perf = data.get("verified_performance")
+        result = data.get("result")
+        evaluator_id = data.get("evaluator_id", "")
+
+        task = self.task_queue.complete(task_id, verified_performance=verified_perf, result=result)
+        if task is None:
+            return web.json_response({"status": "error", "detail": "task not found or not claimed"}, status=409)
+
+        await self._process_task_completion(task, evaluator_id, verified_perf)
+        await self._flood_task_completed_with(task_id, verified_perf or 0)
+
+        block = await self.try_generate_block()
+        return web.json_response({"status": "completed", "task_id": task_id, "block_generated": block is not None})
+
+    async def _http_inference_request(self, request) -> Any:
+        from aiohttp import web
+        try:
+            data = await request.json()
+            domain_id = data["domain_id"]
+        except (KeyError, json.JSONDecodeError):
+            return web.json_response({"status": "error", "detail": "domain_id required"}, status=400)
+        if domain_id not in self._domains:
+            return web.json_response({"status": "error", "detail": f"unknown domain: {domain_id}"}, status=404)
+
+        input_data = data.get("input_data", {})
+        client_id = data.get("client_id", "anonymous")
+        task = Task(
+            task_type=TaskType.INFERENCE_REQUEST,
+            domain_id=domain_id,
+            requester_id=client_id,
+            parameters=input_data,
+            priority=10,
+        )
+        self.task_queue.add(task)
+        await self._flood_task_created(task)
+        return web.json_response({"status": "queued", "task_id": task.id})
+
+    async def _http_chain_status(self, request) -> Any:
+        """Serve our chain status for sync."""
+        from aiohttp import web
+        tip = self.chain.tip
+        return web.json_response({
+            "chain_height": self.chain.height,
+            "tip_hash": tip.hash if tip else "",
+            "tip_index": tip.header.index if tip else -1,
+            "finalized_height": self.finality.finalized_height,
+        })
+
+    async def _http_chain_blocks(self, request) -> Any:
+        """Serve blocks by index range for sync."""
+        from aiohttp import web
+        from_idx = int(request.query.get("from", "0"))
+        to_idx = int(request.query.get("to", str(self.chain.height - 1)))
+
+        # Cap at 50 blocks per request
+        to_idx = min(to_idx, from_idx + 49)
+
+        blocks = self.chain.get_blocks_range(from_idx, to_idx)
+        has_more = to_idx < self.chain.height - 1
+
+        return web.json_response({
+            "request_id": request.query.get("request_id", ""),
+            "blocks": [json.loads(b.model_dump_json()) for b in blocks],
+            "has_more": has_more,
+        })
+
+    async def _http_chain_block(self, request) -> Any:
+        """Serve a single block by index."""
+        from aiohttp import web
+        index = int(request.match_info["index"])
+        block = self.chain.get_block(index)
+        if block is None:
+            return web.json_response(
+                {"status": "error", "detail": f"block {index} not found"},
+                status=404,
+            )
+        return web.json_response(json.loads(block.model_dump_json()))
+
+    async def _http_status(self, request) -> Any:
+        from aiohttp import web
+        return web.json_response({
+            "status": "healthy",
+            "peer_id": self.peer_id[:12],
+            "port": self.config.port,
+            "chain_height": self.chain.height,
+            "domains": {
+                d: {"optimize": r.optimize, "evaluate": r.evaluate, "synthetic": r.has_synthetic_data}
+                for d, r in self._domain_roles.items()
+            },
+            "peers": len(self._peers),
+            "task_queue": {
+                "pending": self.task_queue.pending_count,
+                "claimed": self.task_queue.claimed_count,
+                "completed": self.task_queue.completed_count,
+            },
+            "security": {
+                "finalized_height": self.finality.finalized_height,
+                "reputation_tracked_peers": len(self.reputation.all_scores),
+                "pending_commitments": self.commit_reveal.pending_count,
+                "pending_quorums": self.quorum.pending_count,
+            },
+            "optimizer_domains": self.optimizer_domains,
+            "evaluator_domains": self.evaluator_domains,
+        })

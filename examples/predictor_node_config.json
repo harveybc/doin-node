@@ -1,0 +1,71 @@
+{
+  "$schema": "UnifiedNodeConfig",
+  "$doc": "Example configuration for a unified DON node optimizing the predictor timeseries domain.",
+
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./don-data",
+  "bootstrap_peers": [],
+
+  "domains": [
+    {
+      "domain_id": "predictor-timeseries",
+      "optimize": true,
+      "evaluate": true,
+
+      "optimization_plugin": "predictor",
+      "optimization_config": {
+        "predictor_root": "~/predictor",
+        "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
+        "predictor_plugin": "mimo",
+        "preprocessor_plugin": "default_preprocessor",
+        "target_plugin": "default_target",
+        "step_size_fraction": 0.15
+      },
+
+      "inference_plugin": "predictor",
+      "synthetic_data_plugin": "predictor",
+      "has_synthetic_data": true,
+
+      "param_bounds": {
+        "learning_rate": [1e-5, 1e-2],
+        "num_layers": [1, 8],
+        "layer_size": [16, 512],
+        "batch_size": [8, 128],
+        "epochs": [10, 500],
+        "early_patience": [5, 50],
+        "window_size": [10, 200]
+      },
+
+      "resource_limits": {
+        "max_training_seconds": 3600,
+        "max_memory_mb": 8192,
+        "max_epochs": 5000,
+        "max_batch_size": 512
+      },
+
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 0.10,
+        "bonus_threshold": 0.05,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      }
+    }
+  ],
+
+  "target_block_time": 600.0,
+  "initial_threshold": 1.0,
+
+  "quorum_min_evaluators": 3,
+  "quorum_fraction": 0.67,
+  "quorum_tolerance": 0.05,
+  "commit_reveal_max_age": 600.0,
+  "finality_confirmation_depth": 6,
+  "external_anchor_interval": 100,
+  "require_deterministic_seed": true,
+
+  "eval_poll_interval": 10.0,
+  "eval_max_concurrent": 3,
+  "optimizer_loop_interval": 30.0
+}
