@@ -1,73 +1,73 @@
-# DON Node
+# doin-node
 
-**P2P node for the Decentralized Optimization Network (DON)**
+Unified DOIN node — single configurable process that can optimize, evaluate, and relay.
 
-Handles peer-to-peer networking, controlled flooding, blockchain management, optimae validation, and block generation via proof of optimization.
+## What is DOIN?
 
-## Features
+DOIN (Decentralized Optimization and Inference Network) is a blockchain-based system where nodes collaboratively optimize ML models. Block generation is triggered by verified optimization work — **Proof of Optimization**.
 
-- **Controlled Flooding** — Messages propagate to neighbors with TTL-based hop limiting and dedup
-- **Blockchain** — Append-only chain with validation, persistence, and Merkle proofs
-- **Optimae Validation** — Coordinates with evaluators to verify reported performance
-- **Block Generation** — Triggered by proof-of-optimization consensus threshold
-- **HTTP Transport** — Simple, debuggable HTTP-based peer communication
+## This Package
 
-## Installation
+`doin-node` is the main entry point for running a DOIN node. Like a Bitcoin node that can mine + validate + relay, a DOIN node can optimize + evaluate + relay — all configurable per domain via JSON.
+
+### Features
+- **Unified architecture** — single process, configurable roles per domain
+- **HTTP transport** — aiohttp-based, simple and debuggable
+- **Controlled flooding** — TTL-based message propagation with dedup
+- **Block sync protocol** — initial sync on startup, catch-up on announcements
+- **Full security pipeline** — all 10 hardening measures wired in
+- **Pull-based task queue** — evaluators poll for work, priority-ordered
+
+### Security Systems (all wired in)
+1. Commit-reveal for optimae
+2. Random quorum selection
+3. Asymmetric reputation penalties
+4. Resource limits + bounds validation
+5. Finality checkpoints
+6. Reputation decay (EMA)
+7. Min reputation threshold
+8. External checkpoint anchoring
+9. Fork choice rule (heaviest chain)
+10. Deterministic per-evaluator seeds
+
+## Install
 
 ```bash
-pip install -e ".[dev]"
+pip install git+https://github.com/harveybc/doin-core.git
+pip install git+https://github.com/harveybc/doin-node.git
 ```
-
-Requires `doin-core` to be installed first.
 
 ## Usage
 
 ```bash
-# Start a node
-doin-node --port 8470 --data-dir ./node-data --peers 192.168.1.10:8470
-
-# With domain configuration
-doin-node --port 8470 --domains domains.json --target-block-time 300
-
-# Full options
-doin-node --help
+doin-node --config config.json
 ```
 
-### Domain Configuration (domains.json)
+See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.md) for configuration examples.
 
-```json
-[
-    {
-        "id": "predictor-v1",
-        "name": "Time Series Predictor",
-        "performance_metric": "mse",
-        "higher_is_better": false,
-        "weight": 1.0,
-        "config": {
-            "optimization_plugin": "genetic_optimizer",
-            "inference_plugin": "keras_predictor",
-            "synthetic_data_plugin": "timeseries_generator"
-        }
-    }
-]
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/status` | GET | Node status (chain, peers, tasks, security) |
+| `/chain/status` | GET | Chain height, tip hash, finalized height |
+| `/chain/blocks?from=X&to=Y` | GET | Fetch blocks by range (max 50) |
+| `/chain/block/{index}` | GET | Fetch single block |
+| `/tasks/pending` | GET | List pending tasks |
+| `/tasks/claim` | POST | Claim a task |
+| `/tasks/complete` | POST | Complete a task |
+| `/inference` | POST | Submit inference request |
+
+## Tests
+
+```bash
+python -m pytest tests/ -v
+# 83 tests (including multi-node network tests)
 ```
 
-## Architecture
+## Part of DOIN
 
-```
-doin-node/
-├── network/
-│   ├── peer.py          # Peer state management
-│   ├── flooding.py      # Controlled flooding with TTL + dedup
-│   └── transport.py     # HTTP-based message transport
-├── blockchain/
-│   └── chain.py         # Chain storage, validation, persistence
-├── validation/
-│   └── validator.py     # Optimae verification coordination
-├── node.py              # Main node orchestrator
-└── cli.py               # Command-line entry point
-```
-
-## License
-
-MIT
+- [doin-core](https://github.com/harveybc/doin-core) — Consensus, models, crypto
+- [doin-node](https://github.com/harveybc/doin-node) — This package
+- [doin-plugins](https://github.com/harveybc/doin-plugins) — Domain plugins
