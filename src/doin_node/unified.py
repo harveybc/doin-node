@@ -566,6 +566,32 @@ class UnifiedNode:
         if not self.chaindb:
             self.chain.save()
 
+    def _update_domain_best_from_chain(self) -> None:
+        """Scan chain for OPTIMAE_ACCEPTED transactions and update domain best.
+
+        This is critical for the island model: when syncing blocks from peers,
+        we pick up champion solutions from other nodes and use them as the
+        starting point for our next optimization round.
+        """
+        height = self._get_height()
+        for i in range(height):
+            block = self._get_block(i)
+            if block is None:
+                continue
+            for tx in block.transactions:
+                if tx.tx_type == TransactionType.OPTIMAE_ACCEPTED:
+                    domain_id = tx.domain_id
+                    verified = tx.payload.get("verified_performance")
+                    parameters = tx.payload.get("parameters")
+                    if verified is not None and parameters is not None:
+                        current = self._domain_best.get(domain_id, (None, None))
+                        if current[1] is None or verified > current[1]:
+                            self._domain_best[domain_id] = (parameters, verified)
+                            logger.info(
+                                "⚡ Synced champion for %s: perf=%.6f (from block #%d)",
+                                domain_id, verified, block.header.index,
+                            )
+
     # ================================================================
     # Network abstraction (gossipsub or flooding)
     # ================================================================
@@ -911,6 +937,7 @@ class UnifiedNode:
                 peer_id=task.requester_id,
                 payload={
                     "optimae_id": task.optimae_id,
+                    "parameters": task.parameters,  # On-chain for island model sync
                     "verified_performance": verified,
                     "effective_increment": effective_increment,
                     "reward_fraction": incentive_result.reward_fraction,
@@ -937,6 +964,16 @@ class UnifiedNode:
             # Resolve optimae stake (full refund on accept)
             if self.fee_market:
                 self.fee_market.resolve_optimae(task.optimae_id, accepted=True)
+
+            # Update domain best from accepted optimae (critical for island model!)
+            # This ensures nodes pick up champions from OTHER nodes, not just their own.
+            current_best = self._domain_best.get(task.domain_id, (None, None))
+            if current_best[1] is None or verified > current_best[1]:
+                self._domain_best[task.domain_id] = (task.parameters, verified)
+                logger.info(
+                    "⚡ Domain %s best updated from accepted optimae: %.6f (from peer %s)",
+                    task.domain_id, verified, task.requester_id[:12],
+                )
 
             logger.info(
                 "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
@@ -1470,6 +1507,10 @@ class UnifiedNode:
                 state = self.sync_manager.peers.get(endpoint)
                 if state and height >= state.their_height:
                     break  # Caught up
+
+            # Extract accepted optimae from synced blocks → update domain best
+            # This is the island model: pick up champions from other nodes
+            self._update_domain_best_from_chain()
 
             self._save_chain()
             self.sync_manager.record_sync_success(endpoint, self._get_height())
