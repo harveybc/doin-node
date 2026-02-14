@@ -286,6 +286,7 @@ class UnifiedNode:
         self._background_tasks: list[asyncio.Task] = []
         self._domain_best: dict[str, tuple[dict[str, Any] | None, float | None]] = {}  # domain_id → (best_params, best_perf)
         self._domain_converged: set[str] = set()  # domains that reached target_performance
+        self._domain_round_count: dict[str, int] = {}  # domain_id → round number
 
         # ── Experiment tracker ──
         stats_file = config.experiment_stats_file or str(
@@ -1111,9 +1112,10 @@ class UnifiedNode:
                     and best[1] is not None
                     and best[1] >= role.target_performance
                 ):
+                    rounds = self._domain_round_count.get(domain_id, 0)
                     logger.info(
-                        "Domain %s converged: perf %.6f >= target %.6f",
-                        domain_id, best[1], role.target_performance,
+                        "🎯 Domain %s CONVERGED in %d rounds: perf %.6f >= target %.6f",
+                        domain_id, rounds, best[1], role.target_performance,
                     )
                     self._domain_converged.add(domain_id)
                     self.experiment_tracker.mark_converged(domain_id)
@@ -1123,6 +1125,9 @@ class UnifiedNode:
     async def _run_optimization_round(self, domain_id: str, plugin: Any) -> None:
         """Run one optimization round: optimize → commit → reveal."""
         round_start = time.monotonic()
+        # Increment round counter
+        self._domain_round_count[domain_id] = self._domain_round_count.get(domain_id, 0) + 1
+        round_num = self._domain_round_count[domain_id]
         # Generate commitment nonce
         nonce = secrets.token_hex(16)
 
@@ -1149,8 +1154,18 @@ class UnifiedNode:
             return
 
         # Update domain best tracking
-        if current_best[1] is None or performance > current_best[1]:
+        is_improvement = current_best[1] is None or performance > current_best[1]
+        if is_improvement:
             self._domain_best[domain_id] = (parameters, performance)
+
+        best_perf = self._domain_best[domain_id][1]
+        role = self._domain_roles.get(domain_id)
+        target_str = f" / target={role.target_performance}" if role and role.target_performance is not None else ""
+        improvement_str = " ★" if is_improvement else ""
+        logger.info(
+            "[%s] round=%d  perf=%.6f  best=%.6f%s%s",
+            domain_id, round_num, performance, best_perf, target_str, improvement_str,
+        )
 
         # Compute commitment hash (over core params only, not seed)
         commitment_hash = compute_commitment(parameters, nonce)
