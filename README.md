@@ -59,6 +59,11 @@ See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.
 | `/tasks/complete` | POST | Complete a task |
 | `/inference` | POST | Submit inference request |
 
+### Coin & Difficulty
+- Native DOIN coin with block rewards (65% optimizers, 30% evaluators, 5% generator)
+- Bitcoin/Ethereum hybrid difficulty adjustment (epoch + per-block EMA)
+- Balance tracker with transfers, fees, nonce replay protection
+
 ## Tests
 
 ```bash
