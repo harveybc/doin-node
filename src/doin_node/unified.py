@@ -127,7 +127,8 @@ class UnifiedNodeConfig:
 
     host: str = "0.0.0.0"
     port: int = 8470
-    data_dir: str = "./don-data"
+    data_dir: str = "./doin-data"
+    identity_file: str = ""  # Auto-derived from data_dir if empty
     bootstrap_peers: list[str] = field(default_factory=list)
 
     # Domain roles
@@ -188,7 +189,14 @@ class UnifiedNode:
         identity: PeerIdentity | None = None,
     ) -> None:
         self.config = config
-        self.identity = identity or PeerIdentity.generate()
+
+        # Identity: use provided, or load from file (persists across restarts)
+        if identity:
+            self.identity = identity
+        else:
+            id_path = config.identity_file or str(Path(config.data_dir) / "identity.pem")
+            self.identity = PeerIdentity.load_or_generate(id_path)
+            logger.info("Peer identity: %s (from %s)", self.identity.peer_id[:12], id_path)
 
         # ── Core components ──
         self.transport = Transport(host=config.host, port=config.port)
