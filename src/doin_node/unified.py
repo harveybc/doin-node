@@ -80,11 +80,16 @@ from doin_core.protocol.messages import (
     TaskCreated,
 )
 
+from doin_core.models.fee_market import FeeConfig, FeeMarket
+
 from doin_node.blockchain.chain import Chain
+from doin_node.network.discovery import PeerDiscovery, DiscoveredPeer
 from doin_node.network.flooding import FloodingConfig, FloodingProtocol
+from doin_node.network.gossip import GossipSub
 from doin_node.network.peer import Peer, PeerState
 from doin_node.network.sync import SyncManager, fetch_blocks, fetch_chain_status
 from doin_node.network.transport import Transport
+from doin_node.storage.chaindb import ChainDB
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +153,24 @@ class UnifiedNodeConfig:
     # Optimizer loop (when this node optimizes)
     optimizer_loop_interval: float = 30.0
 
+    # Storage backend: "sqlite" (production) or "json" (legacy/testing)
+    storage_backend: str = "sqlite"
+    db_path: str = ""  # Auto-derived from data_dir if empty
+    snapshot_interval: int = 100  # Save state snapshot every N blocks
+    prune_keep_blocks: int = 10000  # Keep tx bodies for last N blocks
+
+    # Network: "gossipsub" (production) or "flooding" (legacy/testing)
+    network_protocol: str = "gossipsub"
+    gossip_heartbeat_interval: float = 1.0
+
+    # Peer discovery
+    discovery_enabled: bool = True
+    discovery_interval: float = 60.0  # PEX + random walk interval
+
+    # Fee market
+    fee_market_enabled: bool = True
+    fee_config: FeeConfig = field(default_factory=FeeConfig)
+
 
 # ── Unified Node ─────────────────────────────────────────────────────
 
@@ -169,8 +192,35 @@ class UnifiedNode:
 
         # ── Core components ──
         self.transport = Transport(host=config.host, port=config.port)
+
+        # Network protocol: GossipSub (production) or Flooding (legacy)
         self.flooding = FloodingProtocol(FloodingConfig())
+        self.gossip: GossipSub | None = None
+        if config.network_protocol == "gossipsub":
+            self.gossip = GossipSub(peer_id=self.identity.peer_id)
+            self.gossip.subscribe_all()
+
+        # Storage backend: SQLite (production) or JSON Chain (legacy)
         self.chain = Chain(data_dir=Path(config.data_dir))
+        self.chaindb: ChainDB | None = None
+        if config.storage_backend == "sqlite":
+            db_path = config.db_path or str(Path(config.data_dir) / "chain.db")
+            self.chaindb = ChainDB(db_path)
+
+        # Peer discovery
+        self.discovery: PeerDiscovery | None = None
+        if config.discovery_enabled:
+            self.discovery = PeerDiscovery(
+                our_peer_id=self.identity.peer_id,
+                our_port=config.port,
+                bootstrap_nodes=config.bootstrap_peers,
+            )
+
+        # Fee market
+        self.fee_market: FeeMarket | None = None
+        if config.fee_market_enabled:
+            self.fee_market = FeeMarket(config.fee_config)
+
         self.consensus = ProofOfOptimization(
             target_block_time=config.target_block_time,
             initial_threshold=config.initial_threshold,
@@ -218,13 +268,21 @@ class UnifiedNode:
         self._background_tasks: list[asyncio.Task] = []
 
         # ── Wire up message handlers ──
-        self.flooding.on_message(MessageType.OPTIMAE_COMMIT, self._handle_optimae_commit)
-        self.flooding.on_message(MessageType.OPTIMAE_REVEAL, self._handle_optimae_reveal)
-        self.flooding.on_message(MessageType.OPTIMAE_ANNOUNCEMENT, self._handle_optimae_announcement)
-        self.flooding.on_message(MessageType.BLOCK_ANNOUNCEMENT, self._handle_block_announcement)
-        self.flooding.on_message(MessageType.TASK_CREATED, self._handle_task_created)
-        self.flooding.on_message(MessageType.TASK_CLAIMED, self._handle_task_claimed)
-        self.flooding.on_message(MessageType.TASK_COMPLETED, self._handle_task_completed)
+        # Register on both flooding (legacy) and gossip (production)
+        all_handlers = [
+            (MessageType.OPTIMAE_COMMIT, self._handle_optimae_commit),
+            (MessageType.OPTIMAE_REVEAL, self._handle_optimae_reveal),
+            (MessageType.OPTIMAE_ANNOUNCEMENT, self._handle_optimae_announcement),
+            (MessageType.BLOCK_ANNOUNCEMENT, self._handle_block_announcement),
+            (MessageType.TASK_CREATED, self._handle_task_created),
+            (MessageType.TASK_CLAIMED, self._handle_task_claimed),
+            (MessageType.TASK_COMPLETED, self._handle_task_completed),
+        ]
+        for msg_type, handler in all_handlers:
+            self.flooding.on_message(msg_type, handler)
+            if self.gossip:
+                self.gossip.on_message(msg_type, handler)
+
         self.transport.on_message(self._on_transport_message)
 
         # ── Register domains ──
@@ -317,13 +375,23 @@ class UnifiedNode:
         """Start the unified node."""
         self._running = True
 
-        # Initialize chain
-        chain_path = Path(self.config.data_dir) / "chain.json"
-        if chain_path.exists():
-            self.chain.load()
+        # Initialize storage
+        if self.chaindb:
+            self.chaindb.open()
+            if self.chaindb.height == 0:
+                self.chaindb.initialize(self.peer_id)
+            logger.info("SQLite storage: height=%d", self.chaindb.height)
         else:
-            self.chain.initialize(self.peer_id)
-            self.chain.save()
+            chain_path = Path(self.config.data_dir) / "chain.json"
+            if chain_path.exists():
+                self.chain.load()
+            else:
+                self.chain.initialize(self.peer_id)
+                self.chain.save()
+
+        # Wire gossip send function to transport
+        if self.gossip:
+            self.gossip.set_send_fn(self._gossip_send)
 
         # Register HTTP routes
         self._register_http_routes()
@@ -334,12 +402,23 @@ class UnifiedNode:
         # Connect bootstrap peers
         for addr in self.config.bootstrap_peers:
             host, port_str = addr.rsplit(":", 1)
-            self.add_peer(host, int(port_str))
+            peer = self.add_peer(host, int(port_str))
+            if self.gossip:
+                self.gossip.add_peer(peer.peer_id)
+            if self.discovery:
+                self.discovery.add_peer(DiscoveredPeer(
+                    peer_id=peer.peer_id,
+                    address=host,
+                    port=int(port_str),
+                    source="config",
+                ))
+                self.discovery.mark_connected(peer.endpoint)
 
         # Update sync manager state
-        tip = self.chain.tip
+        height = self._get_height()
+        tip = self._get_tip()
         self.sync_manager.update_our_state(
-            self.chain.height,
+            height,
             tip.hash if tip else "",
             self.finality.finalized_height,
         )
@@ -357,17 +436,36 @@ class UnifiedNode:
                 asyncio.create_task(self._evaluator_loop())
             )
 
+        # Gossip heartbeat loop
+        if self.gossip:
+            self._background_tasks.append(
+                asyncio.create_task(self._gossip_heartbeat_loop())
+            )
+
+        # Peer discovery loop
+        if self.discovery:
+            self._background_tasks.append(
+                asyncio.create_task(self._discovery_loop())
+            )
+
         # Periodic cleanup
         self._background_tasks.append(
             asyncio.create_task(self._maintenance_loop())
         )
 
+        protocol = "gossipsub" if self.gossip else "flooding"
+        storage = "sqlite" if self.chaindb else "json"
         logger.info(
-            "Unified node started: peer=%s port=%d optimize=%s evaluate=%s",
+            "Unified node started: peer=%s port=%d optimize=%s evaluate=%s "
+            "protocol=%s storage=%s fee_market=%s discovery=%s",
             self.peer_id[:12],
             self.config.port,
             self.optimizer_domains,
             self.evaluator_domains,
+            protocol,
+            storage,
+            self.fee_market is not None,
+            self.discovery is not None,
         )
 
     async def stop(self) -> None:
@@ -376,19 +474,93 @@ class UnifiedNode:
         for t in self._background_tasks:
             t.cancel()
         await self.transport.stop()
-        self.chain.save()
+        if self.chaindb:
+            self.chaindb.close()
+        else:
+            self.chain.save()
         logger.info("Unified node stopped")
+
+    # ================================================================
+    # Storage abstraction (works with both SQLite and JSON backends)
+    # ================================================================
+
+    def _get_height(self) -> int:
+        if self.chaindb:
+            return self.chaindb.height
+        return self.chain.height
+
+    def _get_tip(self) -> Block | None:
+        if self.chaindb:
+            return self.chaindb.get_tip()
+        return self.chain.tip
+
+    def _get_block(self, index: int) -> Block | None:
+        if self.chaindb:
+            return self.chaindb.get_block(index)
+        return self.chain.get_block(index)
+
+    def _get_blocks_range(self, from_idx: int, to_idx: int) -> list[Block]:
+        if self.chaindb:
+            return self.chaindb.get_blocks_range(from_idx, to_idx)
+        return self.chain.get_blocks_range(from_idx, to_idx)
+
+    def _append_block(self, block: Block) -> None:
+        if self.chaindb:
+            self.chaindb.append_block(block)
+        else:
+            self.chain.append_block(block)
+
+    def _validate_and_append_blocks(self, blocks: list[Block]) -> int:
+        if self.chaindb:
+            return self.chaindb.append_blocks(blocks)
+        return self.chain.validate_and_append_blocks(blocks)
+
+    def _save_chain(self) -> None:
+        if not self.chaindb:
+            self.chain.save()
+
+    # ================================================================
+    # Network abstraction (gossipsub or flooding)
+    # ================================================================
+
+    async def _broadcast(self, message: Message) -> None:
+        """Broadcast a message using the configured protocol."""
+        if self.gossip:
+            await self.gossip.publish(message)
+        else:
+            await self.transport.broadcast(list(self._peers.keys()), message)
+
+    async def _gossip_send(self, peer_id: str, payload: dict) -> bool:
+        """Send a message to a specific peer (callback for GossipSub)."""
+        # Find peer endpoint by peer_id
+        for ep, peer in self._peers.items():
+            if peer.peer_id == peer_id:
+                try:
+                    import aiohttp
+                    session = self.transport._session
+                    if session:
+                        url = f"http://{ep}/message"
+                        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            return resp.status == 200
+                except Exception:
+                    return False
+        return False
 
     # ================================================================
     # Message handling (relay — always on)
     # ================================================================
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
-        should_forward = await self.flooding.handle_incoming(message, sender)
-        if should_forward:
-            forward_msg = self.flooding.prepare_forward(message)
-            endpoints = [ep for ep in self._peers if ep != sender]
-            await self.transport.broadcast(endpoints, forward_msg)
+        if self.gossip:
+            # GossipSub handles dedup, dispatch, and mesh forwarding
+            await self.gossip.handle_incoming(message, sender)
+        else:
+            # Legacy flooding
+            should_forward = await self.flooding.handle_incoming(message, sender)
+            if should_forward:
+                forward_msg = self.flooding.prepare_forward(message)
+                endpoints = [ep for ep in self._peers if ep != sender]
+                await self.transport.broadcast(endpoints, forward_msg)
 
     # ── Commit-reveal flow ───────────────────────────────────────
 
@@ -698,6 +870,10 @@ class UnifiedNode:
                 reward_fraction=incentive_result.reward_fraction,
             ))
 
+            # Resolve optimae stake (full refund on accept)
+            if self.fee_market:
+                self.fee_market.resolve_optimae(task.optimae_id, accepted=True)
+
             logger.info(
                 "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
                 task.optimae_id[:12],
@@ -708,7 +884,9 @@ class UnifiedNode:
                 incentive_result.reason,
             )
         else:
-            # Rejected
+            # Rejected — partial stake burn
+            if self.fee_market:
+                self.fee_market.resolve_optimae(task.optimae_id, accepted=False)
             self.reputation.record_optimae_rejected(task.requester_id)
             self.consensus.record_transaction(Transaction(
                 tx_type=TransactionType.OPTIMAE_REJECTED,
@@ -740,7 +918,7 @@ class UnifiedNode:
         if not self.consensus.can_generate_block():
             return None
 
-        tip = self.chain.tip
+        tip = self._get_tip()
         if tip is None:
             return None
 
@@ -757,6 +935,10 @@ class UnifiedNode:
         self.balance_tracker.apply_coinbase(coinbase)
         self._block_contributors.clear()
 
+        # Adjust fee market base fee based on block fullness
+        if self.fee_market:
+            self.fee_market.adjust_base_fee(len(block.transactions))
+
         # Update difficulty controller
         self.difficulty.on_new_block(
             block.header.index,
@@ -765,30 +947,50 @@ class UnifiedNode:
         # Apply new threshold to consensus
         self.consensus.state.threshold = self.difficulty.threshold
 
-        self.chain.append_block(block)
-        self.chain.save()
+        self._append_block(block)
+        self._save_chain()
 
         # Update finality
         depth_block_hash = None
         target_height = block.header.index - self.finality.confirmation_depth
         if target_height >= 0:
-            # Get block hash at depth
-            for b in self.chain.blocks:
-                if b.header.index == target_height:
-                    depth_block_hash = b.hash
-                    break
+            b = self._get_block(target_height)
+            if b:
+                depth_block_hash = b.hash
         self.finality.on_new_block(block.header.index, depth_block_hash)
+
+        # State snapshot at intervals (SQLite only)
+        if self.chaindb and block.header.index % self.config.snapshot_interval == 0:
+            self.chaindb.save_snapshot(
+                block_index=block.header.index,
+                block_hash=block.hash,
+                balances=self.balance_tracker.all_balances,
+                reputation=self.reputation.all_scores,
+                domain_stats={d: self.vuw.compute_weights().get(d, 0) for d in self._domains},
+            )
+            logger.info("State snapshot saved at block #%d", block.header.index)
+
+            # Prune old transaction bodies
+            if self.config.prune_keep_blocks > 0:
+                prune_before = block.header.index - self.config.prune_keep_blocks
+                if prune_before > 0:
+                    self.chaindb.prune_transactions_before(prune_before)
 
         # External anchoring
         if self.anchor_manager.should_anchor(block.header.index):
-            block_hashes = [b.hash for b in self.chain.blocks]
+            # For SQLite backend, get block hashes efficiently
+            if self.chaindb:
+                blocks_range = self.chaindb.get_blocks_range(0, block.header.index)
+                block_hashes = [b.hash for b in blocks_range]
+            else:
+                block_hashes = [b.hash for b in self.chain.blocks]
             state_hash = self.anchor_manager.compute_chain_state_hash(block_hashes)
             self.anchor_manager.create_anchor(
                 block.header.index, block.hash, state_hash,
             )
             logger.info("External anchor created at block #%d", block.header.index)
 
-        # Announce
+        # Announce via configured protocol
         announcement = BlockAnnouncement(
             block_index=block.header.index,
             block_hash=block.hash,
@@ -803,11 +1005,12 @@ class UnifiedNode:
             sender_id=self.peer_id,
             payload=json.loads(announcement.model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), msg)
+        await self._broadcast(msg)
 
         # Update sync manager state
+        height = self._get_height()
         self.sync_manager.update_our_state(
-            self.chain.height, block.hash, self.finality.finalized_height,
+            height, block.hash, self.finality.finalized_height,
         )
 
         logger.info("Block #%d generated (hash=%s)", block.header.index, block.hash[:12])
@@ -851,6 +1054,15 @@ class UnifiedNode:
         # Compute commitment hash (over core params only, not seed)
         commitment_hash = compute_commitment(parameters, nonce)
 
+        # Fee market: stake for optimae if enabled
+        if self.fee_market:
+            stake = self.fee_market.get_suggested_fee()["optimae_stake"]
+            ok, reason = self.fee_market.validate_fee(stake, is_optimae=True)
+            if not ok:
+                logger.warning("Insufficient stake for optimae: %s", reason)
+                return
+            # Stake will be resolved when optimae is accepted/rejected
+
         # Phase 1: Commit
         commit_msg = Message(
             msg_type=MessageType.OPTIMAE_COMMIT,
@@ -860,13 +1072,19 @@ class UnifiedNode:
                 domain_id=domain_id,
             ).model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), commit_msg)
+        await self._broadcast(commit_msg)
 
         # Wait for commitment to propagate
         await asyncio.sleep(2.0)
 
         # Phase 2: Reveal
         optimae_id = f"opt-{self.peer_id[:8]}-{int(time.time())}"
+
+        # Record stake in fee market
+        if self.fee_market:
+            stake = self.fee_market.get_suggested_fee()["optimae_stake"]
+            self.fee_market.stake_for_optimae(optimae_id, stake)
+
         reveal_msg = Message(
             msg_type=MessageType.OPTIMAE_REVEAL,
             sender_id=self.peer_id,
@@ -879,7 +1097,7 @@ class UnifiedNode:
                 nonce=nonce,
             ).model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), reveal_msg)
+        await self._broadcast(reveal_msg)
 
         logger.info(
             "Optimization round: domain=%s perf=%.4f optimae=%s",
@@ -957,7 +1175,7 @@ class UnifiedNode:
             commitment_hash = task.parameters.get("_don_commitment_hash", "")
             if not commitment_hash:
                 commitment_hash = task.optimae_id
-            chain_tip = self.chain.tip
+            chain_tip = self._get_tip()
             chain_tip_hash = chain_tip.hash if chain_tip else "genesis"
 
             synth_seed = self.seed_policy.get_seed_for_synthetic_data(
@@ -1006,7 +1224,7 @@ class UnifiedNode:
             sender_id=self.peer_id,
             payload=json.loads(tc.model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), msg)
+        await self._broadcast(msg)
 
     async def _flood_task_claimed(self, task: Task) -> None:
         tc = TaskClaimed(
@@ -1019,7 +1237,7 @@ class UnifiedNode:
             sender_id=self.peer_id,
             payload=json.loads(tc.model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), msg)
+        await self._broadcast(msg)
 
     async def _flood_task_completed_with(
         self, task_id: str, verified_performance: float,
@@ -1040,7 +1258,7 @@ class UnifiedNode:
             sender_id=self.peer_id,
             payload=json.loads(tc.model_dump_json()),
         )
-        await self.transport.broadcast(list(self._peers.keys()), msg)
+        await self._broadcast(msg)
 
     # ================================================================
     # Helpers
@@ -1093,16 +1311,17 @@ class UnifiedNode:
                     self.sync_manager.record_sync_failure(endpoint)
                     return
 
-                appended = self.chain.validate_and_append_blocks(blocks)
+                appended = self._validate_and_append_blocks(blocks)
                 if appended == 0:
                     logger.warning("Failed to append any blocks from %s", endpoint)
                     self.sync_manager.record_sync_failure(endpoint)
                     return
 
                 # Update our state
-                tip = self.chain.tip
+                tip = self._get_tip()
+                height = self._get_height()
                 self.sync_manager.update_our_state(
-                    self.chain.height,
+                    height,
                     tip.hash if tip else "",
                     self.finality.finalized_height,
                 )
@@ -1112,7 +1331,7 @@ class UnifiedNode:
                     depth_block_hash = None
                     target_height = block.header.index - self.finality.confirmation_depth
                     if target_height >= 0:
-                        b = self.chain.get_block(target_height)
+                        b = self._get_block(target_height)
                         if b:
                             depth_block_hash = b.hash
                     self.finality.on_new_block(block.header.index, depth_block_hash)
@@ -1122,11 +1341,11 @@ class UnifiedNode:
 
                 # Check if we still need more
                 state = self.sync_manager.peers.get(endpoint)
-                if state and self.chain.height >= state.their_height:
+                if state and height >= state.their_height:
                     break  # Caught up
 
-            self.chain.save()
-            self.sync_manager.record_sync_success(endpoint, self.chain.height)
+            self._save_chain()
+            self.sync_manager.record_sync_success(endpoint, self._get_height())
             logger.info("Sync complete with %s (height now %d)", endpoint, self.chain.height)
 
         except Exception:
@@ -1145,7 +1364,7 @@ class UnifiedNode:
                 continue
 
             self.sync_manager.update_peer_status(endpoint, status)
-            if status.chain_height > self.chain.height:
+            if status.chain_height > self._get_height():
                 await self._sync_with_peer(endpoint)
 
     def _find_peer_endpoint(self, from_addr: str, sender_id: str) -> str | None:
@@ -1160,11 +1379,79 @@ class UnifiedNode:
                 return ep
         return None
 
+    async def _gossip_heartbeat_loop(self) -> None:
+        """Periodic GossipSub mesh maintenance."""
+        while self._running:
+            try:
+                if self.gossip:
+                    await self.gossip.heartbeat()
+            except Exception:
+                logger.exception("Gossip heartbeat error")
+            await asyncio.sleep(self.config.gossip_heartbeat_interval)
+
+    async def _discovery_loop(self) -> None:
+        """Periodic peer discovery: PEX + random walks."""
+        import aiohttp
+        while self._running:
+            try:
+                if self.discovery:
+                    async with aiohttp.ClientSession() as session:
+                        # Bootstrap if we need more peers
+                        if self.discovery.needs_more_peers():
+                            found = await self.discovery.discover_from_bootstrap(session)
+                            if found:
+                                logger.info("Bootstrap discovery: %d new peers", found)
+
+                        # Peer exchange with connected peers
+                        found = await self.discovery.peer_exchange(session)
+                        if found:
+                            logger.debug("PEX: %d new peers", found)
+
+                        # Random walk
+                        found = await self.discovery.random_walk(session)
+                        if found:
+                            logger.debug("Random walk: %d new peers", found)
+
+                        # Connect to discovered peers
+                        for peer in self.discovery.get_connectable_peers(3):
+                            if peer.endpoint not in self._peers:
+                                p = self.add_peer(peer.address, peer.port, peer.peer_id)
+                                if self.gossip:
+                                    self.gossip.add_peer(p.peer_id)
+                                self.discovery.mark_connected(peer.endpoint)
+                                logger.info("Connected to discovered peer: %s", peer.endpoint)
+
+                    # Cleanup stale peers
+                    removed = self.discovery.cleanup()
+                    if removed:
+                        logger.debug("Cleaned up %d stale peers", removed)
+
+                    # Save peers to DB
+                    if self.chaindb:
+                        for peer in self.discovery.get_random_peers(50):
+                            self.chaindb.save_peer(
+                                peer.peer_id, peer.address, peer.port,
+                                peer.last_seen, domains=peer.domains, roles=peer.roles,
+                            )
+            except Exception:
+                logger.exception("Discovery loop error")
+
+            await asyncio.sleep(self.config.discovery_interval)
+
     async def _maintenance_loop(self) -> None:
-        """Periodic cleanup: expired commitments, decided quorums, etc."""
+        """Periodic cleanup: expired commitments, decided quorums, fee market stats."""
         while self._running:
             self.commit_reveal.cleanup_expired()
             self.quorum.cleanup_decided()
+
+            # Log fee market stats periodically
+            if self.fee_market:
+                stats = self.fee_market.get_stats()
+                logger.debug(
+                    "Fee market: base=%.6f mempool=%d burned=%.4f",
+                    stats["base_fee"], stats["mempool_size"], stats["total_burned"],
+                )
+
             await asyncio.sleep(60.0)
 
     # ================================================================
@@ -1181,6 +1468,8 @@ class UnifiedNode:
         app.router.add_get("/chain/status", self._http_chain_status)
         app.router.add_get("/chain/blocks", self._http_chain_blocks)
         app.router.add_get("/chain/block/{index}", self._http_chain_block)
+        app.router.add_get("/peers", self._http_peers)
+        app.router.add_get("/fees", self._http_fees)
 
     async def _http_tasks_pending(self, request) -> Any:
         from aiohttp import web
@@ -1258,9 +1547,10 @@ class UnifiedNode:
     async def _http_chain_status(self, request) -> Any:
         """Serve our chain status for sync."""
         from aiohttp import web
-        tip = self.chain.tip
+        tip = self._get_tip()
+        height = self._get_height()
         return web.json_response({
-            "chain_height": self.chain.height,
+            "chain_height": height,
             "tip_hash": tip.hash if tip else "",
             "tip_index": tip.header.index if tip else -1,
             "finalized_height": self.finality.finalized_height,
@@ -1269,14 +1559,15 @@ class UnifiedNode:
     async def _http_chain_blocks(self, request) -> Any:
         """Serve blocks by index range for sync."""
         from aiohttp import web
+        height = self._get_height()
         from_idx = int(request.query.get("from", "0"))
-        to_idx = int(request.query.get("to", str(self.chain.height - 1)))
+        to_idx = int(request.query.get("to", str(height - 1)))
 
         # Cap at 50 blocks per request
         to_idx = min(to_idx, from_idx + 49)
 
-        blocks = self.chain.get_blocks_range(from_idx, to_idx)
-        has_more = to_idx < self.chain.height - 1
+        blocks = self._get_blocks_range(from_idx, to_idx)
+        has_more = to_idx < height - 1
 
         return web.json_response({
             "request_id": request.query.get("request_id", ""),
@@ -1288,7 +1579,7 @@ class UnifiedNode:
         """Serve a single block by index."""
         from aiohttp import web
         index = int(request.match_info["index"])
-        block = self.chain.get_block(index)
+        block = self._get_block(index)
         if block is None:
             return web.json_response(
                 {"status": "error", "detail": f"block {index} not found"},
@@ -1296,13 +1587,47 @@ class UnifiedNode:
             )
         return web.json_response(json.loads(block.model_dump_json()))
 
+    async def _http_peers(self, request) -> Any:
+        """Serve known peers for peer discovery."""
+        from aiohttp import web
+        peers = []
+        if self.discovery:
+            for p in self.discovery.get_random_peers(20):
+                peers.append({
+                    "peer_id": p.peer_id,
+                    "address": p.address,
+                    "port": p.port,
+                    "domains": p.domains,
+                    "roles": p.roles,
+                    "chain_height": p.chain_height,
+                })
+        else:
+            for ep, peer in self._peers.items():
+                peers.append({
+                    "peer_id": peer.peer_id,
+                    "address": peer.address,
+                    "port": peer.port,
+                })
+        return web.json_response({"peers": peers})
+
+    async def _http_fees(self, request) -> Any:
+        """Serve current fee market information."""
+        from aiohttp import web
+        if not self.fee_market:
+            return web.json_response({"enabled": False})
+        stats = self.fee_market.get_stats()
+        stats["enabled"] = True
+        return web.json_response(stats)
+
     async def _http_status(self, request) -> Any:
         from aiohttp import web
-        return web.json_response({
+        status: dict[str, Any] = {
             "status": "healthy",
             "peer_id": self.peer_id[:12],
             "port": self.config.port,
-            "chain_height": self.chain.height,
+            "chain_height": self._get_height(),
+            "storage_backend": "sqlite" if self.chaindb else "json",
+            "network_protocol": "gossipsub" if self.gossip else "flooding",
             "domains": {
                 d: {"optimize": r.optimize, "evaluate": r.evaluate, "synthetic": r.has_synthetic_data}
                 for d, r in self._domain_roles.items()
@@ -1327,4 +1652,22 @@ class UnifiedNode:
                 "top_holders": self.balance_tracker.top_holders(5),
             },
             "difficulty": self.difficulty.get_stats(),
-        })
+        }
+
+        # Add gossip mesh stats
+        if self.gossip:
+            status["gossip"] = self.gossip.get_mesh_stats()
+
+        # Add discovery stats
+        if self.discovery:
+            status["discovery"] = self.discovery.get_stats()
+
+        # Add fee market stats
+        if self.fee_market:
+            status["fee_market"] = self.fee_market.get_stats()
+
+        # Add storage stats (SQLite)
+        if self.chaindb:
+            status["storage"] = self.chaindb.get_stats()
+
+        return web.json_response(status)

@@ -285,7 +285,7 @@ class TestMultiNode:
             # Force block generation
             block = await node_a.try_generate_block()
             assert block is not None, "Should generate a block"
-            assert node_a.chain.height >= 2  # Genesis + 1
+            assert node_a._get_height() >= 2  # Genesis + 1
 
             # Now start B with A as peer
             node_b = await start_node(make_node_config(18477, [18476]))
