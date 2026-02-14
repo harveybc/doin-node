@@ -34,6 +34,7 @@ from typing import Any
 
 from doin_core.consensus import (
     DeterministicSeedPolicy,
+    DifficultyController,
     ExternalAnchorManager,
     FinalityManager,
     ForkChoiceRule,
@@ -44,10 +45,13 @@ from doin_core.consensus import (
 )
 from doin_core.crypto.identity import PeerIdentity
 from doin_core.models import (
+    BalanceTracker,
     Block,
     BoundsValidator,
+    CoinbaseTransaction,
     Commitment,
     CommitRevealManager,
+    ContributorWork,
     Domain,
     Optimae,
     QuorumConfig,
@@ -62,6 +66,7 @@ from doin_core.models import (
     Transaction,
     TransactionType,
     compute_commitment,
+    distribute_block_reward,
 )
 from doin_core.protocol.messages import (
     BlockAnnouncement,
@@ -193,7 +198,13 @@ class UnifiedNode:
             require_seed=config.require_deterministic_seed,
         )
         self.vuw = VerifiedUtilityWeights()
+        self.difficulty = DifficultyController(
+            target_block_time=config.target_block_time,
+            initial_threshold=config.initial_threshold,
+        )
+        self.balance_tracker = BalanceTracker()
         self.sync_manager = SyncManager()
+        self._block_contributors: list[ContributorWork] = []  # Contributors for current block
 
         # ── Per-domain state ──
         self._domains: dict[str, Domain] = {}
@@ -606,6 +617,13 @@ class UnifiedNode:
         # Update reputation for all evaluators who voted
         for eval_id, agreed in result.agreements.items():
             self.reputation.record_evaluation_completed(eval_id, agreed)
+            self._block_contributors.append(ContributorWork(
+                peer_id=eval_id,
+                role="evaluator",
+                domain_id=task.domain_id,
+                evaluations_completed=1,
+                agreed_with_quorum=agreed,
+            ))
 
         if result.accepted:
             # Optimae accepted by quorum — compute incentive-adjusted reward
@@ -671,6 +689,15 @@ class UnifiedNode:
                 "payload": {"increment": effective_increment},
             }])
 
+            # Track contributor for coin distribution
+            self._block_contributors.append(ContributorWork(
+                peer_id=task.requester_id,
+                role="optimizer",
+                domain_id=task.domain_id,
+                effective_increment=effective_increment,
+                reward_fraction=incentive_result.reward_fraction,
+            ))
+
             logger.info(
                 "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
                 task.optimae_id[:12],
@@ -720,6 +747,23 @@ class UnifiedNode:
         block = self.consensus.generate_block(tip, self.peer_id)
         if block is None:
             return None
+
+        # Compute and apply coinbase (block reward distribution)
+        coinbase = distribute_block_reward(
+            block_index=block.header.index,
+            generator_id=self.peer_id,
+            contributors=list(self._block_contributors),
+        )
+        self.balance_tracker.apply_coinbase(coinbase)
+        self._block_contributors.clear()
+
+        # Update difficulty controller
+        self.difficulty.on_new_block(
+            block.header.index,
+            block.header.timestamp.timestamp(),
+        )
+        # Apply new threshold to consensus
+        self.consensus.state.threshold = self.difficulty.threshold
 
         self.chain.append_block(block)
         self.chain.save()
@@ -1277,4 +1321,10 @@ class UnifiedNode:
             },
             "optimizer_domains": self.optimizer_domains,
             "evaluator_domains": self.evaluator_domains,
+            "coin": {
+                "total_supply": self.balance_tracker.total_supply,
+                "my_balance": self.balance_tracker.get_balance(self.peer_id),
+                "top_holders": self.balance_tracker.top_holders(5),
+            },
+            "difficulty": self.difficulty.get_stats(),
         })
