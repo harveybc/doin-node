@@ -89,6 +89,7 @@ from doin_node.network.gossip import GossipSub
 from doin_node.network.peer import Peer, PeerState
 from doin_node.network.sync import SyncManager, fetch_blocks, fetch_chain_status
 from doin_node.network.transport import Transport
+from doin_node.stats.experiment_tracker import ExperimentTracker
 from doin_node.storage.chaindb import ChainDB
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,9 @@ class DomainRole:
     inference_plugin: str = ""
     synthetic_data_plugin: str = ""  # MANDATORY for verification trust
     has_synthetic_data: bool = False
+
+    # Stop criteria — optimization stops when performance >= this value (per-model)
+    target_performance: float | None = None
 
     # Resource limits
     resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
@@ -167,6 +171,12 @@ class UnifiedNodeConfig:
     # Peer discovery
     discovery_enabled: bool = True
     discovery_interval: float = 60.0  # PEX + random walk interval
+
+    # Experiment stats tracking (CSV for OLAP)
+    experiment_stats_file: str = ""  # Auto-derived from data_dir if empty
+
+    # OLAP SQLite database (auto-saves every round — no manual ETL)
+    olap_db_path: str = ""  # Auto-derived from data_dir if empty
 
     # Fee market
     fee_market_enabled: bool = True
@@ -275,6 +285,21 @@ class UnifiedNode:
         self._synthetic_plugins: dict[str, Any] = {}  # domain_id → plugin instance
         self._background_tasks: list[asyncio.Task] = []
         self._domain_best: dict[str, tuple[dict[str, Any] | None, float | None]] = {}  # domain_id → (best_params, best_perf)
+        self._domain_converged: set[str] = set()  # domains that reached target_performance
+
+        # ── Experiment tracker ──
+        stats_file = config.experiment_stats_file or str(
+            Path(config.data_dir) / "experiment_stats.csv"
+        )
+        olap_path = config.olap_db_path or str(
+            Path(config.data_dir) / "olap.db"
+        )
+        self.experiment_tracker = ExperimentTracker(
+            csv_path=stats_file,
+            node_id=self.identity.peer_id,
+            doin_version="0.1.0",
+            olap_db_path=olap_path,
+        )
 
         # ── Wire up message handlers ──
         # Register on both flooding (legacy) and gossip (production)
@@ -402,6 +427,17 @@ class UnifiedNode:
         if self.gossip:
             self.gossip.set_send_fn(self._gossip_send)
 
+        # Start experiment tracking for optimizer domains
+        for domain_id in self.optimizer_domains:
+            role = self._domain_roles[domain_id]
+            self.experiment_tracker.start_experiment(
+                domain_id,
+                optimization_config=role.optimization_config,
+                param_bounds={k: list(v) for k, v in role.param_bounds.items()},
+                target_performance=role.target_performance,
+                optimizer_plugin=role.optimization_plugin,
+            )
+
         # Register HTTP routes
         self._register_http_routes()
 
@@ -487,6 +523,7 @@ class UnifiedNode:
             self.chaindb.close()
         else:
             self.chain.save()
+        self.experiment_tracker.finalize()
         logger.info("Unified node stopped")
 
     # ================================================================
@@ -851,6 +888,22 @@ class UnifiedNode:
             )
             self.consensus.record_optimae(optimae)
 
+            # Build experiment context for on-chain storage
+            from doin_node.stats.chain_metrics import build_onchain_metrics
+            onchain_metrics: dict[str, Any] = {}
+            exp_state = self.experiment_tracker.get_experiment_state(task.domain_id)
+            if exp_state is not None:
+                role = self._domain_roles.get(task.domain_id)
+                onchain_metrics = build_onchain_metrics(
+                    experiment_id=exp_state["experiment_id"],
+                    round_number=exp_state["round_count"],
+                    time_to_this_result_seconds=time.monotonic() - exp_state["start_mono"],
+                    optimization_config=role.optimization_config if role else {},
+                    data_hash=None,
+                    previous_best_performance=exp_state["best_performance"],
+                    reported_performance=reported,
+                )
+
             self.consensus.record_transaction(Transaction(
                 tx_type=TransactionType.OPTIMAE_ACCEPTED,
                 domain_id=task.domain_id,
@@ -862,6 +915,7 @@ class UnifiedNode:
                     "reward_fraction": incentive_result.reward_fraction,
                     "quorum_agree_fraction": result.agree_fraction,
                     "incentive_reason": incentive_result.reason,
+                    **onchain_metrics,
                 },
             ))
             self.vuw.update_from_block([{
@@ -1032,7 +1086,13 @@ class UnifiedNode:
     async def _optimizer_loop(self) -> None:
         """Background loop: run optimization for configured domains."""
         while self._running:
-            for domain_id in self.optimizer_domains:
+            active_domains = [d for d in self.optimizer_domains if d not in self._domain_converged]
+            if not active_domains:
+                logger.info("All domains converged — optimizer loop idle")
+                await asyncio.sleep(self.config.optimizer_loop_interval)
+                continue
+
+            for domain_id in active_domains:
                 plugin = self._optimizer_plugins.get(domain_id)
                 if plugin is None:
                     continue
@@ -1042,10 +1102,27 @@ class UnifiedNode:
                 except Exception:
                     logger.exception("Optimization error for %s", domain_id)
 
+                # Check stop criteria (per-domain target_performance)
+                role = self._domain_roles.get(domain_id)
+                best = self._domain_best.get(domain_id, (None, None))
+                if (
+                    role is not None
+                    and role.target_performance is not None
+                    and best[1] is not None
+                    and best[1] >= role.target_performance
+                ):
+                    logger.info(
+                        "Domain %s converged: perf %.6f >= target %.6f",
+                        domain_id, best[1], role.target_performance,
+                    )
+                    self._domain_converged.add(domain_id)
+                    self.experiment_tracker.mark_converged(domain_id)
+
             await asyncio.sleep(self.config.optimizer_loop_interval)
 
     async def _run_optimization_round(self, domain_id: str, plugin: Any) -> None:
         """Run one optimization round: optimize → commit → reveal."""
+        round_start = time.monotonic()
         # Generate commitment nonce
         nonce = secrets.token_hex(16)
 
@@ -1122,6 +1199,17 @@ class UnifiedNode:
             ).model_dump_json()),
         )
         await self._broadcast(reveal_msg)
+
+        # Record experiment stats
+        wall_clock = time.monotonic() - round_start
+        self.experiment_tracker.record_round(
+            domain_id,
+            performance=performance,
+            parameters=parameters,
+            wall_clock_seconds=wall_clock,
+            chain_height=self._get_height(),
+            peers_count=len(self._peers),
+        )
 
         logger.info(
             "Optimization round: domain=%s perf=%.4f optimae=%s",
@@ -1494,6 +1582,11 @@ class UnifiedNode:
         app.router.add_get("/chain/block/{index}", self._http_chain_block)
         app.router.add_get("/peers", self._http_peers)
         app.router.add_get("/fees", self._http_fees)
+        app.router.add_get("/stats", self._http_stats)
+        app.router.add_get("/stats/experiments", self._http_stats_experiments)
+        app.router.add_get("/stats/rounds", self._http_stats_rounds)
+        app.router.add_get("/stats/export", self._http_stats_export)
+        app.router.add_get("/stats/chain-metrics", self._http_stats_chain_metrics)
 
     async def _http_tasks_pending(self, request) -> Any:
         from aiohttp import web
@@ -1643,6 +1736,57 @@ class UnifiedNode:
         stats["enabled"] = True
         return web.json_response(stats)
 
+    async def _http_stats(self, request) -> Any:
+        """Serve current experiment statistics."""
+        from aiohttp import web
+        domain_id = request.query.get("domain")
+        summary = self.experiment_tracker.get_summary(domain_id)
+        # Enrich with OLAP data when available
+        olap_summaries = self.experiment_tracker.get_olap_summary()
+        if olap_summaries is not None:
+            summary["olap_summaries"] = olap_summaries
+        return web.json_response(summary)
+
+    async def _http_stats_experiments(self, request) -> Any:
+        """List all experiments with summaries from OLAP."""
+        from aiohttp import web
+        if self.experiment_tracker._olap is None:
+            return web.json_response({"error": "OLAP not enabled"}, status=404)
+        experiments = self.experiment_tracker._olap.get_all_experiments()
+        summaries = self.experiment_tracker._olap.get_all_summaries()
+        return web.json_response({"experiments": experiments, "summaries": summaries})
+
+    async def _http_stats_rounds(self, request) -> Any:
+        """Return round history for an experiment."""
+        from aiohttp import web
+        if self.experiment_tracker._olap is None:
+            return web.json_response({"error": "OLAP not enabled"}, status=404)
+        experiment_id = request.query.get("experiment_id", "")
+        limit = int(request.query.get("limit", "1000"))
+        if not experiment_id:
+            return web.json_response({"error": "experiment_id required"}, status=400)
+        rounds = self.experiment_tracker._olap.get_rounds(experiment_id, limit)
+        return web.json_response({"rounds": rounds})
+
+    async def _http_stats_export(self, request) -> Any:
+        """Download the OLAP SQLite database file."""
+        from aiohttp import web
+        if self.experiment_tracker._olap is None:
+            return web.json_response({"error": "OLAP not enabled"}, status=404)
+        db_path = self.experiment_tracker._olap.db_path
+        return web.FileResponse(db_path, headers={
+            "Content-Disposition": "attachment; filename=olap.db",
+        })
+
+    async def _http_stats_chain_metrics(self, request) -> Any:
+        """Return on-chain experiment metrics from OPTIMAE_ACCEPTED transactions."""
+        from aiohttp import web
+        from doin_node.stats.chain_metrics import collect_chain_metrics
+        domain_id = request.query.get("domain_id")
+        blocks = self.consensus.chain.blocks
+        metrics = collect_chain_metrics(blocks, domain_id=domain_id)
+        return web.json_response({"metrics": metrics, "count": len(metrics)})
+
     async def _http_status(self, request) -> Any:
         from aiohttp import web
         status: dict[str, Any] = {
@@ -1653,7 +1797,12 @@ class UnifiedNode:
             "storage_backend": "sqlite" if self.chaindb else "json",
             "network_protocol": "gossipsub" if self.gossip else "flooding",
             "domains": {
-                d: {"optimize": r.optimize, "evaluate": r.evaluate, "synthetic": r.has_synthetic_data}
+                d: {
+                    "optimize": r.optimize, "evaluate": r.evaluate, "synthetic": r.has_synthetic_data,
+                    "target_performance": r.target_performance,
+                    "best_performance": self._domain_best.get(d, (None, None))[1],
+                    "converged": d in self._domain_converged,
+                }
                 for d, r in self._domain_roles.items()
             },
             "peers": len(self._peers),

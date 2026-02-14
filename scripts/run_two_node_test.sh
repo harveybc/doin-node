@@ -45,6 +45,7 @@ python -m doin_node.cli --config examples/quadratic_node_b.json --log-level INFO
 PID_B=$!
 
 echo -e "\n${GREEN}Both nodes running. Press Ctrl+C to stop.${NC}"
+echo -e "${CYAN}  Stats: ./experiment_stats.csv (+ .summary.json)${NC}"
 echo -e "${CYAN}  Node A: http://localhost:8470/status${NC}"
 echo -e "${CYAN}  Node B: http://localhost:8471/status${NC}\n"
 

@@ -6,7 +6,7 @@
   "target_block_time": 60,
   "quorum_min_evaluators": 1,
   "quorum_fraction": 0.67,
-  "quorum_tolerance": 0.10,
+  "quorum_tolerance": 0.1,
   "optimizer_loop_interval": 15,
   "eval_poll_interval": 5,
   "storage_backend": "json",
@@ -22,13 +22,18 @@
       "inference_plugin": "simple_quadratic",
       "synthetic_data_plugin": "simple_quadratic",
       "has_synthetic_data": true,
+      "target_performance": -1.0,
       "optimization_config": {
         "n_params": 10,
         "step_size": 0.5
       },
       "param_bounds": {
-        "x": [-20.0, 20.0]
+        "x": [
+          -20.0,
+          20.0
+        ]
       }
     }
-  ]
+  ],
+  "experiment_stats_file": "./experiment_stats.csv"
 }

@@ -61,6 +61,14 @@ def parse_args() -> argparse.Namespace:
         help="Path to identity key file (generated if missing)",
     )
     parser.add_argument(
+        "--stats-file",
+        help="Path to experiment stats CSV file (overrides config)",
+    )
+    parser.add_argument(
+        "--olap-db",
+        help="Path to OLAP SQLite database (overrides config)",
+    )
+    parser.add_argument(
         "--log-level", "-l",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -86,6 +94,10 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         raw["data_dir"] = overrides["data_dir"]
     if overrides.get("peers"):
         raw["bootstrap_peers"] = overrides["peers"]
+    if overrides.get("stats_file"):
+        raw["experiment_stats_file"] = overrides["stats_file"]
+    if overrides.get("olap_db"):
+        raw["olap_db_path"] = overrides["olap_db"]
 
     # Parse domain roles
     domain_roles = []
@@ -104,6 +116,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
                 k: tuple(v) for k, v in d.get("param_bounds", {}).items()
             },
             resource_limits=ResourceLimits(**rl) if rl else ResourceLimits(),
+            target_performance=d.get("target_performance"),
         ))
 
     return UnifiedNodeConfig(
@@ -124,6 +137,8 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         eval_poll_interval=raw.get("eval_poll_interval", 10.0),
         eval_max_concurrent=raw.get("eval_max_concurrent", 3),
         optimizer_loop_interval=raw.get("optimizer_loop_interval", 30.0),
+        experiment_stats_file=raw.get("experiment_stats_file", ""),
+        olap_db_path=raw.get("olap_db_path", ""),
     )
 
 
@@ -231,6 +246,10 @@ def main() -> None:
         overrides["data_dir"] = args.data_dir
     if args.peers:
         overrides["peers"] = [p.strip() for p in args.peers.split(",")]
+    if args.stats_file:
+        overrides["stats_file"] = args.stats_file
+    if args.olap_db:
+        overrides["olap_db"] = args.olap_db
 
     config = load_config(args.config, overrides)
     print(f"  Config loaded: {args.config}")

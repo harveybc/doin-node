@@ -30,5 +30,11 @@ echo -e "${YELLOW}Config: $CONFIG${NC}"
 echo -e "${YELLOW}Data:   $DATA_DIR${NC}"
 echo -e "\n${GREEN}Press Ctrl+C to stop.${NC}\n"
 
+STATS_FILE="$REPO_ROOT/experiment_stats.csv"
+echo -e "${YELLOW}Stats:  $STATS_FILE${NC}"
+
 cd "$REPO_ROOT"
 python -m doin_node.cli --config "$CONFIG" --log-level INFO
+
+echo -e "\n${GREEN}Experiment stats written to: $STATS_FILE${NC}"
+echo -e "${GREEN}Summary: ${STATS_FILE}.summary.json${NC}"
