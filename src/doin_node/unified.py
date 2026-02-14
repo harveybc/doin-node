@@ -274,6 +274,7 @@ class UnifiedNode:
         self._evaluator_plugins: dict[str, Any] = {}  # domain_id → plugin instance
         self._synthetic_plugins: dict[str, Any] = {}  # domain_id → plugin instance
         self._background_tasks: list[asyncio.Task] = []
+        self._domain_best: dict[str, tuple[dict[str, Any] | None, float | None]] = {}  # domain_id → (best_params, best_perf)
 
         # ── Wire up message handlers ──
         # Register on both flooding (legacy) and gossip (production)
@@ -1049,15 +1050,30 @@ class UnifiedNode:
         nonce = secrets.token_hex(16)
 
         # Run optimization (plugin-specific)
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, plugin.optimize,
+        # Plugins follow the OptimizationPlugin interface:
+        #   optimize(current_best_params, current_best_performance) -> (params, perf)
+        # We track current best per domain and adapt the call accordingly.
+        current_best = self._domain_best.get(domain_id, (None, None))
+
+        raw = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: plugin.optimize(current_best[0], current_best[1]),
         )
 
-        if result is None:
+        if raw is None:
             return
 
-        parameters = result.get("parameters", {})
-        performance = result.get("performance", 0.0)
+        # Normalize result: plugins return (params_dict, performance_float)
+        if isinstance(raw, tuple):
+            parameters, performance = raw
+        elif isinstance(raw, dict):
+            parameters = raw.get("parameters", {})
+            performance = raw.get("performance", 0.0)
+        else:
+            return
+
+        # Update domain best tracking
+        if current_best[1] is None or performance > current_best[1]:
+            self._domain_best[domain_id] = (parameters, performance)
 
         # Compute commitment hash (over core params only, not seed)
         commitment_hash = compute_commitment(parameters, nonce)
