@@ -605,22 +605,20 @@ class UnifiedNode:
 
     async def _gossip_send(self, peer_id: str, payload: dict) -> bool:
         """Send a message to a specific peer (callback for GossipSub)."""
-        # Find peer endpoint by peer_id
+        import aiohttp
+
         for ep, peer in self._peers.items():
             if peer.peer_id == peer_id:
+                url = f"http://{ep}/message"
                 try:
-                    import aiohttp
-                    session = self.transport._session
-                    if session:
-                        url = f"http://{ep}/message"
-                        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status != 200:
-                                logger.warning("GossipSend to %s (%s) failed: %s", peer_id[:12], ep, resp.status)
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            url, json=payload,
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
                             return resp.status == 200
-                    else:
-                        logger.warning("GossipSend: no HTTP session available")
                 except Exception as e:
-                    logger.warning("GossipSend to %s (%s) error: %s", peer_id[:12], ep, e)
+                    logger.warning("GossipSend to %s (%s) error: %s: %s", peer_id[:12], ep, type(e).__name__, e)
                     return False
         logger.debug("GossipSend: peer %s not found in _peers (have: %s)", peer_id[:12],
                       [f"{p.peer_id[:12]}@{e}" for e, p in self._peers.items()])
