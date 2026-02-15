@@ -614,9 +614,16 @@ class UnifiedNode:
                     if session:
                         url = f"http://{ep}/message"
                         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status != 200:
+                                logger.warning("GossipSend to %s (%s) failed: %s", peer_id[:12], ep, resp.status)
                             return resp.status == 200
-                except Exception:
+                    else:
+                        logger.warning("GossipSend: no HTTP session available")
+                except Exception as e:
+                    logger.warning("GossipSend to %s (%s) error: %s", peer_id[:12], ep, e)
                     return False
+        logger.debug("GossipSend: peer %s not found in _peers (have: %s)", peer_id[:12],
+                      [f"{p.peer_id[:12]}@{e}" for e, p in self._peers.items()])
         return False
 
     # ================================================================
