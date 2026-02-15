@@ -647,10 +647,17 @@ class UnifiedNode:
         )
         added = self.commit_reveal.add_commitment(commitment)
         if added:
-            logger.debug(
-                "Commitment %s from %s for domain %s",
-                data.commitment_hash[:12], message.sender_id[:12], data.domain_id,
-            )
+            is_remote = message.sender_id != self.peer_id
+            if is_remote:
+                logger.info(
+                    "📥 Received commitment from peer %s for %s",
+                    message.sender_id[:12], data.domain_id,
+                )
+            else:
+                logger.debug(
+                    "Commitment %s from self for %s",
+                    data.commitment_hash[:12], data.domain_id,
+                )
 
     async def _handle_optimae_reveal(self, message: Message, from_peer: str) -> None:
         """Handle Phase 2: reveal — validate hash, validate seed, start quorum."""
@@ -969,11 +976,22 @@ class UnifiedNode:
             # This ensures nodes pick up champions from OTHER nodes, not just their own.
             current_best = self._domain_best.get(task.domain_id, (None, None))
             if current_best[1] is None or verified > current_best[1]:
+                prev_best = current_best[1]
                 self._domain_best[task.domain_id] = (task.parameters, verified)
-                logger.info(
-                    "⚡ Domain %s best updated from accepted optimae: %.6f (from peer %s)",
-                    task.domain_id, verified, task.requester_id[:12],
-                )
+                is_remote = task.requester_id != self.peer_id
+                if is_remote:
+                    logger.info(
+                        "🏝️  MIGRATION: adopted champion from peer %s for %s: %.6f → %.6f (Δ%.6f)",
+                        task.requester_id[:12], task.domain_id,
+                        prev_best if prev_best is not None else float('-inf'),
+                        verified,
+                        verified - (prev_best or 0),
+                    )
+                else:
+                    logger.info(
+                        "⚡ Domain %s new local best: %.6f (from our own optimae)",
+                        task.domain_id, verified,
+                    )
 
             logger.info(
                 "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
