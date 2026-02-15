@@ -142,6 +142,17 @@ Every node syncing the chain gets the full experiment history of ALL participant
 - **L2**: Genetic algorithms / optimization plugins — what DOIN decentralizes
 - **L3**: Deep learning meta-optimizer trained on OLAP data from all network participants
 
+## Benchmarks
+
+### Multi-Node Island Model (Quadratic Domain)
+
+| Setup | Rounds to Converge | Speedup |
+|-------|-------------------|---------|
+| Single node (Omega, RTX 4070) | 39 | 1× |
+| Two nodes (Dragon RTX 4090 + Omega RTX 4070) | 5–6 | **~7×** |
+
+Both nodes converged to the same optimal solution (-91.90), proving champion sharing works correctly via on-chain optimae exchange. Auto-discovery enables zero-config peer connection — only one node needs a bootstrap address.
+
 ## Tests
 
 ```bash
