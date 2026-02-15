@@ -138,7 +138,9 @@ class Transport:
 
             if self._message_callback:
                 sender = request.remote or "unknown"
-                await self._message_callback(message, sender)
+                # Fire-and-forget: respond immediately, process in background
+                import asyncio
+                asyncio.create_task(self._message_callback(message, sender))
 
             return web.json_response({"status": "ok"})
         except Exception:
