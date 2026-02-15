@@ -402,6 +402,24 @@ class UnifiedNode:
         self._peers[peer.endpoint] = peer
         return peer
 
+    async def _check_port_reachable(self) -> None:
+        """Self-check: verify our listening port is reachable from localhost."""
+        import aiohttp as _aio
+        url = f"http://127.0.0.1:{self.config.port}/chain/status"
+        try:
+            async with _aio.ClientSession() as s:
+                async with s.get(url, timeout=_aio.ClientTimeout(total=3)) as r:
+                    if r.status == 200:
+                        logger.info("✅ Port %d self-check passed", self.config.port)
+                    else:
+                        logger.warning("⚠️  Port %d self-check: HTTP %d", self.config.port, r.status)
+        except Exception:
+            logger.warning(
+                "⚠️  Port %d may be blocked! Peers won't be able to reach this node. "
+                "Check firewall: sudo ufw allow %d/tcp",
+                self.config.port, self.config.port,
+            )
+
     # ================================================================
     # Lifecycle
     # ================================================================
@@ -444,6 +462,9 @@ class UnifiedNode:
 
         # Start transport
         await self.transport.start()
+
+        # Port connectivity self-check
+        await self._check_port_reachable()
 
         # Connect bootstrap peers
         for addr in self.config.bootstrap_peers:
@@ -627,9 +648,10 @@ class UnifiedNode:
     # ================================================================
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
-        # Auto-discover peers from incoming connections
+        # Auto-discover peers from incoming connections (skip localhost)
         sender_endpoint = f"{sender}:{self.config.port}"
-        if sender != "unknown":
+        _local = {"unknown", "127.0.0.1", "::1", "localhost"}
+        if sender not in _local:
             existing = self._peers.get(sender_endpoint)
             if existing:
                 # Update peer_id if we had a placeholder (e.g. from bootstrap)
