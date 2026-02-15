@@ -624,6 +624,12 @@ class UnifiedNode:
     # ================================================================
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
+        # Auto-discover peers from incoming connections
+        sender_endpoint = f"{sender}:{self.config.port}"
+        if sender_endpoint not in self._peers and sender != "unknown":
+            self.add_peer(sender, self.config.port, peer_id=message.sender_id)
+            logger.info("🔍 Auto-discovered peer %s from incoming message", sender)
+
         if self.gossip:
             # GossipSub handles dedup, dispatch, and mesh forwarding
             await self.gossip.handle_incoming(message, sender)
