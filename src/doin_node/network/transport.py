@@ -128,6 +128,12 @@ class Transport:
         """Handle incoming message POST."""
         try:
             data = await request.json()
+            # Unwrap GossipSub envelope if present: {"type": "message", "data": {...}}
+            if isinstance(data, dict) and data.get("type") == "message" and "data" in data:
+                data = data["data"]
+            elif isinstance(data, dict) and data.get("type") == "control":
+                # GossipSub control message — handle silently
+                return web.json_response({"status": "ok"})
             message = Message.model_validate(data)
 
             if self._message_callback:
