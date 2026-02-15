@@ -7,7 +7,7 @@
   "target_block_time": 60,
   "quorum_min_evaluators": 1,
   "quorum_fraction": 0.67,
-  "quorum_tolerance": 0.10,
+  "quorum_tolerance": 0.500,
   "optimizer_loop_interval": 15,
   "eval_poll_interval": 5,
   "storage_backend": "sqlite",
