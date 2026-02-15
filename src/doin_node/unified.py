@@ -629,6 +629,11 @@ class UnifiedNode:
         if sender_endpoint not in self._peers and sender != "unknown":
             self.add_peer(sender, self.config.port, peer_id=message.sender_id)
             logger.info("🔍 Auto-discovered peer %s from incoming message", sender)
+            # Also register in GossipSub mesh so messages flow bidirectionally
+            if self.gossip:
+                self.gossip.add_peer(message.sender_id)
+                for topic_state in self.gossip._topics.values():
+                    topic_state.mesh.add(message.sender_id)
 
         if self.gossip:
             # GossipSub handles dedup, dispatch, and mesh forwarding
