@@ -13,3 +13,12 @@ venv/
 *.so
 .coverage
 htmlcov/
+
+# Test data
+doin-data-*/
+*.db
+*.db-shm
+*.db-wal
+experiment_stats*.csv
+cross_machine_config.json
+*.summary.json
