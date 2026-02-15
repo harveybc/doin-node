@@ -703,6 +703,23 @@ class UnifiedNode:
             # Still allow — but their optimae won't count toward consensus
             # (effective increment will be near-zero due to low reputation)
 
+        # ── Optimistic adoption (island model) ──────────────────────
+        # Immediately adopt better parameters from peers WITHOUT waiting for
+        # consensus. The optimizer is greedy — if someone claims better perf,
+        # use it now and keep optimizing from there. Consensus still runs in
+        # parallel for rewards, payment, and permanent on-chain record.
+        # If the optimae later gets rejected, we've lost a few rounds at worst.
+        if message.sender_id != self.peer_id:
+            current_best = self._domain_best.get(data.domain_id, (None, None))
+            if current_best[1] is None or data.reported_performance > current_best[1]:
+                self._domain_best[data.domain_id] = (data.parameters, data.reported_performance)
+                logger.info(
+                    "🏝️  MIGRATION: optimistic adopt from peer %s for %s: %.6f → %.6f",
+                    message.sender_id[:12], data.domain_id,
+                    current_best[1] if current_best[1] is not None else float('-inf'),
+                    data.reported_performance,
+                )
+
         # Domain must have synthetic data for verification trust
         role = self._domain_roles.get(data.domain_id)
         if role and not role.has_synthetic_data:
