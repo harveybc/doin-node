@@ -629,14 +629,29 @@ class UnifiedNode:
     async def _on_transport_message(self, message: Message, sender: str) -> None:
         # Auto-discover peers from incoming connections
         sender_endpoint = f"{sender}:{self.config.port}"
-        if sender_endpoint not in self._peers and sender != "unknown":
-            self.add_peer(sender, self.config.port, peer_id=message.sender_id)
-            logger.info("🔍 Auto-discovered peer %s from incoming message", sender)
-            # Also register in GossipSub mesh so messages flow bidirectionally
-            if self.gossip:
-                self.gossip.add_peer(message.sender_id)
-                for topic_state in self.gossip._topics.values():
-                    topic_state.mesh.add(message.sender_id)
+        if sender != "unknown":
+            existing = self._peers.get(sender_endpoint)
+            if existing:
+                # Update peer_id if we had a placeholder (e.g. from bootstrap)
+                if existing.peer_id != message.sender_id:
+                    old_id = existing.peer_id
+                    existing.peer_id = message.sender_id
+                    # Update GossipSub mesh with real peer_id
+                    if self.gossip:
+                        self.gossip.remove_peer(old_id)
+                        self.gossip.add_peer(message.sender_id)
+                        for topic_state in self.gossip._topics.values():
+                            topic_state.mesh.discard(old_id)
+                            topic_state.mesh.add(message.sender_id)
+                    logger.info("🔍 Updated peer %s → %s", old_id[:12], message.sender_id[:12])
+            else:
+                self.add_peer(sender, self.config.port, peer_id=message.sender_id)
+                logger.info("🔍 Auto-discovered peer %s from incoming message", sender)
+                # Register in GossipSub mesh so messages flow bidirectionally
+                if self.gossip:
+                    self.gossip.add_peer(message.sender_id)
+                    for topic_state in self.gossip._topics.values():
+                        topic_state.mesh.add(message.sender_id)
 
         if self.gossip:
             # GossipSub handles dedup, dispatch, and mesh forwarding

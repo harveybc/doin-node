@@ -1,0 +1,41 @@
+{
+  "$doc": "Dragon node config \u2014 run on Dragon machine. Bootstraps to Delta. REPLACE 192.168.0.100 with Delta's actual IP address.",
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-dragon-solo",
+  "bootstrap_peers": [],
+  "target_block_time": 60,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 0.67,
+  "quorum_tolerance": 0.5,
+  "optimizer_loop_interval": 15,
+  "eval_poll_interval": 5,
+  "storage_backend": "sqlite",
+  "network_protocol": "gossipsub",
+  "discovery_enabled": true,
+  "fee_market_enabled": true,
+  "domains": [
+    {
+      "domain_id": "quadratic",
+      "optimize": true,
+      "evaluate": true,
+      "optimization_plugin": "simple_quadratic",
+      "inference_plugin": "simple_quadratic",
+      "synthetic_data_plugin": "simple_quadratic",
+      "has_synthetic_data": true,
+      "target_performance": -50.0,
+      "optimization_config": {
+        "n_params": 10,
+        "step_size": 0.5
+      },
+      "param_bounds": {
+        "x": [
+          -20.0,
+          20.0
+        ]
+      }
+    }
+  ],
+  "experiment_stats_file": "./experiment_stats_dragon_solo.csv",
+  "olap_db_path": "./olap_dragon_solo.db"
+}
