@@ -12,7 +12,7 @@
   "eval_poll_interval": 5,
   "storage_backend": "sqlite",
   "network_protocol": "flooding",
-  "discovery_enabled": false,
+  "discovery_enabled": true,
   "fee_market_enabled": false,
   "domains": [
     {
