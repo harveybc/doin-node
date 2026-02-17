@@ -60,7 +60,7 @@
       },
       "incentive_config": {
         "higher_is_better": true,
-        "tolerance_margin": 0.1,
+        "tolerance_margin": 0.35,
         "bonus_threshold": 0.05,
         "min_reward_fraction": 0.3,
         "max_bonus_multiplier": 1.2
