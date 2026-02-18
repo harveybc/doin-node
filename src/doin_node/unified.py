@@ -215,6 +215,8 @@ class UnifiedNode:
 
         # ── Core components ──
         self.transport = Transport(host=config.host, port=config.port)
+        self.transport._peer_id = self.identity.peer_id
+        self.transport._get_peers_fn = self._get_peers_for_discovery
 
         # Network protocol: GossipSub (production) or Flooding (legacy)
         self.flooding = FloodingProtocol(FloodingConfig())
@@ -403,6 +405,14 @@ class UnifiedNode:
     def _peer_id_exists(self, peer_id: str) -> bool:
         """Check if a peer with this ID already exists (on any endpoint)."""
         return any(p.peer_id == peer_id for p in self._peers.values())
+
+    def _get_peers_for_discovery(self) -> list[dict]:
+        """Return known peers for the /peers endpoint."""
+        return [
+            {"peer_id": p.peer_id, "address": p.address, "port": p.port}
+            for p in self._peers.values()
+            if p.peer_id != self.peer_id
+        ]
 
     def add_peer(self, address: str, port: int, peer_id: str = "") -> Peer:
         pid = peer_id or f"{address}:{port}"

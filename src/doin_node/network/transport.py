@@ -40,6 +40,8 @@ class Transport:
         self._runner: web.AppRunner | None = None
         self._session: ClientSession | None = None
         self._message_callback: Callable[..., Coroutine[Any, Any, None]] | None = None
+        self._peer_id: str = ""  # Set by unified node after identity is created
+        self._get_peers_fn: Callable[[], list[dict]] | None = None  # Optional: returns peer list
 
         # Register routes
         self._app.router.add_post("/message", self._handle_message)
@@ -155,5 +157,9 @@ class Transport:
         return web.json_response({"status": "healthy", "port": self.port})
 
     async def _handle_peers(self, request: web.Request) -> web.Response:
-        """Placeholder for peer listing endpoint."""
-        return web.json_response({"peers": []})
+        """Return this node's peer_id and known peers for discovery."""
+        peers = self._get_peers_fn() if self._get_peers_fn else []
+        return web.json_response({
+            "self": {"peer_id": self._peer_id, "port": self.port},
+            "peers": peers,
+        })
