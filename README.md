@@ -91,6 +91,128 @@ See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.
 }
 ```
 
+## Multi-Node Predictor Deployment (Real Example)
+
+This deploys the [harveybc/predictor](https://github.com/harveybc/predictor) timeseries system across multiple machines with DOIN handling island-model migration.
+
+### Prerequisites (each machine)
+
+```bash
+# Install DOIN packages
+pip install git+https://github.com/harveybc/doin-core.git
+pip install git+https://github.com/harveybc/doin-node.git
+pip install git+https://github.com/harveybc/doin-plugins.git
+
+# Clone predictor (the ML system DOIN wraps)
+git clone --branch main --single-branch --depth 1 https://github.com/harveybc/predictor.git
+cd predictor && pip install -e .
+```
+
+### Node 1 — First Node (seed)
+
+Create `config_node1.json`:
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-predictor",
+  "bootstrap_peers": [],
+  "network_protocol": "gossipsub",
+  "discovery_enabled": true,
+  "initial_threshold": 1e-6,
+  "quorum_min_evaluators": 1,
+  "storage_backend": "sqlite",
+  "fee_market_enabled": false,
+  "domains": [{
+    "domain_id": "predictor-timeseries",
+    "optimize": true,
+    "evaluate": true,
+    "optimization_plugin": "predictor",
+    "inference_plugin": "predictor",
+    "has_synthetic_data": true,
+    "synthetic_data_validation": false,
+    "target_performance": 999.0,
+    "optimization_config": {
+      "predictor_root": "/path/to/predictor",
+      "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
+      "predictor_plugin": "mimo",
+      "preprocessor_plugin": "stl_preprocessor",
+      "target_plugin": "default_target",
+      "pipeline_plugin": "stl_pipeline",
+      "step_size_fraction": 0.15,
+      "epochs": 50,
+      "batch_size": 32,
+      "population_size": 10,
+      "n_generations": 5,
+      "early_patience": 15,
+      "early_stopping_patience": 2
+    },
+    "param_bounds": {
+      "encoder_conv_layers": [1, 3],
+      "encoder_base_filters": [16, 64],
+      "encoder_lstm_units": [8, 32],
+      "learning_rate": [1e-5, 0.01],
+      "batch_size": [16, 64],
+      "l2_reg": [1e-7, 0.001],
+      "decoder_dropout": [0.0, 0.5]
+    },
+    "resource_limits": {
+      "max_training_seconds": 3600,
+      "max_memory_mb": 14000,
+      "max_epochs": 2000
+    }
+  }],
+  "experiment_stats_file": "./predictor_stats.csv"
+}
+```
+
+Start:
+
+```bash
+cd /path/to/predictor
+doin-node --config /path/to/config_node1.json --log-level INFO --olap-db predictor_olap.db
+```
+
+### Node 2+ — Additional Nodes
+
+Same config, but add `bootstrap_peers` pointing to Node 1:
+
+```json
+{
+  "bootstrap_peers": ["192.168.1.100:8470"],
+  ...
+}
+```
+
+Nodes discover each other via LAN scan + bootstrap. Each runs the **full DEAP genetic algorithm** independently. When a node finds a champion, it broadcasts parameters on-chain; other nodes auto-accept if better and inject into their population (island model migration).
+
+### Key Configuration Options
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `synthetic_data_validation` | `false` = auto-accept/reject by reported MAE (skip quorum). `true` = full evaluator verification | `true` |
+| `population_size` | GA population per generation | 10 |
+| `n_generations` | Generations per stage | 5 |
+| `epochs` | Training epochs per candidate | 50 |
+| `discovery_enabled` | Auto-discover LAN peers | `true` |
+| `network_protocol` | `gossipsub` (production) or `flooding` (legacy) | `gossipsub` |
+| `initial_threshold` | Min threshold for block generation | `1e-6` |
+
+### What You'll See
+
+1. **Dashboard** at `http://<ip>:8470/dashboard` — live events, peers, optimization progress
+2. **Optimizer Events tab** — champion discoveries (🏆), broadcasts (📡), auto-accepts (✅), auto-rejects (❌), peer connections (🔗)
+3. **Domains tab** — current champion with train/val/test MAE vs naive baselines
+4. **Log** — `Broadcast optimae_reveal → 2 peers` confirms migration is flowing
+
+### Example: 3-Node LAN Deployment
+
+See ready-to-use config files in `examples/`:
+- `predictor_single_node.json` — seed node (Dragon, RTX 4090)
+- `predictor_omega_node.json` — GPU node (Omega, RTX 4070)
+- `predictor_delta_node.json` — CPU-only node (Delta)
+
 ## Dashboard
 
 Access the real-time monitoring dashboard at `http://localhost:8470/dashboard`.
