@@ -176,10 +176,14 @@ class GossipSub:
         if topics:
             self._peer_topics[peer_id] = topics
         # Add to mesh for all subscribed topics so publish() can reach them
+        added_to = []
         for topic in self._subscriptions:
             state = self._topics.get(topic)
             if state and peer_id != self.peer_id:
                 state.mesh.add(peer_id)
+                added_to.append(topic)
+        if added_to:
+            logger.info("gossip.add_peer(%s) → mesh topics: %s", peer_id[:12], added_to)
 
     def remove_peer(self, peer_id: str) -> None:
         self._known_peers.discard(peer_id)
@@ -208,6 +212,12 @@ class GossipSub:
         if state is None:
             self.subscribe(topic)
             state = self._topics[topic]
+
+        # Debug: log mesh state
+        logger.debug(
+            "publish topic=%s mesh=%s subs=%s known=%s",
+            topic, list(state.mesh)[:3], list(self._subscriptions), len(self._known_peers),
+        )
 
         # If we're in the mesh for this topic, use mesh peers
         # Otherwise use fanout peers
