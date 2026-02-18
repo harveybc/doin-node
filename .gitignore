@@ -22,3 +22,6 @@ doin-data-*/
 experiment_stats*.csv
 cross_machine_config.json
 *.summary.json
+*.pyc
+*.keras
+node_modules/
