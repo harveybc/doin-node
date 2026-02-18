@@ -13,6 +13,17 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
+
+
+def _json_default(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _dumps(obj):
+    return json.dumps(obj, default=_json_default)
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +105,7 @@ async def _api_node(request: web.Request) -> web.Response:
         "chain_height": node.chaindb.height if node.chaindb else 0,
         "discovery_enabled": node.config.discovery_enabled,
         "dashboard_enabled": node.config.dashboard_enabled,
-    })
+    }, dumps=_dumps)
 
 
 # ── Peers ────────────────────────────────────────────────────
@@ -124,7 +135,7 @@ async def _api_peers(request: web.Request) -> web.Response:
         "connected_count": len(node._peers),
         "known_count": node.discovery.known_count if node.discovery else 0,
         "peers": peers,
-    })
+    }, dumps=_dumps)
 
 
 # ── Optimization Status ─────────────────────────────────────
@@ -172,13 +183,13 @@ async def _api_optimization(request: web.Request) -> web.Response:
             tolerance = getattr(ic, "tolerance_margin", None)
             break
 
-    return web.json_response({"domains": domains, "tolerance_margin": tolerance})
+    return web.json_response({"domains": domains, "tolerance_margin": tolerance}, dumps=_dumps)
 
 
 # ── Live Training State ──────────────────────────────────────
 
 async def _api_training(request: web.Request) -> web.Response:
-    return web.json_response(_training_state)
+    return web.json_response(_training_state, dumps=_dumps)
 
 
 # ── Evaluation Requests ──────────────────────────────────────
@@ -209,7 +220,7 @@ async def _api_evaluations(request: web.Request) -> web.Response:
         "completed_count": len(completed),
         "pending": pending,
         "completed": completed[-limit:],
-    })
+    }, dumps=_dumps)
 
 
 # ── Metrics Time Series ─────────────────────────────────────
@@ -257,7 +268,7 @@ async def _api_metrics(request: web.Request) -> web.Response:
             print(f"[OLAP ERROR] {e}\n{traceback.format_exc()}", flush=True)
 
     # No CSV fallback — OLAP is the single source of truth
-    return web.json_response({"metrics": metrics, "count": len(metrics)})
+    return web.json_response({"metrics": metrics, "count": len(metrics)}, dumps=_dumps)
 
 
 # ── Plugins ──────────────────────────────────────────────────
@@ -275,7 +286,7 @@ async def _api_plugins(request: web.Request) -> web.Response:
             p = store.get(domain_id)
             entry[role] = {"name": type(p).__name__, "module": type(p).__module__} if p else None
         plugins.append(entry)
-    return web.json_response({"plugins": plugins})
+    return web.json_response({"plugins": plugins}, dumps=_dumps)
 
 
 # ── Chain ────────────────────────────────────────────────────
@@ -299,7 +310,7 @@ async def _api_chain(request: web.Request) -> web.Response:
     return web.json_response({
         "height": node.chaindb.height if node.chaindb else 0,
         "blocks": blocks,
-    })
+    }, dumps=_dumps)
 
 
 # ── Optimizer Events Log ─────────────────────────────────────
@@ -403,4 +414,4 @@ async def _api_events(request: web.Request) -> web.Response:
     events.sort(key=lambda e: str(e.get("timestamp", "")), reverse=True)
     events = events[:limit]
 
-    return web.json_response({"events": events, "count": len(events)})
+    return web.json_response({"events": events, "count": len(events)}, dumps=_dumps)
