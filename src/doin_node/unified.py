@@ -30,6 +30,7 @@ import math
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -297,6 +298,10 @@ class UnifiedNode:
         self._domain_champion_metrics: dict[str, dict[str, Any]] = {}  # domain_id → champion detail metrics
         self._start_time: float = time.time()
 
+        # ── Live event log (for dashboard) ──
+        self._live_events: list[dict[str, Any]] = []  # Most recent events (capped at 500)
+        self._live_events_max = 500
+
         # ── Experiment tracker ──
         stats_file = config.experiment_stats_file or str(
             Path(config.data_dir) / "experiment_stats.csv"
@@ -405,6 +410,17 @@ class UnifiedNode:
     def _peer_id_exists(self, peer_id: str) -> bool:
         """Check if a peer with this ID already exists (on any endpoint)."""
         return any(p.peer_id == peer_id for p in self._peers.values())
+
+    def _log_event(self, event_type: str, **kwargs: Any) -> None:
+        """Add an event to the live event log (for dashboard display)."""
+        event = {
+            "type": event_type,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            **kwargs,
+        }
+        self._live_events.append(event)
+        if len(self._live_events) > self._live_events_max:
+            self._live_events = self._live_events[-self._live_events_max:]
 
     def _get_peers_for_discovery(self) -> list[dict]:
         """Return known peers for the /peers endpoint."""
@@ -822,6 +838,11 @@ class UnifiedNode:
             if is_better:
                 # Auto-accept — treat reported_performance as verified
                 await self._auto_accept_optimae(data, message.sender_id)
+                self._log_event("auto_accept",
+                    domain_id=data.domain_id, optimae_id=data.optimae_id[:12],
+                    peer=message.sender_id[:12], is_self=message.sender_id == self.peer_id,
+                    performance=data.reported_performance,
+                    previous_best=current_best[1] if current_best[1] is not None else None)
                 logger.info(
                     "✅ AUTO-ACCEPT optimae %s (no synthetic validation): perf=%.6f > best=%.6f",
                     data.optimae_id[:12], data.reported_performance,
@@ -838,6 +859,11 @@ class UnifiedNode:
                         "reason": f"reported perf {data.reported_performance:.6f} <= current best {current_best[1]:.6f}",
                     },
                 ))
+                self._log_event("auto_reject",
+                    domain_id=data.domain_id, optimae_id=data.optimae_id[:12],
+                    peer=message.sender_id[:12], is_self=message.sender_id == self.peer_id,
+                    performance=data.reported_performance,
+                    current_best=current_best[1])
                 logger.info(
                     "❌ AUTO-REJECT optimae %s: perf=%.6f <= best=%.6f",
                     data.optimae_id[:12], data.reported_performance,
@@ -1471,6 +1497,12 @@ class UnifiedNode:
             n_evals = stage_info.get("total_candidates_evaluated", 0)
             patience_str = f"{stage_info.get('no_improve_counter', 0)}/{stage_info.get('patience', '?')}"
 
+            node._log_event("generation_end",
+                domain_id=domain_id, gen=gen, stage=stage, total_stages=total_stages,
+                total_evals=n_evals,
+                champion_fitness=champ_fit, champion_val_mae=champ_val,
+                avg_fitness=avg_fit, patience=patience_str)
+
             logger.info(
                 "[%s] gen=%d stage=%d/%d evals=%d  champ_fitness=%.6f  champ_val_mae=%s  avg_fitness=%.6f  patience=%s",
                 domain_id, gen, stage, total_stages, n_evals,
@@ -1563,6 +1595,15 @@ class UnifiedNode:
             **{k: v for k, v in metrics.items() if k != "fitness"},
         }
 
+        self._log_event("champion",
+            domain_id=domain_id, gen=gen, stage=stage_info.get("stage", 1),
+            performance=performance,
+            val_mae=metrics.get("val_mae"), train_mae=metrics.get("train_mae"),
+            test_mae=metrics.get("test_mae"),
+            val_naive_mae=metrics.get("val_naive_mae"), train_naive_mae=metrics.get("train_naive_mae"),
+            test_naive_mae=metrics.get("test_naive_mae"),
+            is_improvement=is_improvement)
+
         logger.info(
             "🏆 New champion [%s] gen=%d stage=%d  perf=%.6f  val_mae=%.6f  train_mae=%.6f  test_mae=%s",
             domain_id, gen, stage_info.get("stage", 1), performance,
@@ -1607,6 +1648,10 @@ class UnifiedNode:
             ).model_dump_json()),
         )
         await self._broadcast(reveal_msg)
+
+        self._log_event("broadcast",
+            domain_id=domain_id, gen=gen, performance=performance,
+            optimae_id=optimae_id[:16])
 
         logger.info(
             "📡 Champion broadcast: domain=%s gen=%d perf=%.4f optimae=%s",
@@ -1945,6 +1990,7 @@ class UnifiedNode:
                             if self.gossip:
                                 self.gossip.add_peer(p.peer_id)
                             self.discovery.mark_connected(peer.endpoint)
+                            self._log_event("peer_connected", endpoint=peer.endpoint, peer_id=p.peer_id[:12])
                             logger.info("Connected to discovered peer: %s", peer.endpoint)
         except Exception:
             logger.exception("LAN scan error")

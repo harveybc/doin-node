@@ -216,10 +216,12 @@
 
                   <!-- Events Tab -->
                   <div class="tab-pane fade" id="tabEvents">
-                    <table class="table table-sm table-striped">
-                      <thead><tr><th>Event</th><th>Type</th><th>Performance</th><th>Val MAE</th><th>Val Naive</th><th>Train MAE</th><th>Details</th><th>Domain</th><th>Time</th></tr></thead>
+                    <div style="max-height:500px; overflow-y:auto">
+                    <table class="table table-sm table-striped" style="font-size:12px">
+                      <thead><tr><th>Type</th><th>Details</th><th>Time</th></tr></thead>
                       <tbody id="eventsBody"></tbody>
                     </table>
+                    </div>
                   </div>
 
                   <!-- Plugins Tab -->
@@ -384,7 +386,7 @@ async function refreshAll() {
       const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
       const c = d.champion || {};
       const champRow = c.val_mae !== undefined ? `
-        <tr style="font-size:11px; background:rgba(40,167,69,0.15); color:#212529">
+        <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
           <td colspan="2"><strong>🏆 Champion (round ${c.round || '?'})</strong></td>
           <td colspan="5">
             Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
@@ -462,37 +464,42 @@ async function refreshAll() {
   // Events
   if (events && events.events) {
     document.getElementById('eventsBody').innerHTML = events.events.map(e => {
-      if (e.type === 'improvement') {
-        return `<tr class="event-row improvement">
-          <td><i class="fas fa-star text-warning"></i> Round ${e.round}</td>
-          <td><span class="badge badge-success">Improvement</span></td>
-          <td>${fmt(e.performance)}</td>
-          <td><strong>${fmt(e.val_mae,6)}</strong></td>
-          <td>${fmt(e.val_naive_mae,6)}</td>
-          <td>${fmt(e.train_mae,6)}</td>
-          <td>best=${fmt(e.best_performance)}</td>
-          <td>${e.domain_id}</td>
-          <td>${fmtTime(e.timestamp)}</td>
-        </tr>`;
-      } else if (e.type === 'migration') {
-        return `<tr class="event-row" style="background:rgba(0,123,255,0.1)">
-          <td><i class="fas fa-exchange-alt text-info"></i> Block ${e.round}</td>
-          <td><span class="badge badge-info">Migration</span></td>
-          <td>${fmt(e.performance)}</td>
-          <td colspan="3">from <code>${e.from_peer}</code></td>
-          <td>${e.domain_id}</td>
-          <td>${fmtTime(e.timestamp)}</td>
-        </tr>`;
-      } else if (e.type === 'no_improvement') {
-        return `<tr class="text-muted">
-          <td>Rounds ${e.from_round}–${e.to_round}</td>
-          <td><span class="badge badge-secondary">${e.rounds_skipped} rounds</span></td>
-          <td colspan="5">No improvement</td>
-          <td>${e.domain_id}</td>
-          <td>${fmtTime(e.timestamp)}</td>
-        </tr>`;
+      const t = fmtTime(e.timestamp);
+      const f = (v,d) => v != null ? fmt(v,d||6) : '--';
+      switch (e.type) {
+        case 'champion':
+          return `<tr style="background:rgba(40,167,69,0.15)">
+            <td><span class="badge badge-success">🏆 Champion</span></td>
+            <td>Gen ${e.gen} Stage ${e.stage} | perf=${f(e.performance,4)} | val_MAE=<strong>${f(e.val_mae)}</strong> train=${f(e.train_mae)} test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
+            <td>${t}</td></tr>`;
+        case 'broadcast':
+          return `<tr style="background:rgba(23,162,184,0.1)">
+            <td><span class="badge badge-info">📡 Broadcast</span></td>
+            <td>Gen ${e.gen} perf=${f(e.performance,4)} optimae=${e.optimae_id||''}</td>
+            <td>${t}</td></tr>`;
+        case 'auto_accept':
+          return `<tr style="background:rgba(40,167,69,0.2)">
+            <td><span class="badge badge-success">✅ Accept</span></td>
+            <td>perf=${f(e.performance,4)} prev=${f(e.previous_best,4)} from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${t}</td></tr>`;
+        case 'auto_reject':
+          return `<tr style="background:rgba(220,53,69,0.1)">
+            <td><span class="badge badge-danger">❌ Reject</span></td>
+            <td>perf=${f(e.performance,4)} best=${f(e.current_best,4)} from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${t}</td></tr>`;
+        case 'generation_end':
+          return `<tr>
+            <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
+            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_val=${f(e.champion_val_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}</td>
+            <td>${t}</td></tr>`;
+        case 'peer_connected':
+          return `<tr style="background:rgba(23,162,184,0.05)">
+            <td><span class="badge badge-info">🔗 Peer</span></td>
+            <td>${e.endpoint||''} (${e.peer_id||''})</td>
+            <td>${t}</td></tr>`;
+        default:
+          return `<tr><td><span class="badge badge-dark">${e.type}</span></td><td><code style="font-size:10px">${JSON.stringify(e).substring(0,200)}</code></td><td>${t}</td></tr>`;
       }
-      return '';
     }).join('');
   }
 
