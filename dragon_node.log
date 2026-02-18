@@ -90,3 +90,107 @@ Starting hyperparameter optimization (Gen 0 to 4, running 5 generations)...
 
 --- Evaluating Candidate 1/10 | Stage 1/5 [Base Architecture] | Gen 0/4 | Params: 3 | Total Evals: 1 ---
 Params: {'encoder_conv_layers': 1, 'encoder_base_filters': 217, 'encoder_lstm_units': 80}
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
+Attempting to load plugin: mimo from group: predictor.plugins
+Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1771435462.179061  222036 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
+I0000 00:00:1771435462.179950  222036 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12838 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+  Loaded x_train_df: (7300, 8)
+  Loaded y_train_df: (7300, 8)
+  Loaded x_val_df: (1575, 8)
+  Loaded y_val_df: (1575, 8)
+  Loaded x_test_df: (1575, 8)
+  Loaded y_test_df: (1575, 8)
+Creating sliding windows (Size=79)... Done.
+Extracting baselines for target column 'CLOSE'... Done.
+Creating sliding windows (Size=79)... Done.
+No columns specified for exclusion
+Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand1 gpu=True gc=False
+[RESOURCE] fit_start ts=1771435463.644 VmRSS_kB=1136136 VmHWM_kB=1136136 gpu_current_B=1280044 gpu_peak_B=1483584 gc=None
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:16 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:16 [doin_node.unified] INFO: 🔍 Auto-discovered peer 192.168.0.100:8470 from incoming message
+2026-02-18 12:26:16 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
+2026-02-18 12:26:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:16 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:18 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:18 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:18 [doin_node.unified] WARNING: Bounds validation failed: Parameter 'encoder_lstm_units' = 123.0 outside bounds [8, 32]
+2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+
+Shutting down...
+2026-02-18 12:26:43 [doin_node.network.transport] INFO: Transport stopped
+2026-02-18 12:26:43 [doin_node.stats.experiment_tracker] INFO: Experiment summary written: predictor_experiment_stats.csv.summary.json
+2026-02-18 12:26:43 [doin_node.unified] INFO: Unified node stopped
+CRITICAL: Worker failed (returncode=-15). Tail of stdout:
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
+Attempting to load plugin: mimo from group: predictor.plugins
+Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1771435462.179061  222036 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
+I0000 00:00:1771435462.179950  222036 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12838 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+  Loaded x_train_df: (7300, 8)
+  Loaded y_train_df: (7300, 8)
+  Loaded x_val_df: (1575, 8)
+  Loaded y_val_df: (1575, 8)
+  Loaded x_test_df: (1575, 8)
+  Loaded y_test_df: (1575, 8)
+Creating sliding windows (Size=79)... Done.
+Extracting baselines for target column 'CLOSE'... Done.
+Creating sliding windows (Size=79)... Done.
+No columns specified for exclusion
+Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand1 gpu=True gc=False
+[RESOURCE] fit_start ts=1771435463.644 VmRSS_kB=1136136 VmHWM_kB=1136136 gpu_current_B=1280044 gpu_peak_B=1483584 gc=None
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 2/10 | Stage 1/5 [Base Architecture] | Gen 0/4 | Params: 3 | Total Evals: 2 ---
+Params: {'encoder_conv_layers': 1, 'encoder_base_filters': 40, 'encoder_lstm_units': 88}
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
+Attempting to load plugin: mimo from group: predictor.plugins
+Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1771435606.045603  230806 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
+I0000 00:00:1771435606.046858  230806 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 13614 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+  Loaded x_train_df: (7300, 8)
+  Loaded y_train_df: (7300, 8)
+  Loaded x_val_df: (1575, 8)
+  Loaded y_val_df: (1575, 8)
+  Loaded x_test_df: (1575, 8)
+  Loaded y_test_df: (1575, 8)
+Creating sliding windows (Size=79)... Done.
+Extracting baselines for target column 'CLOSE'... Done.
+Creating sliding windows (Size=79)... Done.
+No columns specified for exclusion
+Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand2 gpu=True gc=False
+[RESOURCE] fit_start ts=1771435607.401 VmRSS_kB=1136208 VmHWM_kB=1136208 gpu_current_B=945208 gpu_peak_B=1191628 gc=None

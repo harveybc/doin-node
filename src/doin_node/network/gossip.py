@@ -169,12 +169,17 @@ class GossipSub:
     # ── Peer management ──────────────────────────────────────────
 
     def add_peer(self, peer_id: str, topics: set[str] | None = None) -> None:
-        """Register a known peer."""
+        """Register a known peer and add to all subscribed topic meshes."""
         self._known_peers.add(peer_id)
         if peer_id not in self._peer_scores:
             self._peer_scores[peer_id] = PeerScore(peer_id=peer_id)
         if topics:
             self._peer_topics[peer_id] = topics
+        # Add to mesh for all subscribed topics so publish() can reach them
+        for topic in self._subscriptions:
+            state = self._topics.get(topic)
+            if state and peer_id != self.peer_id:
+                state.mesh.add(peer_id)
 
     def remove_peer(self, peer_id: str) -> None:
         self._known_peers.discard(peer_id)
