@@ -802,6 +802,10 @@ class UnifiedNode:
                     current_best[1] if current_best[1] is not None else float('-inf'),
                     data.reported_performance,
                 )
+                # Inject into optimizer plugin's population (migration IN)
+                plugin = self._optimizer_plugins.get(data.domain_id)
+                if plugin and hasattr(plugin, "set_network_champion"):
+                    plugin.set_network_champion(data.parameters)
 
         # Domain must have synthetic data for verification trust
         role = self._domain_roles.get(data.domain_id)
@@ -1240,59 +1244,117 @@ class UnifiedNode:
     # ================================================================
 
     async def _optimizer_loop(self) -> None:
-        """Background loop: run optimization for configured domains."""
+        """Background loop: run FULL DEAP GA optimization for each domain.
+
+        Each domain runs the complete predictor optimizer (DEAP GA with
+        incremental stages, populations, generations). DOIN callbacks
+        handle champion broadcasting and evaluation service during the run.
+        """
         # Wait for LAN discovery to complete before starting optimization
         logger.info("Optimizer waiting 10s for peer discovery...")
         await asyncio.sleep(10)
-        while self._running:
-            active_domains = [d for d in self.optimizer_domains if d not in self._domain_converged]
-            if not active_domains:
-                logger.info("All domains converged — optimizer loop idle")
-                await asyncio.sleep(self.config.optimizer_loop_interval)
+
+        for domain_id in self.optimizer_domains:
+            if domain_id in self._domain_converged:
+                continue
+            plugin = self._optimizer_plugins.get(domain_id)
+            if plugin is None:
                 continue
 
-            for domain_id in active_domains:
-                plugin = self._optimizer_plugins.get(domain_id)
-                if plugin is None:
-                    continue
+            # Wire up DOIN callbacks on the plugin
+            self._setup_optimizer_callbacks(domain_id, plugin)
 
-                try:
-                    await self._run_optimization_round(domain_id, plugin)
-                except Exception:
-                    logger.exception("Optimization error for %s", domain_id)
+            try:
+                logger.info("🧬 Starting DEAP GA optimization for %s", domain_id)
+                await self._run_full_optimization(domain_id, plugin)
+                logger.info("✅ Optimization complete for %s", domain_id)
+            except Exception:
+                logger.exception("Optimization error for %s", domain_id)
 
-                # Check stop criteria (per-domain target_performance)
-                role = self._domain_roles.get(domain_id)
-                best = self._domain_best.get(domain_id, (None, None))
-                if (
-                    role is not None
-                    and role.target_performance is not None
-                    and best[1] is not None
-                    and best[1] >= role.target_performance
-                ):
-                    rounds = self._domain_round_count.get(domain_id, 0)
-                    logger.info(
-                        "🎯 Domain %s CONVERGED in %d rounds: perf %.6f >= target %.6f",
-                        domain_id, rounds, best[1], role.target_performance,
-                    )
-                    self._domain_converged.add(domain_id)
-                    self.experiment_tracker.mark_converged(domain_id)
+    def _setup_optimizer_callbacks(self, domain_id: str, plugin: Any) -> None:
+        """Wire DOIN callbacks onto the optimizer plugin."""
+        if not hasattr(plugin, "set_local_champion_callback"):
+            return  # Not a DOIN-aware plugin
 
-            await asyncio.sleep(self.config.optimizer_loop_interval)
+        loop = asyncio.get_event_loop()
+        node = self  # Capture for closures
 
-    async def _run_optimization_round(self, domain_id: str, plugin: Any) -> None:
-        """Run one optimization round: optimize → commit → reveal."""
-        round_start = time.monotonic()
-        # Increment round counter
-        self._domain_round_count[domain_id] = self._domain_round_count.get(domain_id, 0) + 1
-        round_num = self._domain_round_count[domain_id]
-        # Generate commitment nonce
-        nonce = secrets.token_hex(16)
+        def on_local_champion(params, fitness, metrics, gen, stage_info):
+            """Called from optimizer thread when new local champion found → broadcast."""
+            # Schedule async broadcast on the event loop
+            import asyncio as _aio
+            fut = _aio.run_coroutine_threadsafe(
+                node._broadcast_champion(domain_id, params, fitness, metrics, gen, stage_info),
+                loop,
+            )
+            try:
+                fut.result(timeout=30)  # Block optimizer thread until broadcast completes
+            except Exception as e:
+                logger.warning("Champion broadcast failed: %s", e)
 
-        # Run optimization (plugin-specific)
-        # Plugins follow the OptimizationPlugin interface:
-        #   optimize(current_best_params, current_best_performance) -> (params, perf)
-        # We track current best per domain and adapt the call accordingly.
+        def on_eval_service(gen, candidate_num, stage_info):
+            """Called from optimizer thread between candidates → process 1 pending eval."""
+            import asyncio as _aio
+            fut = _aio.run_coroutine_threadsafe(
+                node._process_one_pending_eval(domain_id),
+                loop,
+            )
+            try:
+                fut.result(timeout=120)  # Eval can take a while
+            except Exception as e:
+                logger.debug("Eval service between candidates: %s", e)
+
+        def on_generation_end(population, hof, hyper_keys, gen, stage_info, stats):
+            """Called from optimizer thread at end of each generation."""
+            # Update tracking
+            node._domain_round_count[domain_id] = gen + 1
+            # Log generation summary
+            champ_fit = stage_info.get("champion_fitness")
+            champ_val = stage_info.get("champion_val_mae")
+            avg_fit = stage_info.get("avg_fitness")
+            stage = stage_info.get("stage", 1)
+            total_stages = stage_info.get("total_stages", 1)
+            n_evals = stage_info.get("total_candidates_evaluated", 0)
+            patience_str = f"{stage_info.get('no_improve_counter', 0)}/{stage_info.get('patience', '?')}"
+
+            logger.info(
+                "[%s] gen=%d stage=%d/%d evals=%d  champ_fitness=%.6f  champ_val_mae=%s  avg_fitness=%.6f  patience=%s",
+                domain_id, gen, stage, total_stages, n_evals,
+                champ_fit if champ_fit is not None else float("nan"),
+                f"{champ_val:.6f}" if champ_val is not None else "N/A",
+                avg_fit if avg_fit is not None else float("nan"),
+                patience_str,
+            )
+
+            # Record to experiment tracker
+            detail_metrics = {
+                "generation": gen,
+                "stage": stage,
+                "total_stages": total_stages,
+                "total_candidates_evaluated": n_evals,
+                "train_mae": stage_info.get("champion_train_mae"),
+                "val_mae": champ_val,
+                "val_naive_mae": stage_info.get("champion_naive_mae"),
+            }
+            try:
+                node.experiment_tracker.record_round(
+                    domain_id,
+                    performance=-champ_fit if champ_fit is not None else 0.0,
+                    parameters={},
+                    wall_clock_seconds=0,
+                    chain_height=node._get_height(),
+                    peers_count=len(node._peers),
+                    detail_metrics=detail_metrics,
+                )
+            except Exception:
+                pass
+
+        plugin.set_local_champion_callback(on_local_champion)
+        plugin.set_eval_service_callback(on_eval_service)
+        plugin.set_generation_end_callback(on_generation_end)
+
+    async def _run_full_optimization(self, domain_id: str, plugin: Any) -> None:
+        """Run the full DEAP GA optimization in an executor thread."""
         current_best = self._domain_best.get(domain_id, (None, None))
 
         raw = await asyncio.get_event_loop().run_in_executor(
@@ -1302,7 +1364,7 @@ class UnifiedNode:
         if raw is None:
             return
 
-        # Normalize result: plugins return (params_dict, performance_float)
+        # Final result
         if isinstance(raw, tuple):
             parameters, performance = raw
         elif isinstance(raw, dict):
@@ -1311,68 +1373,48 @@ class UnifiedNode:
         else:
             return
 
-        # Update domain best tracking
-        is_improvement = current_best[1] is None or performance > current_best[1]
-        if is_improvement:
+        # Update domain best
+        current_best = self._domain_best.get(domain_id, (None, None))
+        if current_best[1] is None or performance > current_best[1]:
             self._domain_best[domain_id] = (parameters, performance)
 
-        best_perf = self._domain_best[domain_id][1]
-        role = self._domain_roles.get(domain_id)
-        target_str = f" / target={role.target_performance}" if role and role.target_performance is not None else ""
-        improvement_str = " ★" if is_improvement else ""
-
-        # Retrieve detailed metrics from plugin (if available)
-        detail_metrics: dict[str, Any] = {}
-        if hasattr(plugin, "last_round_metrics"):
-            detail_metrics = plugin.last_round_metrics or {}
-
-        # Log compact metrics: perf + MAE breakdown
-        mae_str = ""
-        if detail_metrics:
-            parts = []
-            for split in ("train", "val", "test"):
-                mae = detail_metrics.get(f"{split}_mae")
-                naive = detail_metrics.get(f"{split}_naive_mae")
-                if mae is not None:
-                    s = f"{split[0].upper()}:{mae:.6f}"
-                    if naive is not None and math.isfinite(naive):
-                        s += f"/{naive:.6f}"
-                    parts.append(s)
-            if parts:
-                mae_str = f"  MAE(pred/naive) {' '.join(parts)}"
-
         logger.info(
-            "[%s] round=%d  perf=%.6f  best=%.6f%s%s%s",
-            domain_id, round_num, performance, best_perf, target_str, improvement_str, mae_str,
+            "🏁 Full optimization finished for %s: final_perf=%.6f",
+            domain_id, performance,
         )
 
-        # Store detailed metrics for champion tracking
-        if is_improvement and detail_metrics:
-            self._domain_champion_metrics[domain_id] = {
-                "round": round_num,
-                "performance": performance,
-                "parameters": parameters,
-                **{k: v for k, v in detail_metrics.items() if k != "fitness"},
-            }
-            logger.info(
-                "🏆 New champion [%s] round=%d  perf=%.6f  train_mae=%.6f  val_mae=%.6f  test_mae=%s",
-                domain_id, round_num, performance,
-                detail_metrics.get("train_mae", float("nan")),
-                detail_metrics.get("val_mae", float("nan")),
-                f"{detail_metrics['test_mae']:.6f}" if detail_metrics.get("test_mae") is not None else "N/A",
-            )
+    async def _broadcast_champion(
+        self, domain_id: str, params: dict, fitness: float,
+        metrics: dict, gen: int, stage_info: dict,
+    ) -> None:
+        """Broadcast a new local champion to the DOIN network (commit→reveal)."""
+        performance = -fitness  # DOIN convention: higher = better
 
-        # Compute commitment hash (over core params only, not seed)
-        commitment_hash = compute_commitment(parameters, nonce)
+        # Update domain best
+        current_best = self._domain_best.get(domain_id, (None, None))
+        is_improvement = current_best[1] is None or performance > current_best[1]
+        if is_improvement:
+            self._domain_best[domain_id] = (params, performance)
 
-        # Fee market: stake for optimae if enabled
-        if self.fee_market:
-            stake = self.fee_market.get_suggested_fee()["optimae_stake"]
-            ok, reason = self.fee_market.validate_fee(stake, is_optimae=True)
-            if not ok:
-                logger.warning("Insufficient stake for optimae: %s", reason)
-                return
-            # Stake will be resolved when optimae is accepted/rejected
+        # Store champion metrics
+        self._domain_champion_metrics[domain_id] = {
+            "round": gen,
+            "performance": performance,
+            "parameters": params,
+            **{k: v for k, v in metrics.items() if k != "fitness"},
+        }
+
+        logger.info(
+            "🏆 New champion [%s] gen=%d stage=%d  perf=%.6f  val_mae=%.6f  train_mae=%.6f  test_mae=%s",
+            domain_id, gen, stage_info.get("stage", 1), performance,
+            metrics.get("val_mae", float("nan")),
+            metrics.get("train_mae", float("nan")),
+            f"{metrics['test_mae']:.6f}" if metrics.get("test_mae") is not None else "N/A",
+        )
+
+        # Commit→Reveal flow
+        nonce = secrets.token_hex(16)
+        commitment_hash = compute_commitment(params, nonce)
 
         # Phase 1: Commit
         commit_msg = Message(
@@ -1384,14 +1426,11 @@ class UnifiedNode:
             ).model_dump_json()),
         )
         await self._broadcast(commit_msg)
-
-        # Wait for commitment to propagate
         await asyncio.sleep(2.0)
 
         # Phase 2: Reveal
         optimae_id = f"opt-{self.peer_id[:8]}-{int(time.time())}"
 
-        # Record stake in fee market
         if self.fee_market:
             stake = self.fee_market.get_suggested_fee()["optimae_stake"]
             self.fee_market.stake_for_optimae(optimae_id, stake)
@@ -1403,29 +1442,41 @@ class UnifiedNode:
                 commitment_hash=commitment_hash,
                 domain_id=domain_id,
                 optimae_id=optimae_id,
-                parameters=parameters,
+                parameters=params,
                 reported_performance=performance,
                 nonce=nonce,
             ).model_dump_json()),
         )
         await self._broadcast(reveal_msg)
 
-        # Record experiment stats
-        wall_clock = time.monotonic() - round_start
-        self.experiment_tracker.record_round(
-            domain_id,
-            performance=performance,
-            parameters=parameters,
-            wall_clock_seconds=wall_clock,
-            chain_height=self._get_height(),
-            peers_count=len(self._peers),
-            detail_metrics=detail_metrics,
+        logger.info(
+            "📡 Champion broadcast: domain=%s gen=%d perf=%.4f optimae=%s",
+            domain_id, gen, performance, optimae_id[:16],
         )
 
-        logger.info(
-            "Optimization round: domain=%s perf=%.4f optimae=%s",
-            domain_id, performance, optimae_id[:16],
+    async def _process_one_pending_eval(self, domain_id: str) -> None:
+        """Process one pending evaluation task (called between candidate evaluations)."""
+        tasks = self.task_queue.get_pending_for_domains(
+            [domain_id], limit=1,
         )
+        if not tasks:
+            return
+
+        task = tasks[0]
+        if task.task_type != TaskType.OPTIMAE_VERIFICATION:
+            return
+
+        # Check if we're in the quorum
+        if task.optimae_id:
+            state = self.quorum.get_state(task.optimae_id)
+            if state and self.peer_id not in state.required_evaluators:
+                return
+
+        logger.info("🔧 Processing eval task %s between candidates", task.task_id[:12])
+        try:
+            await self._evaluate_task(task)
+        except Exception:
+            logger.exception("Eval task %s failed", task.task_id[:12])
 
     # ================================================================
     # Evaluator loop (when this node evaluates)
