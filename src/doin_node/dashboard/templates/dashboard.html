@@ -217,7 +217,7 @@
                   <!-- Events Tab -->
                   <div class="tab-pane fade" id="tabEvents">
                     <table class="table table-sm table-striped">
-                      <thead><tr><th>Event</th><th>Type</th><th>Performance</th><th>Details</th><th>Domain</th><th>Time</th></tr></thead>
+                      <thead><tr><th>Event</th><th>Type</th><th>Performance</th><th>Val MAE</th><th>Val Naive</th><th>Train MAE</th><th>Details</th><th>Domain</th><th>Time</th></tr></thead>
                       <tbody id="eventsBody"></tbody>
                     </table>
                   </div>
@@ -241,7 +241,7 @@
                   <!-- Domains Tab -->
                   <div class="tab-pane fade" id="tabDomains">
                     <table class="table table-sm">
-                      <thead><tr><th>Domain</th><th>Rounds</th><th>Best Performance</th><th>Target</th><th>Converged</th><th>Best Params</th></tr></thead>
+                      <thead><tr><th>Domain</th><th>Rounds</th><th>Best Performance</th><th>Target</th><th>Tolerance</th><th>Converged</th><th>Best Params</th></tr></thead>
                       <tbody id="domainBody"></tbody>
                     </table>
                   </div>
@@ -381,15 +381,26 @@ async function refreshAll() {
       if (d.best_performance !== null && d.best_performance !== undefined) {
         if (best === null || d.best_performance > best) best = d.best_performance;
       }
-      const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params).substring(0,80)}...</code>` : '--';
+      const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
+      const c = d.champion || {};
+      const champRow = c.val_mae !== undefined ? `
+        <tr class="table-success" style="font-size:11px">
+          <td colspan="2"><strong>🏆 Champion (round ${c.round || '?'})</strong></td>
+          <td colspan="5">
+            Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
+            Val MAE: <strong>${fmt(c.val_mae,6)}</strong> / naive ${fmt(c.val_naive_mae,6)} &nbsp;|&nbsp;
+            Test MAE: <strong>${c.test_mae != null ? fmt(c.test_mae,6) : 'N/A'}</strong> / naive ${c.test_naive_mae != null ? fmt(c.test_naive_mae,6) : 'N/A'}
+          </td>
+        </tr>` : '';
       return `<tr>
         <td>${d.domain_id}</td>
         <td>${d.round}</td>
         <td><strong>${fmt(d.best_performance)}</strong></td>
         <td>${d.target_performance || '--'}</td>
+        <td>${opt.tolerance_margin != null ? fmt(opt.tolerance_margin,2) : '--'}</td>
         <td>${d.converged ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-secondary">No</span>'}</td>
         <td>${params}</td>
-      </tr>`;
+      </tr>${champRow}`;
     }).join('');
     document.getElementById('roundCount').textContent = rounds;
     document.getElementById('bestPerf').textContent = best !== null ? fmt(best) : '--';
@@ -456,7 +467,10 @@ async function refreshAll() {
           <td><i class="fas fa-star text-warning"></i> Round ${e.round}</td>
           <td><span class="badge badge-success">Improvement</span></td>
           <td>${fmt(e.performance)}</td>
-          <td>${fmt(e.best_performance)}</td>
+          <td><strong>${fmt(e.val_mae,6)}</strong></td>
+          <td>${fmt(e.val_naive_mae,6)}</td>
+          <td>${fmt(e.train_mae,6)}</td>
+          <td>best=${fmt(e.best_performance)}</td>
           <td>${e.domain_id}</td>
           <td>${fmtTime(e.timestamp)}</td>
         </tr>`;
@@ -465,7 +479,7 @@ async function refreshAll() {
           <td><i class="fas fa-exchange-alt text-info"></i> Block ${e.round}</td>
           <td><span class="badge badge-info">Migration</span></td>
           <td>${fmt(e.performance)}</td>
-          <td>from <code>${e.from_peer}</code></td>
+          <td colspan="3">from <code>${e.from_peer}</code></td>
           <td>${e.domain_id}</td>
           <td>${fmtTime(e.timestamp)}</td>
         </tr>`;
@@ -473,7 +487,7 @@ async function refreshAll() {
         return `<tr class="text-muted">
           <td>Rounds ${e.from_round}–${e.to_round}</td>
           <td><span class="badge badge-secondary">${e.rounds_skipped} rounds</span></td>
-          <td colspan="2">No improvement</td>
+          <td colspan="5">No improvement</td>
           <td>${e.domain_id}</td>
           <td>${fmtTime(e.timestamp)}</td>
         </tr>`;

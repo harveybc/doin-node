@@ -322,16 +322,17 @@ async def _api_events(request: web.Request) -> web.Response:
                 for de in tracker._experiments.values():
                     exp_id = getattr(de, "experiment_id", None)
                     break
+            _COLS = ("round_number, performance, best_performance, is_improvement, "
+                     "timestamp_utc, domain_id, train_mae, train_naive_mae, "
+                     "val_mae, val_naive_mae, test_mae, test_naive_mae")
             if exp_id:
                 cur.execute(
-                    "SELECT round_number, performance, best_performance, is_improvement, "
-                    "timestamp_utc, domain_id FROM fact_round WHERE experiment_id = ? "
+                    f"SELECT {_COLS} FROM fact_round WHERE experiment_id = ? "
                     "ORDER BY round_number ASC", (exp_id,)
                 )
             else:
                 cur.execute(
-                    "SELECT round_number, performance, best_performance, is_improvement, "
-                    "timestamp_utc, domain_id FROM fact_round WHERE experiment_id = ("
+                    f"SELECT {_COLS} FROM fact_round WHERE experiment_id = ("
                     "SELECT experiment_id FROM fact_round ORDER BY rowid DESC LIMIT 1) "
                     "ORDER BY round_number ASC"
                 )
@@ -350,6 +351,12 @@ async def _api_events(request: web.Request) -> web.Response:
                         "is_improvement": True,
                         "timestamp": row["timestamp_utc"],
                         "domain_id": row["domain_id"],
+                        "train_mae": row.get("train_mae"),
+                        "train_naive_mae": row.get("train_naive_mae"),
+                        "val_mae": row.get("val_mae"),
+                        "val_naive_mae": row.get("val_naive_mae"),
+                        "test_mae": row.get("test_mae"),
+                        "test_naive_mae": row.get("test_naive_mae"),
                     })
                     i += 1
                 else:
