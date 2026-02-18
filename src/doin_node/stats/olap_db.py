@@ -62,7 +62,7 @@ class OLAPDatabase:
         row = self._conn.execute(
             "SELECT MAX(version) AS v FROM _schema_version"
         ).fetchone()
-        current = row["v"] if row else 0
+        current = row["v"] if row and row["v"] is not None else 0
         if current < SCHEMA_VERSION:
             # Migration v1 → v2: add MAE detail columns to fact_round
             if current < 2:

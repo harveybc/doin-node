@@ -6,15 +6,27 @@
   Data dir: ./doin-data-predictor
   Domains: 1
   Identity: cb47632c063a618b...
-2026-02-18 05:20:00 [doin_node.stats.olap_db] INFO: OLAP schema v2 created at predictor_olap.db
-2026-02-18 05:20:00 [doin_node.unified] INFO: Domain predictor-timeseries-4h registered (optimize=True, evaluate=True, synthetic=True)
+2026-02-18 06:11:19 [doin_node.stats.olap_db] INFO: OLAP schema v2 created at predictor_olap.db
+2026-02-18 06:11:19 [doin_node.unified] INFO: Domain predictor-timeseries-4h registered (optimize=True, evaluate=True, synthetic=True)
 
 Loading plugins...
+Attempting to load plugin: mimo from group: predictor.plugins
+Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1771410001.983881 3314547 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 14119 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+I0000 00:00:1771413080.947458 3363200 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 14119 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
   Optimizer plugin 'predictor' loaded for predictor-timeseries-4h
+Attempting to load plugin: mimo from group: predictor.plugins
+Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
   Evaluator plugin 'predictor' loaded for predictor-timeseries-4h
-2026-02-18 05:20:02 [doin_plugins.predictor.synthetic] INFO: Loaded pre-trained HMM hybrid model from /home/openclaw/.openclaw/workspace/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib (K=5, block_size=30, covariance=diag)
+2026-02-18 06:11:21 [doin_plugins.predictor.synthetic] INFO: Loaded pre-trained HMM hybrid model from /home/openclaw/.openclaw/workspace/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib (K=5, block_size=30, covariance=diag)
   Synthetic data plugin 'predictor' loaded for predictor-timeseries-4h
 
   Optimizer domains: ['predictor-timeseries-4h']
@@ -32,500 +44,495 @@ I0000 00:00:1771410001.983881 3314547 gpu_device.cc:2020] Created device /job:lo
   Starting node on :8470...
 ============================================================
 
-2026-02-18 05:20:02 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
-2026-02-18 05:20:02 [doin_node.unified] INFO: SQLite storage: height=1
-2026-02-18 05:20:02 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-timeseries-4h id=2d3c257e266a
-2026-02-18 05:20:02 [doin_node.dashboard.routes] INFO: Dashboard enabled at /dashboard
-2026-02-18 05:20:02 [doin_node.network.transport] INFO: Transport listening on 0.0.0.0:8470
-2026-02-18 05:20:02 [aiohttp.access] INFO: 127.0.0.1 [18/Feb/2026:05:20:02 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:20:02 [doin_node.unified] INFO: ✅ Port 8470 self-check passed
-2026-02-18 05:20:02 [doin_node.unified] INFO: Unified node started: peer=cb47632c063a port=8470 optimize=['predictor-timeseries-4h'] evaluate=['predictor-timeseries-4h'] protocol=gossipsub storage=sqlite fee_market=True discovery=True
-2026-02-18 05:20:02 [doin_node.unified] INFO: Optimizer waiting 10s for peer discovery...
-2026-02-18 05:20:02 [doin_node.network.discovery] INFO: LAN discovery active: TCP scan on subnets ['192.168.0', '192.168.1']
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=87)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=87)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410013.348 VmRSS_kB=1130196 VmHWM_kB=1130196 gpu_current_B=125696 gpu_peak_B=151552 gc=None
-2026-02-18 05:20:17 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.1.119:8470
-2026-02-18 05:20:17 [doin_node.unified] INFO: LAN scan: 1 new peers
-2026-02-18 05:20:17 [doin_node.unified] INFO: Connected to discovered peer: 192.168.1.119:8470
-2026-02-18 05:20:27 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:27 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:27 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:27 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:27 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:27 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:27 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:27 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:20:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:20:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:21:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:21:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:21:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:21:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:21:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:21:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:21:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:21:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:22:12 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [doin_node.unified] INFO: 🔍 Auto-discovered peer 192.168.0.100:8470 from incoming message
-2026-02-18 05:22:12 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:22:12 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [doin_node.unified] INFO: 🔍 Updated peer lan-192.168. → dd3da1914193
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:22:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:22:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:22:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:22:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:22:14 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:14 [doin_node.unified] WARNING: Bounds validation failed: Parameter 'window_size' = 68.0 outside bounds [6, 48]
-MAE (magnitude): 0.01101722102612257
-R2 (magnitude): 0.9851863384246826
-2026-02-18 05:22:25 [doin_node.unified] INFO: [predictor-timeseries-4h] round=1  perf=-0.004700  best=-0.004700 / target=999.0 ★  MAE(pred/naive) T:0.011017/0.009621 V:0.013432/0.008732
-2026-02-18 05:22:25 [doin_node.unified] INFO: 🏆 New champion [predictor-timeseries-4h] round=1  perf=-0.004700  train_mae=0.011017  val_mae=0.013432  test_mae=N/A
-2026-02-18 05:22:26 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:22:26 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:26 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:22:26 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:22:26 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:22:26 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:22:28 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0047 optimae=opt-cb47632c-177
-2026-02-18 05:22:45 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:45 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:45 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:45 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:45 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:45 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:45 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:45 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:22:46 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:22:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=86)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=86)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410178.607 VmRSS_kB=1959880 VmHWM_kB=1959880 gpu_current_B=571648 gpu_peak_B=1882765568 gc=None
-2026-02-18 05:23:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:23:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:23:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:23:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:23:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:23:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:23:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:23:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:23:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:23:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:23:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:23:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:23:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:23:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:23:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:23:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:24:12 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:24:12 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:24:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:24:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:24:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:24:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:24:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:24:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:24:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:24:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:24:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:24:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:24:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:24:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:24:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:24:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:25:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:25:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:25:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:25:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:17 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.0.100:8470
-2026-02-18 05:25:17 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.0.126:8470
-2026-02-18 05:25:17 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.1.23:8470
-2026-02-18 05:25:17 [doin_node.unified] INFO: LAN scan: 3 new peers
-2026-02-18 05:25:17 [doin_node.unified] INFO: Connected to discovered peer: 192.168.1.23:8470
-2026-02-18 05:25:17 [doin_node.unified] INFO: Connected to discovered peer: 192.168.0.126:8470
-2026-02-18 05:25:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:25:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:25:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:25:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:25:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:30 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:25:30 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:30 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:25:30 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:25:30 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:25:30 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:25:30 [doin_node.unified] INFO: 🔍 Updated peer lan-192.168. → dd3da1914193
-2026-02-18 05:25:30 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:25:30 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:25:30 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:25:30 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:25:30 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-MAE (magnitude): 0.010024297051131725
-R2 (magnitude): 0.9875929355621338
-2026-02-18 05:26:00 [doin_node.unified] INFO: [predictor-timeseries-4h] round=2  perf=-0.003533  best=-0.003533 / target=999.0 ★  MAE(pred/naive) T:0.010024/0.009621 V:0.012261/0.008727
-2026-02-18 05:26:00 [doin_node.unified] INFO: 🏆 New champion [predictor-timeseries-4h] round=2  perf=-0.003533  train_mae=0.010024  val_mae=0.012261  test_mae=N/A
-2026-02-18 05:26:00 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:26:00 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:26:00 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:26:02 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0035 optimae=opt-cb47632c-177
-2026-02-18 05:26:02 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:26:02 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:26:02 [doin_node.unified] INFO: 🔍 Updated peer lan-192.168. → cb47632c063a
-2026-02-18 05:26:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:26:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:26:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:26:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:26:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:26:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:26:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:26:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:26:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:26:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:26:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:26:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:26:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:26:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=96)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=96)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410392.742 VmRSS_kB=2130032 VmHWM_kB=2166556 gpu_current_B=1204224 gpu_peak_B=2273162752 gc=None
-2026-02-18 05:27:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:27:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:27:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:27:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:13 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:27:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:26 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:27:26 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:26 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:27:26 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:27:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:27:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:27:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:27:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:27:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:27:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:27:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:27:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-MAE (magnitude): 0.011649906635284424
-R2 (magnitude): 0.9837426543235779
-2026-02-18 05:27:38 [doin_node.unified] INFO: [predictor-timeseries-4h] round=3  perf=-0.002525  best=-0.002525 / target=999.0 ★  MAE(pred/naive) T:0.011650/0.009626 V:0.011303/0.008778
-2026-02-18 05:27:38 [doin_node.unified] INFO: 🏆 New champion [predictor-timeseries-4h] round=3  perf=-0.002525  train_mae=0.011650  val_mae=0.011303  test_mae=N/A
-2026-02-18 05:27:38 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:27:38 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:27:38 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:27:40 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0025 optimae=opt-cb47632c-177
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=86)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=86)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410491.421 VmRSS_kB=2225016 VmHWM_kB=2226668 gpu_current_B=1974784 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:28:13 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:28:13 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:28:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:28:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:28:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:28:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:28:28 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:28:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:28:28 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:28:28 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:28:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:28:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:28:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:28:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:29:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:29:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:29:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:29:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:29:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:29:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:29:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:29:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:29:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:29:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:29:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:29:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:29:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:29:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:30:04 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:04 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:04 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:30:04 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-MAE (magnitude): 0.017804738134145737
-R2 (magnitude): 0.963414192199707
-2026-02-18 05:30:06 [doin_node.unified] INFO: [predictor-timeseries-4h] round=4  perf=-0.001337  best=-0.001337 / target=999.0 ★  MAE(pred/naive) T:0.017805/0.009621 V:0.010064/0.008727
-2026-02-18 05:30:06 [doin_node.unified] INFO: 🏆 New champion [predictor-timeseries-4h] round=4  perf=-0.001337  train_mae=0.017805  val_mae=0.010064  test_mae=N/A
-2026-02-18 05:30:06 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:06 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:06 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:30:06 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:06 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:06 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:30:06 [doin_node.unified] WARNING: Bounds validation failed: Parameter 'window_size' = 74.0 outside bounds [6, 48]
-2026-02-18 05:30:08 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0013 optimae=opt-cb47632c-177
-2026-02-18 05:30:08 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:08 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:08 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:30:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:30:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:30:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:30:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:30:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:30:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:30:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:30:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:30:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:30:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=71)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=71)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410638.820 VmRSS_kB=2292576 VmHWM_kB=2293140 gpu_current_B=2737408 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:31:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:31:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:31:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:31:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:31:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:31:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:31:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:31:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:31:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:31:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:31:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:31:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:31:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:31:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:31:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:31:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-MAE (magnitude): 0.013337435200810432
-R2 (magnitude): 0.9789719581604004
-2026-02-18 05:32:08 [doin_node.unified] INFO: [predictor-timeseries-4h] round=5  perf=-0.003198  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.013337/0.009613 V:0.011874/0.008676
-2026-02-18 05:32:10 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0032 optimae=opt-cb47632c-177
-2026-02-18 05:32:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:32:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:32:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:32:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:32:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:32:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:32:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:32:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:32:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:32:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:32:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:32:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:32:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:32:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:32:34 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:32:34 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:32:34 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:32:34 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=94)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=94)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771410761.568 VmRSS_kB=2344540 VmHWM_kB=2347308 gpu_current_B=3437568 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:33:14 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:33:14 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:33:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:33:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:33:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:33:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:33:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:33:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:33:29 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:33:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:33:29 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:33:29 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:33:30 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:33:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:34:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:34:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:34:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:34:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:34:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:34:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:34:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:34:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:34:30 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:34:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:34:30 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:34:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:34:30 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:34:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:34:30 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:34:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:35:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:35:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:35:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:35:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:35:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:35:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:35:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:35:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:35:30 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:35:30 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:35:33 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:35:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:35:33 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:35:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:36:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:36:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:36:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:36:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:36:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:36:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:36:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:36:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:36:33 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:36:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:36:33 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:36:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:36:33 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:36:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-MAE (magnitude): 0.010558090172708035
-R2 (magnitude): 0.9865932464599609
-2026-02-18 05:37:14 [doin_node.unified] INFO: [predictor-timeseries-4h] round=6  perf=-0.001450  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.010558/0.009626 V:0.010217/0.008767
-2026-02-18 05:37:14 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:37:14 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:37:14 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:37:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:37:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:37:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:37:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:37:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:37:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:37:16 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0014 optimae=opt-cb47632c-177
-2026-02-18 05:37:33 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:37:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:37:33 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:37:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:37:33 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:37:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=96)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=96)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771411066.948 VmRSS_kB=2421748 VmHWM_kB=2427848 gpu_current_B=4030720 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:38:03 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:38:03 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:38:03 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:38:03 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:38:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:38:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:38:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:38:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:38:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:38:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:38:15 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:38:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:38:33 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:38:33 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:38:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:38:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:38:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:38:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:39:15 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:39:15 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:39:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:39:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:39:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:39:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-MAE (magnitude): 0.011036710813641548
-R2 (magnitude): 0.9856687188148499
-2026-02-18 05:39:16 [doin_node.unified] INFO: [predictor-timeseries-4h] round=7  perf=-0.001819  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.011037/0.009626 V:0.010597/0.008778
-2026-02-18 05:39:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:39:16 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:39:16 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:39:18 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0018 optimae=opt-cb47632c-177
-2026-02-18 05:39:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:39:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:39:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:39:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:39:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:39:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:39:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:39:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=96)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=96)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771411189.016 VmRSS_kB=2482020 VmHWM_kB=2484328 gpu_current_B=4597760 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:40:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:40:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:40:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:40:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:40:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:40:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:40:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:40:32 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:40:32 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:40:32 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:40:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:40:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:40:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:40:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:40:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:40:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:41:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:41:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:41:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:41:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:41:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:41:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:41:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:41:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:41:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:41:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:41:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:41:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:41:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:41:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:42:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:42:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:42:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:42:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:42:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:42:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:42:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:42:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:42:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:42:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:42:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:42:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:42:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:42:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:43:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:43:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:43:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:43:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:43:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:43:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:43:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:43:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:43:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:43:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:43:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:43:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-MAE (magnitude): 0.015745576471090317
-R2 (magnitude): 0.9717548489570618
-2026-02-18 05:43:49 [doin_node.unified] INFO: [predictor-timeseries-4h] round=8  perf=-0.001993  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.015746/0.009626 V:0.010772/0.008778
-2026-02-18 05:43:49 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:43:49 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:43:49 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:43:51 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0020 optimae=opt-cb47632c-177
-2026-02-18 05:44:01 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:44:01 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:44:01 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:44:01 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:44:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:44:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:44:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:44:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:44:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:44:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:44:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:44:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=73)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=73)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771411462.738 VmRSS_kB=2511632 VmHWM_kB=2557892 gpu_current_B=4992256 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:44:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:44:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:44:34 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:44:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:44:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:44:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:45:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:45:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:45:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:45:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:45:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:45:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:45:34 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:45:34 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:45:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:45:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:45:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:45:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:46:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:46:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:46:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:46:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:46:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:46:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:46:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:46:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-MAE (magnitude): 0.012503263540565968
-R2 (magnitude): 0.981086254119873
-2026-02-18 05:46:29 [doin_node.unified] INFO: [predictor-timeseries-4h] round=9  perf=-0.001962  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.012503/0.009614 V:0.010635/0.008673
-2026-02-18 05:46:29 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:46:29 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:46:29 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:46:31 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0020 optimae=opt-cb47632c-177
-2026-02-18 05:46:32 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:46:32 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:46:32 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → 854a04bbf0a5
-2026-02-18 05:46:32 [doin_node.unified] INFO: 📥 Received commitment from peer 854a04bbf0a5 for predictor-timeseries-4h
-2026-02-18 05:46:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:46:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:46:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:46:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:46:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:46:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:46:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:46:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=96)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=96)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771411622.571 VmRSS_kB=2622940 VmHWM_kB=2626160 gpu_current_B=5611008 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:47:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:47:16 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:47:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:47:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:47:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:47:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:47:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:47:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:47:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:47:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:47:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:47:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:47:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:47:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:47:46 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:47:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:47:46 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:47:46 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:47:46 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:47:46 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:48:17 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:48:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:48:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:48:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:48:17 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:48:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-MAE (magnitude): 0.013474550098180771
-R2 (magnitude): 0.9787339568138123
-2026-02-18 05:48:23 [doin_node.unified] INFO: [predictor-timeseries-4h] round=10  perf=-0.003628  best=-0.001337 / target=999.0  MAE(pred/naive) T:0.013475/0.009626 V:0.012406/0.008778
-2026-02-18 05:48:23 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:48:23 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:48:23 [doin_node.unified] INFO: 🔍 Updated peer 854a04bbf0a5 → cb47632c063a
-2026-02-18 05:48:23 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:48:23 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:48:23 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
-2026-02-18 05:48:25 [doin_node.unified] INFO: Optimization round: domain=predictor-timeseries-4h perf=-0.0036 optimae=opt-cb47632c-177
-2026-02-18 05:48:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:48:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:48:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:48:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:48:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:48:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-  Loaded x_train_df: (7300, 1)
-  Loaded y_train_df: (7300, 1)
-  Loaded x_val_df: (1575, 1)
-  Loaded y_val_df: (1575, 1)
-  Loaded x_test_df: (1575, 1)
-  Loaded y_test_df: (1575, 1)
-Creating sliding windows (Size=69)... Done.
-Extracting baselines for target column 'typical_price'... Done.
-Creating sliding windows (Size=69)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
-[RESOURCE] fit_start ts=1771411736.669 VmRSS_kB=2675584 VmHWM_kB=2676340 gpu_current_B=6362880 gpu_peak_B=2529210112 gc=None
-2026-02-18 05:49:11 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:49:11 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:49:11 [doin_node.unified] INFO: 🔍 Updated peer cb47632c063a → dd3da1914193
-2026-02-18 05:49:11 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 05:49:17 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:49:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:49:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:49:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:49:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:49:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:49:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:49:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:49:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:49:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:49:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:49:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:50:17 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:50:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:50:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:50:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:50:17 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:05:50:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:50:17 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:05:50:17 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 05:50:35 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:50:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:50:35 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:50:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:50:36 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:05:50:36 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 05:50:36 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:05:50:36 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 06:11:21 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
+2026-02-18 06:11:21 [doin_node.unified] INFO: SQLite storage: height=1
+2026-02-18 06:11:21 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-timeseries-4h id=449f6e6ad822
+2026-02-18 06:11:21 [doin_node.dashboard.routes] INFO: Dashboard enabled at /dashboard
+2026-02-18 06:11:21 [doin_node.network.transport] INFO: Transport listening on 0.0.0.0:8470
+2026-02-18 06:11:21 [aiohttp.access] INFO: 127.0.0.1 [18/Feb/2026:06:11:21 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 06:11:21 [doin_node.unified] INFO: ✅ Port 8470 self-check passed
+2026-02-18 06:11:21 [doin_node.unified] INFO: Unified node started: peer=cb47632c063a port=8470 optimize=['predictor-timeseries-4h'] evaluate=['predictor-timeseries-4h'] protocol=gossipsub storage=sqlite fee_market=True discovery=True
+2026-02-18 06:11:21 [doin_node.unified] INFO: Optimizer waiting 10s for peer discovery...
+2026-02-18 06:11:21 [doin_node.network.discovery] INFO: LAN discovery active: TCP scan on subnets ['192.168.0', '192.168.1']
+2026-02-18 06:11:31 [doin_node.unified] INFO: 🧬 Starting DEAP GA optimization for predictor-timeseries-4h
+Attempting to load plugin: default_target from group: target.plugins
+Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
+
+================================================================================
+================================================================================
+
+[DEBUG] Creating population of size 20 with 7 parameters...
+[DEBUG] Parameters: ['learning_rate', 'num_layers', 'layer_size', 'positional_encoding', 'l2_reg', 'mmd_lambda', 'early_patience']
+
+================================================================================
+CREATED INITIAL POPULATION: 20 individuals with 7 parameters
+Parameters: ['learning_rate', 'num_layers', 'layer_size', 'positional_encoding', 'l2_reg', 'mmd_lambda', 'early_patience']
+================================================================================
+
+Starting hyperparameter optimization (Gen 0 to 9, running 10 generations)...
+[BOUNDS] Checking initial population against hyperparameter bounds...
+
+[VERIFY] Candidate 0 (Champion) Parameters to be evaluated:
+{
+  "learning_rate": 0.008085996764578022,
+  "num_layers": 2,
+  "layer_size": 152,
+  "positional_encoding": 1,
+  "l2_reg": 0.0009441853203251946,
+  "mmd_lambda": 0.007243136860523834,
+  "early_patience": 84
+}
+------------------------------------------------------------
+
+--- Evaluating Candidate 1/20 | Gen 0/9 | Params: 7 | Total Evals: 1 ---
+Params: {'learning_rate': 0.008085996764578022, 'num_layers': 2, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0009441853203251946, 'mmd_lambda': 0.007243136860523834, 'early_patience': 84}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 2/20 | Gen 0/9 | Params: 7 | Total Evals: 2 ---
+Params: {'learning_rate': 0.008140554637010175, 'num_layers': 3, 'layer_size': 245, 'positional_encoding': False, 'l2_reg': 5.078664829712025e-05, 'mmd_lambda': 0.005779653375431134, 'early_patience': 40}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 3/20 | Gen 0/9 | Params: 7 | Total Evals: 3 ---
+Params: {'learning_rate': 0.009326024466302572, 'num_layers': 1, 'layer_size': 169, 'positional_encoding': True, 'l2_reg': 0.00028085898282709774, 'mmd_lambda': 0.0019141309432274196, 'early_patience': 90}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 4/20 | Gen 0/9 | Params: 7 | Total Evals: 4 ---
+Params: {'learning_rate': 0.009765043021382057, 'num_layers': 3, 'layer_size': 46, 'positional_encoding': True, 'l2_reg': 0.000471348582969999, 'mmd_lambda': 0.008255706986692361, 'early_patience': 10}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 5/20 | Gen 0/9 | Params: 7 | Total Evals: 5 ---
+Params: {'learning_rate': 0.0056914084488722694, 'num_layers': 3, 'layer_size': 201, 'positional_encoding': True, 'l2_reg': 0.00017773017675149999, 'mmd_lambda': 0.00850637125161809, 'early_patience': 33}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 6/20 | Gen 0/9 | Params: 7 | Total Evals: 6 ---
+Params: {'learning_rate': 0.0017590364003289363, 'num_layers': 2, 'layer_size': 200, 'positional_encoding': False, 'l2_reg': 0.0003744705156735108, 'mmd_lambda': 0.0001694196936585423, 'early_patience': 71}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 7/20 | Gen 0/9 | Params: 7 | Total Evals: 7 ---
+Params: {'learning_rate': 0.007641580029108499, 'num_layers': 5, 'layer_size': 40, 'positional_encoding': False, 'l2_reg': 0.0006740461874872385, 'mmd_lambda': 0.009221402848744795, 'early_patience': 48}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 8/20 | Gen 0/9 | Params: 7 | Total Evals: 8 ---
+Params: {'learning_rate': 0.008998721218196587, 'num_layers': 1, 'layer_size': 50, 'positional_encoding': False, 'l2_reg': 0.0005219522484181989, 'mmd_lambda': 0.004076256133904156, 'early_patience': 94}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 9/20 | Gen 0/9 | Params: 7 | Total Evals: 9 ---
+Params: {'learning_rate': 0.00654294010794581, 'num_layers': 4, 'layer_size': 160, 'positional_encoding': False, 'l2_reg': 0.00010018481638429998, 'mmd_lambda': 0.0015590693146370572, 'early_patience': 54}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 10/20 | Gen 0/9 | Params: 7 | Total Evals: 10 ---
+Params: {'learning_rate': 0.003829429249509702, 'num_layers': 2, 'layer_size': 169, 'positional_encoding': True, 'l2_reg': 0.00018211057897821694, 'mmd_lambda': 0.006752825938172331, 'early_patience': 27}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 11/20 | Gen 0/9 | Params: 7 | Total Evals: 11 ---
+Params: {'learning_rate': 0.004210793518394406, 'num_layers': 5, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.0004017915428373365, 'mmd_lambda': 0.009836875910743479, 'early_patience': 32}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 12/20 | Gen 0/9 | Params: 7 | Total Evals: 12 ---
+Params: {'learning_rate': 8.843753095882188e-05, 'num_layers': 1, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.00013030486084947903, 'mmd_lambda': 0.0006116722831979564, 'early_patience': 70}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 13/20 | Gen 0/9 | Params: 7 | Total Evals: 13 ---
+Params: {'learning_rate': 0.005973957154508072, 'num_layers': 2, 'layer_size': 27, 'positional_encoding': True, 'l2_reg': 4.3523417551423135e-05, 'mmd_lambda': 0.0016872269873204333, 'early_patience': 40}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 14/20 | Gen 0/9 | Params: 7 | Total Evals: 14 ---
+Params: {'learning_rate': 0.00479843024148719, 'num_layers': 2, 'layer_size': 60, 'positional_encoding': False, 'l2_reg': 0.00043186000894623584, 'mmd_lambda': 0.00011265208933806011, 'early_patience': 34}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 15/20 | Gen 0/9 | Params: 7 | Total Evals: 15 ---
+Params: {'learning_rate': 0.0030085364422862346, 'num_layers': 5, 'layer_size': 79, 'positional_encoding': False, 'l2_reg': 0.0004801828499422167, 'mmd_lambda': 0.003730973692568542, 'early_patience': 20}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 16/20 | Gen 0/9 | Params: 7 | Total Evals: 16 ---
+Params: {'learning_rate': 0.005188355971028043, 'num_layers': 4, 'layer_size': 42, 'positional_encoding': False, 'l2_reg': 0.0008637050722676505, 'mmd_lambda': 0.009802374529369632, 'early_patience': 81}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 17/20 | Gen 0/9 | Params: 7 | Total Evals: 17 ---
+Params: {'learning_rate': 6.074576067907263e-05, 'num_layers': 1, 'layer_size': 26, 'positional_encoding': False, 'l2_reg': 0.0001679496477900641, 'mmd_lambda': 0.008867488213734351, 'early_patience': 55}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 18/20 | Gen 0/9 | Params: 7 | Total Evals: 18 ---
+Params: {'learning_rate': 0.0021525973355307464, 'num_layers': 4, 'layer_size': 69, 'positional_encoding': True, 'l2_reg': 0.0006523521394401277, 'mmd_lambda': 0.001725776348626357, 'early_patience': 85}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 19/20 | Gen 0/9 | Params: 7 | Total Evals: 19 ---
+Params: {'learning_rate': 0.009322107119403426, 'num_layers': 4, 'layer_size': 60, 'positional_encoding': True, 'l2_reg': 0.000922032625945537, 'mmd_lambda': 0.0003591859217703313, 'early_patience': 57}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 20/20 | Gen 0/9 | Params: 7 | Total Evals: 20 ---
+Params: {'learning_rate': 0.0010570034859551187, 'num_layers': 4, 'layer_size': 224, 'positional_encoding': True, 'l2_reg': 0.00032455025592295763, 'mmd_lambda': 0.006521465205536265, 'early_patience': 19}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+-- Generation 0/9 --
+
+--- Evaluating Candidate 1/20 | Gen 0/9 | Params: 7 | Total Evals: 21 ---
+Params: {'learning_rate': 0.008085996764578022, 'num_layers': 2, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0005219522484181989, 'mmd_lambda': 0.004076256133904156, 'early_patience': 94}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 2/20 | Gen 0/9 | Params: 7 | Total Evals: 22 ---
+Params: {'learning_rate': 0.008998721218196587, 'num_layers': 1, 'layer_size': 50, 'positional_encoding': False, 'l2_reg': 0.0009441853203251946, 'mmd_lambda': 0.007243136860523834, 'early_patience': 84}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 3/20 | Gen 0/9 | Params: 7 | Total Evals: 23 ---
+Params: {'learning_rate': 0.0030085364422862346, 'num_layers': 5, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0004801828499422167, 'mmd_lambda': 0.003730973692568542, 'early_patience': 20}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 4/20 | Gen 0/9 | Params: 7 | Total Evals: 24 ---
+Params: {'learning_rate': 0.008085996764578022, 'num_layers': 2, 'layer_size': 79, 'positional_encoding': True, 'l2_reg': 0.0009441853203251946, 'mmd_lambda': 0.007243136860523834, 'early_patience': 84}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 5/20 | Gen 0/9 | Params: 7 | Total Evals: 25 ---
+Params: {'learning_rate': 0.004171657970437157, 'num_layers': 5, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.0004017915428373365, 'mmd_lambda': 0.009836875910743479, 'early_patience': 73}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 6/20 | Gen 0/9 | Params: 7 | Total Evals: 26 ---
+Params: {'learning_rate': 0.006399006621371724, 'num_layers': 2, 'layer_size': 40, 'positional_encoding': False, 'l2_reg': 0.0004288446082950035, 'mmd_lambda': 0.009221402848744795, 'early_patience': 48}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 7/20 | Gen 0/9 | Params: 7 | Total Evals: 27 ---
+Params: {'learning_rate': 8.843753095882188e-05, 'num_layers': 1, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.00013030486084947903, 'mmd_lambda': 0.0028657332620097634, 'early_patience': 70}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 8/20 | Gen 0/9 | Params: 7 | Total Evals: 28 ---
+Params: {'learning_rate': 0.009326024466302572, 'num_layers': 1, 'layer_size': 224, 'positional_encoding': True, 'l2_reg': 0.00032455025592295763, 'mmd_lambda': 0.006521465205536265, 'early_patience': 90}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 9/20 | Gen 0/9 | Params: 7 | Total Evals: 29 ---
+Params: {'learning_rate': 0.0010570034859551187, 'num_layers': 4, 'layer_size': 169, 'positional_encoding': True, 'l2_reg': 0.00028085898282709774, 'mmd_lambda': 0.0019141309432274196, 'early_patience': 19}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 10/20 | Gen 0/9 | Params: 7 | Total Evals: 30 ---
+Params: {'learning_rate': 0.008998721218196587, 'num_layers': 1, 'layer_size': 50, 'positional_encoding': False, 'l2_reg': 0.0005219522484181989, 'mmd_lambda': 0.004173934704845545, 'early_patience': 94}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+  Best Val Loss: inf
+  No improvement for 1 generations.
+  Statistics saved to optimization_stats.json
+2026-02-18 06:11:36 [doin_node.unified] INFO: [predictor-timeseries-4h] gen=0 stage=1/1 evals=30  champ_fitness=inf  champ_val_mae=N/A  avg_fitness=inf  patience=1/3
+-- Generation 1/9 --
+
+--- Evaluating Candidate 1/20 | Gen 1/9 | Params: 7 | Total Evals: 31 ---
+Params: {'learning_rate': 0.009765043021382057, 'num_layers': 3, 'layer_size': 46, 'positional_encoding': True, 'l2_reg': 0.0006523521394401277, 'mmd_lambda': 0.001725776348626357, 'early_patience': 85}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 2/20 | Gen 1/9 | Params: 7 | Total Evals: 32 ---
+Params: {'learning_rate': 0.0021525973355307464, 'num_layers': 4, 'layer_size': 69, 'positional_encoding': True, 'l2_reg': 0.000471348582969999, 'mmd_lambda': 0.008255706986692361, 'early_patience': 10}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 3/20 | Gen 1/9 | Params: 7 | Total Evals: 33 ---
+Params: {'learning_rate': 0.00654294010794581, 'num_layers': 4, 'layer_size': 46, 'positional_encoding': True, 'l2_reg': 0.00010018481638429998, 'mmd_lambda': 0.0015590693146370572, 'early_patience': 54}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 4/20 | Gen 1/9 | Params: 7 | Total Evals: 34 ---
+Params: {'learning_rate': 0.009765043021382057, 'num_layers': 3, 'layer_size': 160, 'positional_encoding': True, 'l2_reg': 0.000471348582969999, 'mmd_lambda': 0.008255706986692361, 'early_patience': 10}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 5/20 | Gen 1/9 | Params: 7 | Total Evals: 35 ---
+Params: {'learning_rate': 0.004132522422479908, 'num_layers': 5, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.0004017915428373365, 'mmd_lambda': 0.009836875910743479, 'early_patience': 73}
+2026-02-18 06:11:37 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.0.100:8470
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 6/20 | Gen 1/9 | Params: 7 | Total Evals: 36 ---
+Params: {'learning_rate': 0.006843423356841247, 'num_layers': 2, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0006989837411329596, 'mmd_lambda': 0.007243136860523834, 'early_patience': 84}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 7/20 | Gen 1/9 | Params: 7 | Total Evals: 37 ---
+Params: {'learning_rate': 0.006399006621371724, 'num_layers': 2, 'layer_size': 40, 'positional_encoding': False, 'l2_reg': 0.0004288446082950035, 'mmd_lambda': 0.01, 'early_patience': 48}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+2026-02-18 06:11:37 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.1.119:8470
+
+--- Evaluating Candidate 8/20 | Gen 1/9 | Params: 7 | Total Evals: 38 ---2026-02-18 06:11:37 [doin_node.unified] INFO: LAN scan: 2 new peers
+2026-02-18 06:11:37 [doin_node.unified] INFO: Connected to discovered peer: 192.168.1.119:8470
+2026-02-18 06:11:37 [doin_node.unified] INFO: Connected to discovered peer: 192.168.0.100:8470
+
+Params: {'learning_rate': 0.009765043021382057, 'num_layers': 3, 'layer_size': 50, 'positional_encoding': False, 'l2_reg': 0.0005219522484181989, 'mmd_lambda': 0.004173934704845545, 'early_patience': 10}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 9/20 | Gen 1/9 | Params: 7 | Total Evals: 39 ---
+Params: {'learning_rate': 0.008998721218196587, 'num_layers': 1, 'layer_size': 46, 'positional_encoding': True, 'l2_reg': 0.000471348582969999, 'mmd_lambda': 0.008255706986692361, 'early_patience': 94}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 10/20 | Gen 1/9 | Params: 7 | Total Evals: 40 ---
+Params: {'learning_rate': 0.0021525973355307464, 'num_layers': 4, 'layer_size': 69, 'positional_encoding': True, 'l2_reg': 0.0006523521394401277, 'mmd_lambda': 0.001823454919567745, 'early_patience': 85}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+  Best Val Loss: inf
+  No improvement for 2 generations.
+  Statistics saved to optimization_stats.json
+2026-02-18 06:11:38 [doin_node.unified] INFO: [predictor-timeseries-4h] gen=1 stage=1/1 evals=40  champ_fitness=inf  champ_val_mae=N/A  avg_fitness=inf  patience=2/3
+-- Generation 2/9 --
+
+--- Evaluating Candidate 1/20 | Gen 2/9 | Params: 7 | Total Evals: 41 ---
+Params: {'learning_rate': 0.009322107119403426, 'num_layers': 4, 'layer_size': 60, 'positional_encoding': True, 'l2_reg': 0.00028085898282709774, 'mmd_lambda': 0.0019141309432274196, 'early_patience': 19}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 2/20 | Gen 2/9 | Params: 7 | Total Evals: 42 ---
+Params: {'learning_rate': 0.0010570034859551187, 'num_layers': 4, 'layer_size': 169, 'positional_encoding': True, 'l2_reg': 0.000922032625945537, 'mmd_lambda': 0.0003591859217703313, 'early_patience': 57}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 3/20 | Gen 2/9 | Params: 7 | Total Evals: 43 ---
+Params: {'learning_rate': 0.0030085364422862346, 'num_layers': 5, 'layer_size': 60, 'positional_encoding': True, 'l2_reg': 0.0004801828499422167, 'mmd_lambda': 0.003730973692568542, 'early_patience': 20}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 4/20 | Gen 2/9 | Params: 7 | Total Evals: 44 ---
+Params: {'learning_rate': 0.009322107119403426, 'num_layers': 4, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.000922032625945537, 'mmd_lambda': 0.0003591859217703313, 'early_patience': 57}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 5/20 | Gen 2/9 | Params: 7 | Total Evals: 45 ---
+Params: {'learning_rate': 0.004093386874522659, 'num_layers': 5, 'layer_size': 96, 'positional_encoding': False, 'l2_reg': 0.0004017915428373365, 'mmd_lambda': 0.009836875910743479, 'early_patience': 73}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 6/20 | Gen 2/9 | Params: 7 | Total Evals: 46 ---
+Params: {'learning_rate': 0.008522469613645282, 'num_layers': 2, 'layer_size': 46, 'positional_encoding': True, 'l2_reg': 0.00022614700377776402, 'mmd_lambda': 0.008255706986692361, 'early_patience': 10}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 7/20 | Gen 2/9 | Params: 7 | Total Evals: 47 ---
+Params: {'learning_rate': 0.006843423356841247, 'num_layers': 2, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0006989837411329596, 'mmd_lambda': 0.009497197839335642, 'early_patience': 84}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 8/20 | Gen 2/9 | Params: 7 | Total Evals: 48 ---
+Params: {'learning_rate': 0.009322107119403426, 'num_layers': 4, 'layer_size': 69, 'positional_encoding': True, 'l2_reg': 0.0006523521394401277, 'mmd_lambda': 0.001823454919567745, 'early_patience': 57}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 9/20 | Gen 2/9 | Params: 7 | Total Evals: 49 ---
+Params: {'learning_rate': 0.0021525973355307464, 'num_layers': 4, 'layer_size': 60, 'positional_encoding': True, 'l2_reg': 0.000922032625945537, 'mmd_lambda': 0.0003591859217703313, 'early_patience': 85}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+
+--- Evaluating Candidate 10/20 | Gen 2/9 | Params: 7 | Total Evals: 50 ---
+Params: {'learning_rate': 0.0010570034859551187, 'num_layers': 4, 'layer_size': 169, 'positional_encoding': True, 'l2_reg': 0.00028085898282709774, 'mmd_lambda': 0.0020118095141688076, 'early_patience': 19}
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+CRITICAL: Worker failed (returncode=1). Tail of stdout:
+/usr/bin/python3: No module named optimizer_plugins.candidate_worker
+
+--- End of worker stdout ---
+  Best Val Loss: inf
+  No improvement for 3 generations.
+  Statistics saved to optimization_stats.json
+2026-02-18 06:11:39 [doin_node.unified] INFO: [predictor-timeseries-4h] gen=2 stage=1/1 evals=50  champ_fitness=inf  champ_val_mae=N/A  avg_fitness=inf  patience=3/3
+Early stopping triggered after 3 generations.
+Optimization stage completed in 8.73 seconds.
+Best hyperparameters found: {'learning_rate': 0.008085996764578022, 'num_layers': 2, 'layer_size': 152, 'positional_encoding': True, 'l2_reg': 0.0009441853203251946, 'mmd_lambda': 0.007243136860523834, 'early_patience': 84}
+2026-02-18 06:11:39 [doin_node.unified] INFO: 🏁 Full optimization finished for predictor-timeseries-4h: final_perf=-inf
+2026-02-18 06:11:39 [doin_node.unified] INFO: ✅ Optimization complete for predictor-timeseries-4h
+2026-02-18 06:11:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:11:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:11:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:11:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:11:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:11:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:11:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:11:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:12:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:12:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:12:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:12:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:12:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:12:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:12:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:12:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:13:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:13:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:13:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:13:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:13:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:13:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:13:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:13:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:14:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:14:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:14:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:14:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:14:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:14:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:14:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:14:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:15:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:15:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:15:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:15:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:15:44 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:15:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:15:44 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:15:44 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:16:45 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:16:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:16:45 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:16:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:16:45 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:16:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:16:45 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:16:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:17:45 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:17:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:17:45 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:17:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:17:45 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:06:17:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 06:17:45 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:06:17:45 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
