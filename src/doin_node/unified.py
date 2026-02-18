@@ -115,6 +115,7 @@ class DomainRole:
     inference_plugin: str = ""
     synthetic_data_plugin: str = ""  # MANDATORY for verification trust
     has_synthetic_data: bool = False
+    synthetic_data_validation: bool = True  # When False, skip quorum verification — auto-accept if better
 
     # Stop criteria — optimization stops when performance >= this value (per-model)
     target_performance: float | None = None
@@ -802,8 +803,42 @@ class UnifiedNode:
                 if plugin and hasattr(plugin, "set_network_champion"):
                     plugin.set_network_champion(data.parameters)
 
-        # Domain must have synthetic data for verification trust
+        # ── Synthetic data validation bypass ──────────────────────
         role = self._domain_roles.get(data.domain_id)
+        skip_validation = role and not role.synthetic_data_validation
+
+        if skip_validation:
+            # Auto-accept/reject based on reported performance vs current best
+            current_best = self._domain_best.get(data.domain_id, (None, None))
+            is_better = current_best[1] is None or data.reported_performance > current_best[1]
+
+            if is_better:
+                # Auto-accept — treat reported_performance as verified
+                await self._auto_accept_optimae(data, message.sender_id)
+                logger.info(
+                    "✅ AUTO-ACCEPT optimae %s (no synthetic validation): perf=%.6f > best=%.6f",
+                    data.optimae_id[:12], data.reported_performance,
+                    current_best[1] if current_best[1] is not None else float('-inf'),
+                )
+            else:
+                # Auto-reject — log on blockchain
+                self.consensus.record_transaction(Transaction(
+                    tx_type=TransactionType.OPTIMAE_REJECTED,
+                    domain_id=data.domain_id,
+                    peer_id=message.sender_id,
+                    payload={
+                        "optimae_id": data.optimae_id,
+                        "reason": f"reported perf {data.reported_performance:.6f} <= current best {current_best[1]:.6f}",
+                    },
+                ))
+                logger.info(
+                    "❌ AUTO-REJECT optimae %s: perf=%.6f <= best=%.6f",
+                    data.optimae_id[:12], data.reported_performance,
+                    current_best[1] if current_best[1] is not None else float('-inf'),
+                )
+            return
+
+        # ── Full synthetic data verification path ──────────────────
         if role and not role.has_synthetic_data:
             logger.warning(
                 "Domain %s has no synthetic data — optimae will have zero consensus weight",
@@ -847,6 +882,123 @@ class UnifiedNode:
             [s[:8] for s in selected],
             task.id[:12],
         )
+
+    async def _auto_accept_optimae(self, data: Any, sender_id: str) -> None:
+        """Auto-accept an optimae without synthetic data verification.
+
+        Used when synthetic_data_validation=False. Records the acceptance on-chain,
+        updates domain best, distributes rewards, and triggers block generation —
+        same as the full quorum path but skipping evaluator verification.
+        """
+        import math
+
+        reported = data.reported_performance
+        verified = reported  # Trust reported performance
+
+        # Reputation
+        self.reputation.record_optimae_accepted(sender_id)
+        rep_score = self.reputation.get_score(sender_id)
+        rep_factor = min(1.0, math.log1p(rep_score) / math.log1p(10.0)) if rep_score > 0 else 0.0
+
+        # Incentive
+        role = self._domain_roles.get(data.domain_id)
+        incentive_cfg = role.incentive_config if role else IncentiveConfig()
+        raw_increment = abs(reported)
+        weights = self.vuw.compute_weights()
+        domain_weight = weights.get(data.domain_id, 0.0)
+
+        incentive_result = evaluate_verification_incentive(
+            reported_performance=reported,
+            verified_performance=verified,
+            raw_increment=raw_increment,
+            domain_weight=domain_weight,
+            reputation_factor=rep_factor,
+            config=incentive_cfg,
+        )
+        effective_increment = incentive_result.effective_increment
+
+        # Record optimae
+        optimae = Optimae(
+            id=data.optimae_id,
+            domain_id=data.domain_id,
+            optimizer_id=sender_id,
+            parameters=data.parameters,
+            reported_performance=reported,
+            verified_performance=verified,
+            performance_increment=effective_increment,
+        )
+        self.consensus.record_optimae(optimae)
+
+        # On-chain experiment metrics
+        from doin_node.stats.chain_metrics import build_onchain_metrics
+        onchain_metrics: dict[str, Any] = {}
+        exp_state = self.experiment_tracker.get_experiment_state(data.domain_id)
+        if exp_state is not None:
+            onchain_metrics = build_onchain_metrics(
+                experiment_id=exp_state["experiment_id"],
+                round_number=exp_state["round_count"],
+                time_to_this_result_seconds=time.monotonic() - exp_state["start_mono"],
+                optimization_config=role.optimization_config if role else {},
+                data_hash=None,
+                previous_best_performance=exp_state["best_performance"],
+                reported_performance=reported,
+            )
+
+        # Record OPTIMAE_ACCEPTED transaction on chain
+        self.consensus.record_transaction(Transaction(
+            tx_type=TransactionType.OPTIMAE_ACCEPTED,
+            domain_id=data.domain_id,
+            peer_id=sender_id,
+            payload={
+                "optimae_id": data.optimae_id,
+                "parameters": data.parameters,
+                "verified_performance": verified,
+                "effective_increment": effective_increment,
+                "reward_fraction": incentive_result.reward_fraction,
+                "quorum_agree_fraction": 1.0,  # Auto-accepted
+                "incentive_reason": "auto_accept_no_synthetic_validation",
+                **onchain_metrics,
+            },
+        ))
+        self.vuw.update_from_block([{
+            "tx_type": "optimae_accepted",
+            "domain_id": data.domain_id,
+            "payload": {"increment": effective_increment},
+        }])
+
+        # Track contributor for coin distribution
+        self._block_contributors.append(ContributorWork(
+            peer_id=sender_id,
+            role="optimizer",
+            domain_id=data.domain_id,
+            effective_increment=effective_increment,
+            reward_fraction=incentive_result.reward_fraction,
+        ))
+
+        # Resolve optimae stake
+        if self.fee_market:
+            self.fee_market.resolve_optimae(data.optimae_id, accepted=True)
+
+        # Update domain best
+        current_best = self._domain_best.get(data.domain_id, (None, None))
+        if current_best[1] is None or verified > current_best[1]:
+            prev_best = current_best[1]
+            self._domain_best[data.domain_id] = (data.parameters, verified)
+            is_remote = sender_id != self.peer_id
+            if is_remote:
+                logger.info(
+                    "🏝️  MIGRATION: auto-accepted from peer %s for %s: %.6f → %.6f",
+                    sender_id[:12], data.domain_id,
+                    prev_best if prev_best is not None else float('-inf'),
+                    verified,
+                )
+                # Inject into optimizer plugin's population
+                plugin = self._optimizer_plugins.get(data.domain_id)
+                if plugin and hasattr(plugin, "set_network_champion"):
+                    plugin.set_network_champion(data.parameters)
+
+        # Try to generate a block
+        await self.try_generate_block()
 
     async def _handle_optimae_announcement(self, message: Message, from_peer: str) -> None:
         """Handle legacy direct announcement (no commit-reveal).

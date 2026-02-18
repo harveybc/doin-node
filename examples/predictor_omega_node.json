@@ -3,7 +3,9 @@
   "host": "0.0.0.0",
   "port": 8470,
   "data_dir": "./doin-data-predictor",
-  "bootstrap_peers": [],
+  "bootstrap_peers": [
+    "192.168.1.235:8470"
+  ],
   "target_block_time": 600,
   "quorum_min_evaluators": 1,
   "quorum_fraction": 0.67,
@@ -27,7 +29,7 @@
       "has_synthetic_data": true,
       "target_performance": 999.0,
       "optimization_config": {
-        "predictor_root": "/home/openclaw/predictor",
+        "predictor_root": "/home/harveybc/predictor",
         "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
@@ -42,7 +44,7 @@
         "early_stopping_patience": 2
       },
       "inference_config": {
-        "predictor_root": "/home/openclaw/predictor",
+        "predictor_root": "/home/harveybc/predictor",
         "load_config": "examples/config/phase_1/optimization/phase_1_mimo_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
