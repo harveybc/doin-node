@@ -57,6 +57,13 @@ COLUMNS = [
     "chain_height",
     "peers_count",
     "block_reward_earned",
+    # Detailed MAE metrics
+    "train_mae",
+    "train_naive_mae",
+    "val_mae",
+    "val_naive_mae",
+    "test_mae",
+    "test_naive_mae",
 ]
 
 
