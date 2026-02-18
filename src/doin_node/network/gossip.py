@@ -270,7 +270,7 @@ class GossipSub:
         topic = TOPIC_MAP.get(message.msg_type, "discovery")
         state = self._topics.get(topic)
         if state:
-            for peer_id in state.mesh:
+            for peer_id in list(state.mesh):
                 if peer_id != from_peer and peer_id != self.peer_id:
                     await self._send_message(peer_id, message)
 

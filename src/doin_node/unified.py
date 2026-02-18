@@ -1947,7 +1947,10 @@ class UnifiedNode:
                     "address": peer.address,
                     "port": peer.port,
                 })
-        return web.json_response({"peers": peers})
+        return web.json_response({
+            "self": {"peer_id": self.peer_id},
+            "peers": peers,
+        })
 
     async def _http_fees(self, request) -> Any:
         """Serve current fee market information."""
