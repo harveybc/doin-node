@@ -144,7 +144,8 @@
         "min_reward_fraction": 0.3,
         "max_bonus_multiplier": 1.2
       },
-      "synthetic_data_validation": false
+      "synthetic_data_validation": false,
+      "higher_is_better": false
     }
   ],
   "experiment_stats_file": "./predictor_experiment_stats.csv"

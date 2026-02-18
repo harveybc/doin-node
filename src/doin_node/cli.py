@@ -113,6 +113,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
             synthetic_data_plugin=d.get("synthetic_data_plugin", ""),
             has_synthetic_data=d.get("has_synthetic_data", False),
             synthetic_data_validation=d.get("synthetic_data_validation", True),
+            higher_is_better=d.get("higher_is_better", True),
             param_bounds={
                 k: tuple(v) for k, v in d.get("param_bounds", {}).items()
             },

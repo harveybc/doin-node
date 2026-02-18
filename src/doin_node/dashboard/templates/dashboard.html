@@ -468,9 +468,11 @@ async function refreshAll() {
       const f = (v,d) => v != null ? fmt(v,d||6) : '--';
       switch (e.type) {
         case 'champion':
+          var nda = e.performance != null ? f(e.performance,6) : '--';
+          var breakdown = `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
           return `<tr style="background:rgba(40,167,69,0.15)">
             <td><span class="badge badge-success">🏆 Champion</span></td>
-            <td>Gen ${e.gen} Stage ${e.stage} | perf=${f(e.performance,4)} | val_MAE=<strong>${f(e.val_mae)}</strong> train=${f(e.train_mae)} test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
+            <td>Gen ${e.gen} Stage ${e.stage} | <strong>NDA=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
             <td>${t}</td></tr>`;
         case 'broadcast':
           return `<tr style="background:rgba(23,162,184,0.1)">
@@ -480,12 +482,12 @@ async function refreshAll() {
         case 'auto_accept':
           return `<tr style="background:rgba(40,167,69,0.2)">
             <td><span class="badge badge-success">✅ Accept</span></td>
-            <td>perf=${f(e.performance,4)} prev=${f(e.previous_best,4)} from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>NDA=${f(e.performance,6)} beats prev=${f(e.previous_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'auto_reject':
           return `<tr style="background:rgba(220,53,69,0.1)">
             <td><span class="badge badge-danger">❌ Reject</span></td>
-            <td>perf=${f(e.performance,4)} best=${f(e.current_best,4)} from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>NDA=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'generation_end':
           return `<tr>

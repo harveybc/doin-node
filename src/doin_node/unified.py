@@ -117,6 +117,7 @@ class DomainRole:
     synthetic_data_plugin: str = ""  # MANDATORY for verification trust
     has_synthetic_data: bool = False
     synthetic_data_validation: bool = True  # When False, skip quorum verification — auto-accept if better
+    higher_is_better: bool = True  # False for predictor (lower fitness = better)
 
     # Stop criteria — optimization stops when performance >= this value (per-model)
     target_performance: float | None = None
@@ -410,6 +411,15 @@ class UnifiedNode:
     def _peer_id_exists(self, peer_id: str) -> bool:
         """Check if a peer with this ID already exists (on any endpoint)."""
         return any(p.peer_id == peer_id for p in self._peers.values())
+
+    def _is_better(self, domain_id: str, new_perf: float, old_perf: float | None) -> bool:
+        """Compare performances respecting higher_is_better setting."""
+        if old_perf is None:
+            return True
+        role = self._domain_roles.get(domain_id)
+        if role and not role.higher_is_better:
+            return new_perf < old_perf  # Lower = better (e.g. predictor fitness)
+        return new_perf > old_perf  # Higher = better (default)
 
     def _log_event(self, event_type: str, **kwargs: Any) -> None:
         """Add an event to the live event log (for dashboard display)."""
@@ -817,7 +827,7 @@ class UnifiedNode:
         # When skipping validation, auto-accept handles domain_best update.
         if not skip_validation and message.sender_id != self.peer_id:
             current_best = self._domain_best.get(data.domain_id, (None, None))
-            if current_best[1] is None or data.reported_performance > current_best[1]:
+            if self._is_better(data.domain_id, data.reported_performance, current_best[1]):
                 self._domain_best[data.domain_id] = (data.parameters, data.reported_performance)
                 logger.info(
                     "🏝️  MIGRATION: optimistic adopt from peer %s for %s: %.6f → %.6f",
@@ -833,7 +843,7 @@ class UnifiedNode:
         if skip_validation:
             # Auto-accept/reject based on reported performance vs current best
             current_best = self._domain_best.get(data.domain_id, (None, None))
-            is_better = current_best[1] is None or data.reported_performance > current_best[1]
+            is_better = self._is_better(data.domain_id, data.reported_performance, current_best[1])
 
             if is_better:
                 # Auto-accept — treat reported_performance as verified
@@ -844,9 +854,10 @@ class UnifiedNode:
                     performance=data.reported_performance,
                     previous_best=current_best[1] if current_best[1] is not None else None)
                 logger.info(
-                    "✅ AUTO-ACCEPT optimae %s (no synthetic validation): perf=%.6f > best=%.6f",
+                    "✅ AUTO-ACCEPT optimae %s (no synthetic validation): perf=%.6f beats best=%.6f (%s)",
                     data.optimae_id[:12], data.reported_performance,
-                    current_best[1] if current_best[1] is not None else float('-inf'),
+                    current_best[1] if current_best[1] is not None else float('inf'),
+                    "lower=better" if role and not role.higher_is_better else "higher=better",
                 )
             else:
                 # Auto-reject — log on blockchain
@@ -865,9 +876,10 @@ class UnifiedNode:
                     performance=data.reported_performance,
                     current_best=current_best[1])
                 logger.info(
-                    "❌ AUTO-REJECT optimae %s: perf=%.6f <= best=%.6f",
+                    "❌ AUTO-REJECT optimae %s: perf=%.6f does not beat best=%.6f (%s)",
                     data.optimae_id[:12], data.reported_performance,
-                    current_best[1] if current_best[1] is not None else float('-inf'),
+                    current_best[1] if current_best[1] is not None else float('inf'),
+                    "lower=better" if role and not role.higher_is_better else "higher=better",
                 )
             return
 
@@ -1561,7 +1573,7 @@ class UnifiedNode:
 
         # Update domain best
         current_best = self._domain_best.get(domain_id, (None, None))
-        if current_best[1] is None or performance > current_best[1]:
+        if self._is_better(domain_id, performance, current_best[1]):
             self._domain_best[domain_id] = (parameters, performance)
 
         logger.info(
@@ -1574,7 +1586,7 @@ class UnifiedNode:
         metrics: dict, gen: int, stage_info: dict,
     ) -> None:
         """Broadcast a new local champion to the DOIN network (commit→reveal)."""
-        performance = -fitness  # DOIN convention: higher = better
+        performance = fitness  # Use raw fitness; comparison respects higher_is_better per domain
 
         # Include trained model in broadcast parameters for evaluator verification (inference-only)
         model_b64 = metrics.pop("_model_b64", None)
@@ -1583,7 +1595,7 @@ class UnifiedNode:
 
         # Update domain best
         current_best = self._domain_best.get(domain_id, (None, None))
-        is_improvement = current_best[1] is None or performance > current_best[1]
+        is_improvement = self._is_better(domain_id, performance, current_best[1])
         if is_improvement:
             self._domain_best[domain_id] = (params, performance)
 

@@ -25,3 +25,4 @@ cross_machine_config.json
 *.pyc
 *.keras
 node_modules/
+dragon_node.log
