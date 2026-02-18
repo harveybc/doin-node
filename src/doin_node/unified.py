@@ -782,13 +782,14 @@ class UnifiedNode:
             # Still allow — but their optimae won't count toward consensus
             # (effective increment will be near-zero due to low reputation)
 
+        # ── Synthetic data validation bypass ──────────────────────
+        role = self._domain_roles.get(data.domain_id)
+        skip_validation = role and not role.synthetic_data_validation
+
         # ── Optimistic adoption (island model) ──────────────────────
-        # Immediately adopt better parameters from peers WITHOUT waiting for
-        # consensus. The optimizer is greedy — if someone claims better perf,
-        # use it now and keep optimizing from there. Consensus still runs in
-        # parallel for rewards, payment, and permanent on-chain record.
-        # If the optimae later gets rejected, we've lost a few rounds at worst.
-        if message.sender_id != self.peer_id:
+        # Only when using full validation (consensus runs in parallel).
+        # When skipping validation, auto-accept handles domain_best update.
+        if not skip_validation and message.sender_id != self.peer_id:
             current_best = self._domain_best.get(data.domain_id, (None, None))
             if current_best[1] is None or data.reported_performance > current_best[1]:
                 self._domain_best[data.domain_id] = (data.parameters, data.reported_performance)
@@ -802,10 +803,6 @@ class UnifiedNode:
                 plugin = self._optimizer_plugins.get(data.domain_id)
                 if plugin and hasattr(plugin, "set_network_champion"):
                     plugin.set_network_champion(data.parameters)
-
-        # ── Synthetic data validation bypass ──────────────────────
-        role = self._domain_roles.get(data.domain_id)
-        skip_validation = role and not role.synthetic_data_validation
 
         if skip_validation:
             # Auto-accept/reject based on reported performance vs current best
