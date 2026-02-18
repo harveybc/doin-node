@@ -643,9 +643,11 @@ class UnifiedNode:
         elif message.payload is None:
             message.payload = {"_sender_port": self.config.port}
         if self.gossip:
-            await self.gossip.publish(message)
+            sent = await self.gossip.publish(message)
+            logger.info("📤 Broadcast %s → %d peers (gossip mesh)", message.msg_type.value, sent)
         else:
             await self.transport.broadcast(list(self._peers.keys()), message)
+            logger.info("📤 Broadcast %s → %d peers (flooding)", message.msg_type.value, len(self._peers))
 
     async def _gossip_send(self, peer_id: str, payload: dict) -> bool:
         """Send a message to a specific peer (callback for GossipSub)."""
