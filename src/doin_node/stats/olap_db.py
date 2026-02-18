@@ -64,7 +64,14 @@ class OLAPDatabase:
         ).fetchone()
         current = row["v"] if row else 0
         if current < SCHEMA_VERSION:
-            # Future migrations go here
+            # Migration v1 → v2: add MAE detail columns to fact_round
+            if current < 2:
+                for col in ("train_mae", "train_naive_mae", "val_mae", "val_naive_mae",
+                            "test_mae", "test_naive_mae"):
+                    try:
+                        self._conn.execute(f"ALTER TABLE fact_round ADD COLUMN {col} REAL")
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
             self._conn.executescript(SCHEMA_SQL)  # idempotent CREATE IF NOT EXISTS
             self._conn.execute(
                 "INSERT INTO _schema_version (version, applied_at) VALUES (?, ?)",
@@ -132,9 +139,11 @@ class OLAPDatabase:
         block_reward_earned: float = 0.0,
         converged: bool = False,
         round_id: str | None = None,
+        detail_metrics: dict[str, Any] | None = None,
     ) -> str:
         rid = round_id or uuid.uuid4().hex
         now = _now_iso()
+        dm = detail_metrics or {}
         with self._lock:
             self._conn.execute(
                 """INSERT INTO fact_round
@@ -143,8 +152,10 @@ class OLAPDatabase:
                     parameters, best_parameters,
                     wall_clock_seconds, elapsed_seconds,
                     time_to_current_best_seconds, time_to_target_seconds,
-                    chain_height, peers_count, block_reward_earned, converged)
-                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?)""",
+                    chain_height, peers_count, block_reward_earned, converged,
+                    train_mae, train_naive_mae, val_mae, val_naive_mae,
+                    test_mae, test_naive_mae)
+                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?,?)""",
                 (
                     rid, experiment_id, domain_id, round_number, now,
                     performance, best_performance, performance_delta, is_improvement,
@@ -153,6 +164,9 @@ class OLAPDatabase:
                     wall_clock_seconds, elapsed_seconds,
                     time_to_current_best_seconds, time_to_target_seconds,
                     chain_height, peers_count, block_reward_earned, converged,
+                    dm.get("train_mae"), dm.get("train_naive_mae"),
+                    dm.get("val_mae"), dm.get("val_naive_mae"),
+                    dm.get("test_mae"), dm.get("test_naive_mae"),
                 ),
             )
         return rid

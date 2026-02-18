@@ -8,7 +8,7 @@ Tables:
   _schema_version       – migration tracking
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 -- Migration tracking
@@ -70,7 +70,15 @@ CREATE TABLE IF NOT EXISTS fact_round (
     block_reward_earned REAL DEFAULT 0.0,
 
     -- Convergence
-    converged BOOLEAN DEFAULT FALSE
+    converged BOOLEAN DEFAULT FALSE,
+
+    -- Detailed metrics (MAE breakdowns)
+    train_mae REAL,
+    train_naive_mae REAL,
+    val_mae REAL,
+    val_naive_mae REAL,
+    test_mae REAL,
+    test_naive_mae REAL
 );
 
 -- Fact: Experiment summary

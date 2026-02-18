@@ -150,8 +150,29 @@ async def _api_optimization(request: web.Request) -> web.Response:
             if did == domain_id:
                 info["target_performance"] = getattr(dcfg, "target_performance", None)
                 break
+        # Champion detailed metrics (MAE breakdowns)
+        champion = node._domain_champion_metrics.get(domain_id)
+        if champion:
+            info["champion"] = {
+                "round": champion.get("round"),
+                "train_mae": champion.get("train_mae"),
+                "train_naive_mae": champion.get("train_naive_mae"),
+                "val_mae": champion.get("val_mae"),
+                "val_naive_mae": champion.get("val_naive_mae"),
+                "test_mae": champion.get("test_mae"),
+                "test_naive_mae": champion.get("test_naive_mae"),
+            }
         domains.append(info)
-    return web.json_response({"domains": domains})
+
+    # Tolerance config
+    tolerance = None
+    for dcfg in node.config.domains:
+        ic = getattr(dcfg, "incentive_config", None)
+        if ic:
+            tolerance = getattr(ic, "tolerance_margin", None)
+            break
+
+    return web.json_response({"domains": domains, "tolerance_margin": tolerance})
 
 
 # ── Live Training State ──────────────────────────────────────

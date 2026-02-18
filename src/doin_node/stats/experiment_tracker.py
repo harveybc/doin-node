@@ -170,6 +170,7 @@ class ExperimentTracker:
         chain_height: int = 0,
         peers_count: int = 0,
         block_reward_earned: float = 0.0,
+        detail_metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Record one optimization round. Returns the row dict."""
         with self._lock:
@@ -255,6 +256,12 @@ class ExperimentTracker:
                 "block_reward_earned": block_reward_earned,
             }
 
+            # Add detailed metrics (MAE breakdowns) if provided
+            dm = detail_metrics or {}
+            for key in ("train_mae", "train_naive_mae", "val_mae", "val_naive_mae",
+                        "test_mae", "test_naive_mae"):
+                row[key] = dm.get(key, "")
+
             self._append_row(row)
 
             # Dual-write to OLAP
@@ -280,6 +287,7 @@ class ExperimentTracker:
                         block_reward_earned=block_reward_earned,
                         converged=converged,
                         round_id=row["round_id"],
+                        detail_metrics=detail_metrics,
                     )
                 except Exception:
                     logger.exception("OLAP: failed to record round")

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -290,6 +291,7 @@ class UnifiedNode:
         self._domain_best: dict[str, tuple[dict[str, Any] | None, float | None]] = {}  # domain_id → (best_params, best_perf)
         self._domain_converged: set[str] = set()  # domains that reached target_performance
         self._domain_round_count: dict[str, int] = {}  # domain_id → round number
+        self._domain_champion_metrics: dict[str, dict[str, Any]] = {}  # domain_id → champion detail metrics
         self._start_time: float = time.time()
 
         # ── Experiment tracker ──
@@ -1318,10 +1320,47 @@ class UnifiedNode:
         role = self._domain_roles.get(domain_id)
         target_str = f" / target={role.target_performance}" if role and role.target_performance is not None else ""
         improvement_str = " ★" if is_improvement else ""
+
+        # Retrieve detailed metrics from plugin (if available)
+        detail_metrics: dict[str, Any] = {}
+        if hasattr(plugin, "last_round_metrics"):
+            detail_metrics = plugin.last_round_metrics or {}
+
+        # Log compact metrics: perf + MAE breakdown
+        mae_str = ""
+        if detail_metrics:
+            parts = []
+            for split in ("train", "val", "test"):
+                mae = detail_metrics.get(f"{split}_mae")
+                naive = detail_metrics.get(f"{split}_naive_mae")
+                if mae is not None:
+                    s = f"{split[0].upper()}:{mae:.6f}"
+                    if naive is not None and math.isfinite(naive):
+                        s += f"/{naive:.6f}"
+                    parts.append(s)
+            if parts:
+                mae_str = f"  MAE(pred/naive) {' '.join(parts)}"
+
         logger.info(
-            "[%s] round=%d  perf=%.6f  best=%.6f%s%s",
-            domain_id, round_num, performance, best_perf, target_str, improvement_str,
+            "[%s] round=%d  perf=%.6f  best=%.6f%s%s%s",
+            domain_id, round_num, performance, best_perf, target_str, improvement_str, mae_str,
         )
+
+        # Store detailed metrics for champion tracking
+        if is_improvement and detail_metrics:
+            self._domain_champion_metrics[domain_id] = {
+                "round": round_num,
+                "performance": performance,
+                "parameters": parameters,
+                **{k: v for k, v in detail_metrics.items() if k != "fitness"},
+            }
+            logger.info(
+                "🏆 New champion [%s] round=%d  perf=%.6f  train_mae=%.6f  val_mae=%.6f  test_mae=%s",
+                domain_id, round_num, performance,
+                detail_metrics.get("train_mae", float("nan")),
+                detail_metrics.get("val_mae", float("nan")),
+                f"{detail_metrics['test_mae']:.6f}" if detail_metrics.get("test_mae") is not None else "N/A",
+            )
 
         # Compute commitment hash (over core params only, not seed)
         commitment_hash = compute_commitment(parameters, nonce)
@@ -1380,6 +1419,7 @@ class UnifiedNode:
             wall_clock_seconds=wall_clock,
             chain_height=self._get_height(),
             peers_count=len(self._peers),
+            detail_metrics=detail_metrics,
         )
 
         logger.info(
