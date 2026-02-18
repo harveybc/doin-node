@@ -661,7 +661,7 @@ class UnifiedNode:
                     parameters = tx.payload.get("parameters")
                     if verified is not None and parameters is not None:
                         current = self._domain_best.get(domain_id, (None, None))
-                        if current[1] is None or verified > current[1]:
+                        if self._is_better(domain_id, verified, current[1]):
                             self._domain_best[domain_id] = (parameters, verified)
                             logger.info(
                                 "⚡ Synced champion for %s: perf=%.6f (from block #%d)",
@@ -1026,7 +1026,7 @@ class UnifiedNode:
 
         # Update domain best
         current_best = self._domain_best.get(data.domain_id, (None, None))
-        if current_best[1] is None or verified > current_best[1]:
+        if self._is_better(data.domain_id, verified, current_best[1]):
             prev_best = current_best[1]
             self._domain_best[data.domain_id] = (data.parameters, verified)
             is_remote = sender_id != self.peer_id
@@ -1271,7 +1271,7 @@ class UnifiedNode:
             # Update domain best from accepted optimae (critical for island model!)
             # This ensures nodes pick up champions from OTHER nodes, not just their own.
             current_best = self._domain_best.get(task.domain_id, (None, None))
-            if current_best[1] is None or verified > current_best[1]:
+            if self._is_better(task.domain_id, verified, current_best[1]):
                 prev_best = current_best[1]
                 self._domain_best[task.domain_id] = (task.parameters, verified)
                 is_remote = task.requester_id != self.peer_id
