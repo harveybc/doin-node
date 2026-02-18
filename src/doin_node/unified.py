@@ -1288,9 +1288,7 @@ class UnifiedNode:
                 logger.warning("Champion broadcast failed: %s", e)
 
         def on_eval_service(gen, candidate_num, stage_info):
-            """Called from optimizer thread between candidates — disabled to avoid bottleneck.
-            Eval tasks are processed at generation boundaries instead."""
-            return  # Skip interleaved eval — too slow (each eval = full model training)
+            """Called from optimizer thread between candidates → process 1 pending eval (inference-only, fast)."""
             import asyncio as _aio
             fut = _aio.run_coroutine_threadsafe(
                 node._process_one_pending_eval(domain_id),
@@ -1386,6 +1384,11 @@ class UnifiedNode:
     ) -> None:
         """Broadcast a new local champion to the DOIN network (commit→reveal)."""
         performance = -fitness  # DOIN convention: higher = better
+
+        # Include trained model in broadcast parameters for evaluator verification (inference-only)
+        model_b64 = metrics.pop("_model_b64", None)
+        if model_b64:
+            params = {**params, "_model_b64": model_b64}
 
         # Update domain best
         current_best = self._domain_best.get(domain_id, (None, None))
