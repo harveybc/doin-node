@@ -16,12 +16,20 @@ Visit [doin.network](https://doin.network) for the full overview.
 - **Unified architecture** — single process, configurable roles per domain
 - **HTTP transport** — aiohttp-based, simple and debuggable
 - **GossipSub protocol** — O(log N) message propagation through mesh-based gossip
+- **Peer discovery** — LAN scan + bootstrap nodes + PEX (peer exchange)
 - **Block sync protocol** — initial sync on startup, catch-up on announcements
 - **Full security pipeline** — all 10 hardening measures wired in
+- **Island model migration** — champion solutions shared via on-chain optimae, injected into other nodes' populations
+- **DEAP GA wrapper** — predictor plugin wraps full DEAP genetic algorithm via callback hooks (doesn't replace it)
 - **Pull-based task queue** — evaluators poll for work, priority-ordered
+- **Real-time dashboard** — web UI at `:8470/dashboard` for monitoring optimization, training, evaluations, chain, peers
 - **Experiment tracking** — per-round CSV + SQLite OLAP dual-write from round 1
 - **On-chain experiment metrics** — OPTIMAE_ACCEPTED transactions carry experiment metadata
 - **Per-domain convergence** — `target_performance` stop criteria per domain
+- **Domain sharding** — nodes only process subscribed domains
+- **EIP-1559 fee market** — dynamic base fee adjusts with demand
+- **GPU scheduler** — resource marketplace matching jobs to hardware
+- **L2 payment channels** — off-chain micropayments for inference requests
 - **PostgreSQL sync** — export OLAP data to PostgreSQL for Metabase dashboards
 
 ### Security Systems (all wired in)
@@ -82,6 +90,27 @@ See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.
   ]
 }
 ```
+
+## Dashboard
+
+Access the real-time monitoring dashboard at `http://localhost:8470/dashboard`.
+
+Tracks optimization progress, training status, evaluations, chain state, events, and peer connections in a single web UI.
+
+### Dashboard API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/dashboard` | Web UI (HTML dashboard) |
+| `/api/node` | Node identity and configuration |
+| `/api/peers` | Connected peers and mesh topology |
+| `/api/optimization` | Current optimization state per domain |
+| `/api/training` | Active training jobs and progress |
+| `/api/evaluations` | Evaluation queue and results |
+| `/api/metrics` | Performance metrics and statistics |
+| `/api/events` | Real-time event stream |
+| `/api/chain` | Chain state, height, recent blocks |
+| `/api/plugins` | Loaded plugins and domain configuration |
 
 ## API Endpoints
 
@@ -144,25 +173,45 @@ Every node syncing the chain gets the full experiment history of ALL participant
 
 ## Benchmarks
 
-### Multi-Node Island Model (Quadratic Domain)
+### 3-Node Island Model Benchmark
+
+Running on: **Dragon** (RTX 4090) + **Omega** (RTX 4070) + **Delta** (CPU-only, SLI 2× GFX 550M)
 
 | Setup | Rounds to Converge | Speedup |
 |-------|-------------------|---------|
 | Single node (Omega, RTX 4070) | 39 | 1× |
-| Two nodes (Dragon RTX 4090 + Omega RTX 4070) | 5–6 | **~7×** |
+| Two nodes (Dragon + Omega) | 5–6 | **~7×** |
+| Delta solo (CPU) | not converged at 1680s | — |
+| Dragon + Omega (hard target) | 78 rounds, 1292s | **19% faster** |
 
-Both nodes converged to the same optimal solution (-91.90), proving champion sharing works correctly via on-chain optimae exchange. Auto-discovery enables zero-config peer connection — only one node needs a bootstrap address.
+Champion migration via on-chain optimae exchange is working: when one node finds a better solution, it broadcasts parameters and other nodes inject them into their populations (island model). Delta (CPU-only, 3–4× slower convergence) benefits most from receiving champions.
+
+Auto-discovery via LAN scan + PEX enables zero-config peer connection.
 
 ## Tests
 
 ```bash
 python -m pytest tests/ -v
-# 290 tests passing
+# 289 tests passing
 ```
+
+## Island Model Migration
+
+DOIN implements the **island model** from evolutionary computation over a real blockchain:
+
+1. Each node runs its own optimization (e.g., DEAP genetic algorithm via the predictor plugin)
+2. When a node finds a champion solution, it broadcasts parameters via on-chain optimae
+3. Other nodes receive the champion and inject it into their local populations
+4. The predictor plugin wraps DEAP's full GA via callback hooks: `on_generation_start`, `on_generation_end`, `on_between_candidates`, `on_champion_found`
+5. DOIN doesn't replace the optimizer — it wraps it, adding decentralized champion sharing
+
+This means any evolutionary optimizer (DEAP, NEAT, custom GA) gets automatic island-model parallelism just by running on multiple DOIN nodes.
 
 ## Part of DOIN
 
 - [doin-core](https://github.com/harveybc/doin-core) — Consensus, models, crypto
 - [doin-node](https://github.com/harveybc/doin-node) — This package
+- [doin-optimizer](https://github.com/harveybc/doin-optimizer) — Standalone optimizer runner
+- [doin-evaluator](https://github.com/harveybc/doin-evaluator) — Standalone evaluator service
 - [doin-plugins](https://github.com/harveybc/doin-plugins) — Domain plugins
 - [doin.network](https://doin.network) — Project homepage
