@@ -36,7 +36,7 @@ class Transport:
     ) -> None:
         self.host = host
         self.port = port
-        self._app = web.Application()
+        self._app = web.Application(client_max_size=10 * 1024 * 1024)  # 10MB for model transfers
         self._runner: web.AppRunner | None = None
         self._session: ClientSession | None = None
         self._message_callback: Callable[..., Coroutine[Any, Any, None]] | None = None
