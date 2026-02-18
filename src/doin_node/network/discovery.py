@@ -1,9 +1,10 @@
 """Peer Discovery — find and connect to peers in the DOIN network.
 
-Three discovery mechanisms:
-  1. Bootstrap nodes: hard-coded seed nodes that new nodes contact first
-  2. Peer Exchange (PEX): connected peers share their known peers
-  3. Random walk: periodically query random peers for their neighbors
+Four discovery mechanisms:
+  1. LAN broadcast: UDP broadcast on local network — zero config required
+  2. Bootstrap nodes: hard-coded seed nodes that new nodes contact first
+  3. Peer Exchange (PEX): connected peers share their known peers
+  4. Random walk: periodically query random peers for their neighbors
 
 This provides decentralized peer discovery without requiring a centralized
 registry or DHT. Simple, robust, and sufficient for networks up to ~100K nodes.
@@ -17,6 +18,8 @@ import asyncio
 import json
 import logging
 import random
+import socket
+import struct
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,6 +27,44 @@ from typing import Any
 from aiohttp import ClientSession, ClientTimeout
 
 logger = logging.getLogger(__name__)
+
+
+def _get_local_ips() -> list[str]:
+    """Get all local IPv4 addresses (non-loopback) from all interfaces."""
+    ips: list[str] = []
+    # Method 1: parse `ip -4 -o addr` (most reliable on Linux)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr"], capture_output=True, text=True, timeout=3,
+        )
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 4 and parts[1] != "lo":
+                ip = parts[3].split("/")[0]
+                if ip not in ips:
+                    ips.append(ip)
+    except Exception:
+        pass
+    # Method 2: getaddrinfo fallback
+    if not ips:
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = info[4][0]
+                if not ip.startswith("127.") and ip not in ips:
+                    ips.append(ip)
+        except Exception:
+            pass
+    # Method 3: connect trick
+    if not ips:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ips.append(s.getsockname()[0])
+            s.close()
+        except Exception:
+            pass
+    return ips
 
 DISCOVERY_TIMEOUT = ClientTimeout(total=5)
 PEX_INTERVAL = 60.0          # Seconds between peer exchange rounds
@@ -33,6 +74,11 @@ TARGET_CONNECTIONS = 8         # Target number of connections
 MAX_CONNECTIONS = 50           # Hard cap on connections
 PEER_TTL = 3600.0             # Seconds before a peer is considered stale
 BOOTSTRAP_RETRY_INTERVAL = 30.0
+
+# LAN broadcast discovery
+LAN_BROADCAST_PORT = 18470       # UDP port for LAN announcements
+LAN_BROADCAST_INTERVAL = 15.0    # Seconds between broadcasts
+LAN_MAGIC = b"DOIN\x01"          # Magic bytes to identify our broadcasts
 
 
 @dataclass
@@ -169,6 +215,121 @@ class PeerDiscovery:
             "roles": roles or [],
         }
 
+    # ── LAN TCP scan discovery ─────────────────────────────────
+
+    def start_lan_discovery(self, domains: list[str] | None = None) -> None:
+        """Initialize LAN TCP scan discovery — probes local subnet for DOIN HTTP ports."""
+        self._lan_domains = domains or []
+        self._lan_subnets: list[str] = []
+        # Skip non-routable / Docker / virtual subnets
+        _SKIP_PREFIXES = ("172.", "10.0.", "100.")  # Docker bridges, VPNs
+        for ip in _get_local_ips():
+            parts = ip.split(".")
+            if len(parts) == 4:
+                if any(ip.startswith(s) for s in _SKIP_PREFIXES):
+                    continue
+                prefix = f"{parts[0]}.{parts[1]}.{parts[2]}"
+                if prefix not in self._lan_subnets:
+                    self._lan_subnets.append(prefix)
+        logger.info("LAN discovery active: TCP scan on subnets %s", self._lan_subnets)
+
+    def stop_lan_discovery(self) -> None:
+        pass
+
+    def lan_broadcast(self) -> None:
+        """No-op — TCP scan mode doesn't broadcast."""
+        pass
+
+    def lan_receive(self) -> int:
+        """No-op — TCP scan mode uses async scan."""
+        return 0
+
+    async def lan_scan(self, session: ClientSession) -> int:
+        """Scan local /24 subnets for DOIN nodes via TCP (ports 8470-8479).
+
+        Two-phase: raw TCP connect (fast, 0.3s timeout) then HTTP verify.
+        Works even when UDP is blocked by firewalls.
+        """
+        discovered = 0
+        scan_ports = list(range(8470, 8480))
+        our_ips = set(_get_local_ips())
+        sem = asyncio.Semaphore(100)
+
+        async def _tcp_check(ip: str, port: int) -> tuple[str, int] | None:
+            """Fast raw TCP connect — returns (ip, port) if open."""
+            async with sem:
+                try:
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection(ip, port), timeout=0.3,
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    return (ip, port)
+                except Exception:
+                    return None
+
+        # Phase 1: fast TCP port scan
+        open_ports: list[tuple[str, int]] = []
+        for prefix in self._lan_subnets:
+            tasks = []
+            for octet in range(1, 255):
+                ip = f"{prefix}.{octet}"
+                for port in scan_ports:
+                    if ip in our_ips and port == self.our_port:
+                        continue
+                    tasks.append(_tcp_check(ip, port))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, tuple):
+                    open_ports.append(r)
+
+        if not open_ports:
+            return 0
+
+        logger.debug("LAN scan phase 1: %d open ports found", len(open_ports))
+
+        # Phase 2: HTTP verify only open ports
+        import aiohttp
+        connector = aiohttp.TCPConnector(limit=20, force_close=True)
+        verify_session = aiohttp.ClientSession(
+            connector=connector, timeout=ClientTimeout(total=3),
+        )
+        try:
+            for ip, port in open_ports:
+                endpoint = f"{ip}:{port}"
+                if endpoint in self._known_peers:
+                    continue
+                try:
+                    async with verify_session.get(
+                        f"http://{ip}:{port}/chain/status",
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        await resp.json()
+                    peer_id = f"lan-{ip}-{port}"
+                    try:
+                        async with verify_session.get(
+                            f"http://{ip}:{port}/peers",
+                        ) as pr:
+                            if pr.status == 200:
+                                pdata = await pr.json()
+                                sid = pdata.get("self", {}).get("peer_id", "")
+                                if sid:
+                                    peer_id = sid
+                    except Exception:
+                        pass
+                    self.add_peer(DiscoveredPeer(
+                        peer_id=peer_id, address=ip, port=port, source="lan",
+                    ))
+                    logger.info("LAN discovery: found DOIN node at %s", endpoint)
+                    discovered += 1
+                except Exception:
+                    pass
+        finally:
+            await verify_session.close()
+            await connector.close()
+        return discovered
+
     # ── Discovery methods ────────────────────────────────────────
 
     async def discover_from_bootstrap(self, session: ClientSession) -> int:
@@ -275,6 +436,6 @@ class PeerDiscovery:
             "bootstrap_nodes": len(self._bootstrap),
             "by_source": {
                 source: sum(1 for p in self._known_peers.values() if p.source == source)
-                for source in {"bootstrap", "pex", "walk", "config", "unknown"}
+                for source in {"bootstrap", "pex", "walk", "lan", "config", "unknown"}
             },
         }

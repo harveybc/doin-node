@@ -1209,6 +1209,9 @@ class UnifiedNode:
 
     async def _optimizer_loop(self) -> None:
         """Background loop: run optimization for configured domains."""
+        # Wait for LAN discovery to complete before starting optimization
+        logger.info("Optimizer waiting 10s for peer discovery...")
+        await asyncio.sleep(10)
         while self._running:
             active_domains = [d for d in self.optimizer_domains if d not in self._domain_converged]
             if not active_domains:
@@ -1643,13 +1646,47 @@ class UnifiedNode:
                 logger.exception("Gossip heartbeat error")
             await asyncio.sleep(self.config.gossip_heartbeat_interval)
 
+    async def _lan_scan_task(self) -> None:
+        """Run LAN scan in background — finds peers without blocking main loop."""
+        try:
+            if self.discovery:
+                found = await self.discovery.lan_scan(None)
+                if found:
+                    logger.info("LAN scan: %d new peers", found)
+                    # Connect to discovered peers
+                    for peer in self.discovery.get_connectable_peers(10):
+                        if peer.endpoint not in self._peers:
+                            p = self.add_peer(peer.address, peer.port, peer.peer_id)
+                            if self.gossip:
+                                self.gossip.add_peer(p.peer_id)
+                            self.discovery.mark_connected(peer.endpoint)
+                            logger.info("Connected to discovered peer: %s", peer.endpoint)
+        except Exception:
+            logger.exception("LAN scan error")
+
     async def _discovery_loop(self) -> None:
-        """Periodic peer discovery: PEX + random walks."""
+        """Periodic peer discovery: LAN TCP scan + PEX + random walks."""
         import aiohttp
+
+        # Start LAN discovery and run initial scan as background task
+        if self.discovery:
+            domain_ids = [d.domain_id for d in self._domain_roles.values()]
+            self.discovery.start_lan_discovery(domains=domain_ids)
+            asyncio.create_task(self._lan_scan_task())
+
+        _lan_rescan_tick = time.time()
+        _LAN_RESCAN_INTERVAL = 300.0  # Re-scan LAN every 5 minutes
+
         while self._running:
             try:
                 if self.discovery:
                     async with aiohttp.ClientSession() as session:
+                        # Periodic LAN re-scan (background, non-blocking)
+                        now = time.time()
+                        if now - _lan_rescan_tick >= _LAN_RESCAN_INTERVAL:
+                            asyncio.create_task(self._lan_scan_task())
+                            _lan_rescan_tick = now
+
                         # Bootstrap if we need more peers
                         if self.discovery.needs_more_peers():
                             found = await self.discovery.discover_from_bootstrap(session)

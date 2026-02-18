@@ -1,0 +1,86 @@
+============================================================
+  DON Unified Node
+============================================================
+  Config loaded: examples/predictor_single_node.json
+  Port: 8470
+  Data dir: ./doin-data-predictor
+  Domains: 1
+  Identity: e9953a750cba67ee...
+2026-02-18 01:51:07 [doin_node.unified] INFO: Domain predictor-timeseries-4h registered (optimize=True, evaluate=True, synthetic=True)
+
+Loading plugins...
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1771397469.380536 2895884 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 14119 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+  Optimizer plugin 'predictor' loaded for predictor-timeseries-4h
+  Evaluator plugin 'predictor' loaded for predictor-timeseries-4h
+2026-02-18 01:51:09 [doin_plugins.predictor.synthetic] INFO: Loaded pre-trained HMM hybrid model from /home/openclaw/.openclaw/workspace/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib (K=5, block_size=30, covariance=diag)
+  Synthetic data plugin 'predictor' loaded for predictor-timeseries-4h
+
+  Optimizer domains: ['predictor-timeseries-4h']
+  Evaluator domains: ['predictor-timeseries-4h']
+  Bootstrap peers: []
+
+  Security hardening:
+    Commit-reveal: max_age=600.0s
+    Quorum: 1 evaluators, 67% agreement, 50% tolerance
+    Finality: 6 confirmations
+    External anchoring: every 100 blocks
+    Deterministic seed: True
+
+============================================================
+  Starting node on :8470...
+============================================================
+
+2026-02-18 01:51:09 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
+2026-02-18 01:51:09 [doin_node.unified] INFO: SQLite storage: height=1
+2026-02-18 01:51:09 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-timeseries-4h id=01523e9b27a6
+2026-02-18 01:51:09 [doin_node.network.transport] INFO: Transport listening on 0.0.0.0:8470
+2026-02-18 01:51:09 [aiohttp.access] INFO: 127.0.0.1 [18/Feb/2026:01:51:09 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:09 [doin_node.unified] INFO: ✅ Port 8470 self-check passed
+2026-02-18 01:51:09 [doin_node.unified] INFO: Unified node started: peer=e9953a750cba port=8470 optimize=['predictor-timeseries-4h'] evaluate=['predictor-timeseries-4h'] protocol=gossipsub storage=sqlite fee_market=True discovery=True
+2026-02-18 01:51:09 [doin_node.unified] INFO: Optimizer waiting 10s for peer discovery...
+2026-02-18 01:51:09 [doin_node.network.discovery] INFO: LAN discovery active: TCP scan on subnets ['192.168.0', '192.168.1']
+  Loaded x_train_df: (7300, 1)
+  Loaded y_train_df: (7300, 1)
+  Loaded x_val_df: (1575, 1)
+  Loaded y_val_df: (1575, 1)
+  Loaded x_test_df: (1575, 1)
+  Loaded y_test_df: (1575, 1)
+Creating sliding windows (Size=79)... Done.
+Extracting baselines for target column 'typical_price'... Done.
+Creating sliding windows (Size=79)... Done.
+No columns specified for exclusion
+Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=None gpu=True gc=False
+[RESOURCE] fit_start ts=1771397480.827 VmRSS_kB=1578960 VmHWM_kB=1578960 gpu_current_B=196864 gpu_peak_B=235520 gc=None
+2026-02-18 01:51:27 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:27 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:27 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:27 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:27 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:27 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:27 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:27 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:28 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:51:28 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:51:38 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:38 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:38 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:38 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:38 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:38 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:38 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:38 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:51:39 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:51:39 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:52:11 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:52:11 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:52:11 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:52:11 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:52:11 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:01:52:11 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:52:11 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:01:52:11 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 01:52:21 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:52:21 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:52:21 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:52:21 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:52:21 [aiohttp.access] INFO: 192.168.0.126 [18/Feb/2026:01:52:21 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 01:52:21 [aiohttp.access] INFO: 192.168.1.23 [18/Feb/2026:01:52:21 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.13.3"

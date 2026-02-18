@@ -149,14 +149,9 @@ def load_identity(identity_path: str | None, data_dir: str) -> PeerIdentity:
     else:
         path = Path(data_dir) / "identity.json"
 
-    if path.exists():
-        identity = PeerIdentity.load(path)
-        print(f"  Identity loaded: {identity.peer_id[:16]}...")
-    else:
-        identity = PeerIdentity.generate()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        identity.save(path)
-        print(f"  New identity generated: {identity.peer_id[:16]}...")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    identity = PeerIdentity.load_or_generate(path)
+    print(f"  Identity: {identity.peer_id[:16]}...")
 
     return identity
 
