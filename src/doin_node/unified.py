@@ -172,6 +172,9 @@ class UnifiedNodeConfig:
     discovery_enabled: bool = True
     discovery_interval: float = 60.0  # PEX + random walk interval
 
+    # Web dashboard (AdminLTE — served on the same port at /dashboard)
+    dashboard_enabled: bool = True
+
     # Experiment stats tracking (CSV for OLAP)
     experiment_stats_file: str = ""  # Auto-derived from data_dir if empty
 
@@ -287,6 +290,7 @@ class UnifiedNode:
         self._domain_best: dict[str, tuple[dict[str, Any] | None, float | None]] = {}  # domain_id → (best_params, best_perf)
         self._domain_converged: set[str] = set()  # domains that reached target_performance
         self._domain_round_count: dict[str, int] = {}  # domain_id → round number
+        self._start_time: float = time.time()
 
         # ── Experiment tracker ──
         stats_file = config.experiment_stats_file or str(
@@ -295,6 +299,7 @@ class UnifiedNode:
         olap_path = config.olap_db_path or str(
             Path(config.data_dir) / "olap.db"
         )
+        self._olap_db_path = str(Path(olap_path).resolve())  # Expose for dashboard (absolute)
         self.experiment_tracker = ExperimentTracker(
             csv_path=stats_file,
             node_id=self.identity.peer_id,
@@ -392,9 +397,20 @@ class UnifiedNode:
         """Register a synthetic data generator plugin for a domain."""
         self._synthetic_plugins[domain_id] = plugin
 
+    def _peer_id_exists(self, peer_id: str) -> bool:
+        """Check if a peer with this ID already exists (on any endpoint)."""
+        return any(p.peer_id == peer_id for p in self._peers.values())
+
     def add_peer(self, address: str, port: int, peer_id: str = "") -> Peer:
+        pid = peer_id or f"{address}:{port}"
+        # Dedup by peer_id: if same identity already connected on another IP, skip
+        if peer_id and self._peer_id_exists(peer_id):
+            # Return existing peer
+            for p in self._peers.values():
+                if p.peer_id == peer_id:
+                    return p
         peer = Peer(
-            peer_id=peer_id or f"{address}:{port}",
+            peer_id=pid,
             address=address,
             port=port,
             state=PeerState.DISCOVERED,
@@ -619,6 +635,11 @@ class UnifiedNode:
 
     async def _broadcast(self, message: Message) -> None:
         """Broadcast a message using the configured protocol."""
+        # Include sender port so receivers can connect back on the right port
+        if message.payload and isinstance(message.payload, dict):
+            message.payload["_sender_port"] = self.config.port
+        elif message.payload is None:
+            message.payload = {"_sender_port": self.config.port}
         if self.gossip:
             await self.gossip.publish(message)
         else:
@@ -649,10 +670,19 @@ class UnifiedNode:
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
         # Auto-discover peers from incoming connections (skip localhost)
-        sender_endpoint = f"{sender}:{self.config.port}"
+        # Extract sender's actual port from message payload or probe
+        sender_port = (message.payload or {}).get("_sender_port", self.config.port)
+        sender_endpoint = f"{sender}:{sender_port}"
         _local = {"unknown", "127.0.0.1", "::1", "localhost"}
         if sender not in _local:
+            # Check if we already have this peer by peer_id (on any endpoint)
             existing = self._peers.get(sender_endpoint)
+            if not existing:
+                # Check if peer_id exists on a different endpoint
+                for ep, p in list(self._peers.items()):
+                    if p.peer_id == message.sender_id:
+                        existing = p
+                        break
             if existing:
                 # Update peer_id if we had a placeholder (e.g. from bootstrap)
                 if existing.peer_id != message.sender_id:
@@ -667,8 +697,8 @@ class UnifiedNode:
                             topic_state.mesh.add(message.sender_id)
                     logger.info("🔍 Updated peer %s → %s", old_id[:12], message.sender_id[:12])
             else:
-                self.add_peer(sender, self.config.port, peer_id=message.sender_id)
-                logger.info("🔍 Auto-discovered peer %s from incoming message", sender)
+                self.add_peer(sender, sender_port, peer_id=message.sender_id)
+                logger.info("🔍 Auto-discovered peer %s:%s from incoming message", sender, sender_port)
                 # Register in GossipSub mesh so messages flow bidirectionally
                 if self.gossip:
                     self.gossip.add_peer(message.sender_id)
@@ -1522,13 +1552,18 @@ class UnifiedNode:
 
         In a real network this would come from peer capability announcements.
         For now, includes this node + all peers (simplified).
+        Deduplicates by peer_id (machines with multiple NICs may appear twice).
         """
-        evaluators = []
+        seen: set[str] = set()
+        evaluators: list[str] = []
         if domain_id in self.evaluator_domains:
+            seen.add(self.peer_id)
             evaluators.append(self.peer_id)
         # In production, peers would advertise their evaluator capabilities
         for peer in self._peers.values():
-            evaluators.append(peer.peer_id)
+            if peer.peer_id not in seen:
+                seen.add(peer.peer_id)
+                evaluators.append(peer.peer_id)
         return evaluators
 
     # ================================================================
@@ -1766,6 +1801,14 @@ class UnifiedNode:
         app.router.add_get("/stats/rounds", self._http_stats_rounds)
         app.router.add_get("/stats/export", self._http_stats_export)
         app.router.add_get("/stats/chain-metrics", self._http_stats_chain_metrics)
+
+        # Web dashboard
+        if self.config.dashboard_enabled:
+            try:
+                from doin_node.dashboard.routes import setup_dashboard
+                setup_dashboard(app, self)
+            except Exception as e:
+                logger.warning("Dashboard setup failed: %s", e)
 
     async def _http_tasks_pending(self, request) -> Any:
         from aiohttp import web

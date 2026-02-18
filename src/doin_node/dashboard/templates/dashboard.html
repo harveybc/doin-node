@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DOIN Node Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-size: 13px; }
+    .small-box .inner h3 { font-size: 1.8rem; }
+    .badge-connected { background: #28a745; color: #fff; }
+    .badge-known { background: #6c757d; color: #fff; }
+    .badge-lan { background: #17a2b8; color: #fff; }
+    .training-progress { margin: 5px 0; }
+    .training-progress .progress { height: 20px; }
+    .metric-value { font-size: 1.5rem; font-weight: bold; }
+    .metric-label { color: #aaa; font-size: 11px; text-transform: uppercase; }
+    .event-row.improvement { background: rgba(40, 167, 69, 0.1); }
+    .tab-content { min-height: 300px; }
+    code { font-size: 11px; }
+    .status-badge { font-size: 11px; padding: 2px 6px; }
+    #perfChart, #bestChart { max-height: 280px; }
+    .card-header { padding: 0.5rem 1rem; }
+  </style>
+</head>
+<body class="hold-transition sidebar-collapse layout-fixed dark-mode">
+<div class="wrapper">
+
+  <!-- Navbar -->
+  <nav class="main-header navbar navbar-expand navbar-dark">
+    <ul class="navbar-nav">
+      <li class="nav-item"><a class="nav-link" href="#"><i class="fas fa-network-wired"></i> <strong>DOIN</strong> Node Dashboard</a></li>
+    </ul>
+    <ul class="navbar-nav ml-auto">
+      <li class="nav-item">
+        <span class="nav-link text-light" id="nodeLabel">
+          <i class="fas fa-cube"></i> <span id="peerId">--</span> : <span id="nodePort">--</span>
+        </span>
+      </li>
+      <li class="nav-item">
+        <span class="nav-link" id="uptimeLabel"><i class="fas fa-clock"></i> <span id="uptime">--</span></span>
+      </li>
+      <li class="nav-item">
+        <span class="nav-link">
+          <i class="fas fa-sync-alt fa-spin" id="refreshSpin" style="display:none"></i>
+          <span id="countdown">--</span>s
+        </span>
+      </li>
+      <li class="nav-item">
+        <select class="form-control form-control-sm bg-dark text-light" id="refreshInterval" style="width:70px">
+          <option value="3">3s</option>
+          <option value="5" selected>5s</option>
+          <option value="10">10s</option>
+          <option value="30">30s</option>
+        </select>
+      </li>
+    </ul>
+  </nav>
+
+  <!-- Content -->
+  <div class="content-wrapper" style="margin-left:0">
+    <section class="content pt-3">
+      <div class="container-fluid">
+
+        <!-- Summary Cards -->
+        <div class="row">
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-info">
+              <div class="inner"><h3 id="peerCount">0</h3><p>Peers</p></div>
+              <div class="icon"><i class="fas fa-server"></i></div>
+            </div>
+          </div>
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-success">
+              <div class="inner"><h3 id="chainHeight">0</h3><p>Chain Height</p></div>
+              <div class="icon"><i class="fas fa-link"></i></div>
+            </div>
+          </div>
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-warning">
+              <div class="inner"><h3 id="roundCount">0</h3><p>Rounds</p></div>
+              <div class="icon"><i class="fas fa-redo"></i></div>
+            </div>
+          </div>
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-danger">
+              <div class="inner"><h3 id="bestPerf" style="font-size:1.4rem">--</h3><p>Best Performance</p></div>
+              <div class="icon"><i class="fas fa-trophy"></i></div>
+            </div>
+          </div>
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-primary">
+              <div class="inner"><h3 id="pendingEvals">0</h3><p>Pending Evals</p></div>
+              <div class="icon"><i class="fas fa-tasks"></i></div>
+            </div>
+          </div>
+          <div class="col-lg-2 col-6">
+            <div class="small-box bg-secondary">
+              <div class="inner"><h3 id="completedEvals">0</h3><p>Completed Evals</p></div>
+              <div class="icon"><i class="fas fa-check-double"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts + Training -->
+        <div class="row">
+          <!-- Performance Chart -->
+          <div class="col-lg-5">
+            <div class="card">
+              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-line"></i> Performance Per Round</h3></div>
+              <div class="card-body p-2"><canvas id="perfChart" height="260"></canvas></div>
+            </div>
+          </div>
+          <!-- Best Performance Chart -->
+          <div class="col-lg-4">
+            <div class="card">
+              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-area"></i> Best Performance Over Time</h3></div>
+              <div class="card-body p-2"><canvas id="bestChart" height="260"></canvas></div>
+            </div>
+          </div>
+          <!-- Live Training Status -->
+          <div class="col-lg-3">
+            <div class="card" id="trainingCard">
+              <div class="card-header bg-gradient-olive"><h3 class="card-title"><i class="fas fa-brain"></i> Live Training</h3></div>
+              <div class="card-body">
+                <div id="trainingInactive" class="text-center text-muted py-4">
+                  <i class="fas fa-pause-circle fa-2x"></i><br>Waiting for next round...
+                </div>
+                <div id="trainingActive" style="display:none">
+                  <div class="mb-2">
+                    <span class="metric-label">Domain</span><br>
+                    <span id="tDomain" class="text-info">--</span>
+                  </div>
+                  <div class="row">
+                    <div class="col-6">
+                      <span class="metric-label">Round</span><br>
+                      <span id="tRound" class="metric-value">0</span>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Stage</span><br>
+                      <span id="tStage" class="metric-value">0</span>/<span id="tTotalStages">0</span>
+                    </div>
+                  </div>
+                  <div class="training-progress mt-2">
+                    <span class="metric-label">Epoch <span id="tEpoch">0</span>/<span id="tTotalEpochs">0</span></span>
+                    <div class="progress">
+                      <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" id="epochBar" style="width:0%"></div>
+                    </div>
+                  </div>
+                  <div class="row mt-2">
+                    <div class="col-6">
+                      <span class="metric-label">Train MAE</span><br>
+                      <span id="tTrainMAE" class="text-warning">--</span>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Val MAE</span><br>
+                      <span id="tValMAE" class="text-success">--</span>
+                    </div>
+                  </div>
+                  <div class="row mt-1">
+                    <div class="col-6">
+                      <span class="metric-label">Train Loss</span><br>
+                      <span id="tTrainLoss" class="text-warning">--</span>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Val Loss</span><br>
+                      <span id="tValLoss" class="text-success">--</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabs: Peers, Evaluations, Events, Plugins, Chain -->
+        <div class="row">
+          <div class="col-12">
+            <div class="card card-primary card-outline card-outline-tabs">
+              <div class="card-header p-0 border-bottom-0">
+                <ul class="nav nav-tabs" role="tablist">
+                  <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tabPeers"><i class="fas fa-server"></i> Peers</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvals"><i class="fas fa-tasks"></i> Evaluations</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvents"><i class="fas fa-list"></i> Optimizer Events</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPlugins"><i class="fas fa-plug"></i> Plugins</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabChain"><i class="fas fa-cubes"></i> Chain</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabDomains"><i class="fas fa-cogs"></i> Domains</a></li>
+                </ul>
+              </div>
+              <div class="card-body">
+                <div class="tab-content">
+
+                  <!-- Peers Tab -->
+                  <div class="tab-pane fade show active" id="tabPeers">
+                    <table class="table table-sm table-striped table-hover">
+                      <thead><tr><th>Endpoint</th><th>Peer ID</th><th>Status</th><th>Source</th><th>Domains</th><th>Failures</th></tr></thead>
+                      <tbody id="peerTableBody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Evaluations Tab -->
+                  <div class="tab-pane fade" id="tabEvals">
+                    <h6>Pending</h6>
+                    <table class="table table-sm table-striped">
+                      <thead><tr><th>Task ID</th><th>Domain</th><th>Submitter</th><th>Status</th><th>Claimed By</th></tr></thead>
+                      <tbody id="pendingEvalBody"></tbody>
+                    </table>
+                    <h6 class="mt-3">Completed</h6>
+                    <table class="table table-sm table-striped">
+                      <thead><tr><th>Task ID</th><th>Domain</th><th>Submitter</th><th>Performance</th><th>Status</th></tr></thead>
+                      <tbody id="completedEvalBody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Events Tab -->
+                  <div class="tab-pane fade" id="tabEvents">
+                    <table class="table table-sm table-striped">
+                      <thead><tr><th>Event</th><th>Type</th><th>Performance</th><th>Details</th><th>Domain</th><th>Time</th></tr></thead>
+                      <tbody id="eventsBody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Plugins Tab -->
+                  <div class="tab-pane fade" id="tabPlugins">
+                    <table class="table table-sm">
+                      <thead><tr><th>Domain</th><th>Optimizer</th><th>Evaluator</th><th>Synthetic Data</th></tr></thead>
+                      <tbody id="pluginBody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Chain Tab -->
+                  <div class="tab-pane fade" id="tabChain">
+                    <table class="table table-sm table-striped">
+                      <thead><tr><th>#</th><th>Hash</th><th>Type</th><th>Submitter</th><th>Time</th></tr></thead>
+                      <tbody id="chainBody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Domains Tab -->
+                  <div class="tab-pane fade" id="tabDomains">
+                    <table class="table table-sm">
+                      <thead><tr><th>Domain</th><th>Rounds</th><th>Best Performance</th><th>Target</th><th>Converged</th><th>Best Params</th></tr></thead>
+                      <tbody id="domainBody"></tbody>
+                    </table>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+
+  <footer class="main-footer text-center" style="margin-left:0">
+    <strong>DOIN</strong> — Decentralized Optimization &amp; Inference Network
+  </footer>
+</div>
+
+<!-- AdminLTE deps -->
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
+
+<script>
+// ── State ──
+let refreshMs = 5000;
+let countdownVal = 5;
+let countdownTimer = null;
+
+// ── Charts ──
+const perfCtx = document.getElementById('perfChart').getContext('2d');
+const bestCtx = document.getElementById('bestChart').getContext('2d');
+
+const perfChart = new Chart(perfCtx, {
+  type: 'scatter',
+  data: { datasets: [{
+    label: 'Round Performance',
+    data: [],
+    borderColor: '#17a2b8',
+    backgroundColor: 'rgba(23,162,184,0.4)',
+    pointRadius: 3,
+    showLine: true,
+    tension: 0.1,
+  }, {
+    label: 'Improvements',
+    data: [],
+    borderColor: '#28a745',
+    backgroundColor: '#28a745',
+    pointRadius: 6,
+    pointStyle: 'star',
+    showLine: false,
+  }]},
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 200 },
+    scales: { x: { title: { display: true, text: 'Round' }}, y: { title: { display: true, text: 'Performance' }}},
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
+  }
+});
+
+const bestChart = new Chart(bestCtx, {
+  type: 'line',
+  data: { labels: [], datasets: [{
+    label: 'Best Performance',
+    data: [],
+    borderColor: '#ffc107',
+    backgroundColor: 'rgba(255,193,7,0.1)',
+    fill: true, tension: 0.3, pointRadius: 2,
+  }]},
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 200 },
+    scales: { x: { display: true }, y: { title: { display: true, text: 'Best Perf' }}},
+    plugins: { legend: { display: false }}
+  }
+});
+
+// ── Helpers ──
+function fmt(v, d=6) { return v !== null && v !== undefined && v !== '' ? parseFloat(v).toFixed(d) : '--'; }
+function fmtTime(ts) {
+  if (!ts) return '--';
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+  return isNaN(d) ? ts : d.toLocaleTimeString();
+}
+function fmtUptime(s) {
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return `${h}h ${m}m`;
+}
+async function api(url) {
+  try { return await (await fetch(url)).json(); } catch(e) { return null; }
+}
+
+// ── Refresh ──
+async function refreshAll() {
+  document.getElementById('refreshSpin').style.display = 'inline-block';
+
+  const [node, peers, opt, training, evals, metrics, plugins, chain, events] = await Promise.all([
+    api('/api/node'), api('/api/peers'), api('/api/optimization'), api('/api/training'),
+    api('/api/evaluations'), api('/api/metrics?limit=500'), api('/api/plugins'),
+    api('/api/chain?limit=30'), api('/api/events?limit=100'),
+  ]);
+
+  // Node
+  if (node) {
+    document.getElementById('peerId').textContent = (node.peer_id||'').substring(0,12);
+    document.getElementById('nodePort').textContent = node.port;
+    document.getElementById('uptime').textContent = fmtUptime(node.uptime_s);
+    document.getElementById('chainHeight').textContent = node.chain_height;
+  }
+
+  // Peers
+  if (peers) {
+    document.getElementById('peerCount').textContent = peers.connected_count;
+    const tb = document.getElementById('peerTableBody');
+    tb.innerHTML = peers.peers.map(p => {
+      const cls = p.connected ? 'badge-connected' : (p.source === 'lan' ? 'badge-lan' : 'badge-known');
+      const label = p.connected ? 'Connected' : (p.source || 'Known');
+      const domains = (p.domains || []).join(', ') || '-';
+      return `<tr>
+        <td><code>${p.endpoint}</code></td>
+        <td><code>${(p.peer_id||'').substring(0,12)}</code></td>
+        <td><span class="badge status-badge ${cls}">${label}</span></td>
+        <td>${p.source || '-'}</td>
+        <td><small>${domains}</small></td>
+        <td>${p.failures || 0}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Optimization
+  if (opt && opt.domains) {
+    let rounds = 0, best = null;
+    const tb = document.getElementById('domainBody');
+    tb.innerHTML = opt.domains.map(d => {
+      rounds += d.round || 0;
+      if (d.best_performance !== null && d.best_performance !== undefined) {
+        if (best === null || d.best_performance > best) best = d.best_performance;
+      }
+      const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params).substring(0,80)}...</code>` : '--';
+      return `<tr>
+        <td>${d.domain_id}</td>
+        <td>${d.round}</td>
+        <td><strong>${fmt(d.best_performance)}</strong></td>
+        <td>${d.target_performance || '--'}</td>
+        <td>${d.converged ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-secondary">No</span>'}</td>
+        <td>${params}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('roundCount').textContent = rounds;
+    document.getElementById('bestPerf').textContent = best !== null ? fmt(best) : '--';
+  }
+
+  // Training
+  if (training) {
+    if (training.active) {
+      document.getElementById('trainingInactive').style.display = 'none';
+      document.getElementById('trainingActive').style.display = 'block';
+      document.getElementById('trainingCard').classList.add('card-outline');
+      document.getElementById('tDomain').textContent = training.domain_id;
+      document.getElementById('tRound').textContent = training.round;
+      document.getElementById('tStage').textContent = training.stage;
+      document.getElementById('tTotalStages').textContent = training.total_stages;
+      document.getElementById('tEpoch').textContent = training.epoch;
+      document.getElementById('tTotalEpochs').textContent = training.total_epochs;
+      const pct = training.total_epochs > 0 ? (training.epoch / training.total_epochs * 100) : 0;
+      document.getElementById('epochBar').style.width = pct + '%';
+      document.getElementById('tTrainMAE').textContent = fmt(training.train_mae, 6);
+      document.getElementById('tValMAE').textContent = fmt(training.val_mae, 6);
+      document.getElementById('tTrainLoss').textContent = fmt(training.train_loss, 6);
+      document.getElementById('tValLoss').textContent = fmt(training.val_loss, 6);
+    } else {
+      document.getElementById('trainingInactive').style.display = 'block';
+      document.getElementById('trainingActive').style.display = 'none';
+    }
+  }
+
+  // Evaluations
+  if (evals) {
+    document.getElementById('pendingEvals').textContent = evals.pending_count;
+    document.getElementById('completedEvals').textContent = evals.completed_count;
+    document.getElementById('pendingEvalBody').innerHTML = evals.pending.map(e =>
+      `<tr><td><code>${e.task_id}</code></td><td>${e.domain_id}</td><td><code>${e.submitter}</code></td>
+       <td><span class="badge badge-warning">${e.status}</span></td><td><code>${e.claimed_by||'-'}</code></td></tr>`
+    ).join('');
+    document.getElementById('completedEvalBody').innerHTML = evals.completed.map(e =>
+      `<tr><td><code>${e.task_id}</code></td><td>${e.domain_id}</td><td><code>${e.submitter}</code></td>
+       <td>${fmt(e.performance)}</td><td><span class="badge badge-success">${e.status}</span></td></tr>`
+    ).join('');
+  }
+
+  // Metrics → Charts
+  if (metrics && metrics.metrics.length > 0) {
+    const m = metrics.metrics;
+    // Scatter: all round performances
+    perfChart.data.datasets[0].data = m.map(r => ({x: parseInt(r.round_num), y: parseFloat(r.performance)}));
+    // Stars: improvements only
+    perfChart.data.datasets[1].data = m.filter(r => r.is_improvement === true || r.is_improvement === 'True' || r.is_improvement === 1)
+      .map(r => ({x: parseInt(r.round_num), y: parseFloat(r.performance)}));
+    perfChart.update();
+    // Best performance line
+    bestChart.data.labels = m.map(r => r.round_num);
+    bestChart.data.datasets[0].data = m.map(r => parseFloat(r.best_performance || r.performance));
+    bestChart.update();
+  }
+
+  // Events
+  if (events && events.events) {
+    document.getElementById('eventsBody').innerHTML = events.events.map(e => {
+      if (e.type === 'improvement') {
+        return `<tr class="event-row improvement">
+          <td><i class="fas fa-star text-warning"></i> Round ${e.round}</td>
+          <td><span class="badge badge-success">Improvement</span></td>
+          <td>${fmt(e.performance)}</td>
+          <td>${fmt(e.best_performance)}</td>
+          <td>${e.domain_id}</td>
+          <td>${fmtTime(e.timestamp)}</td>
+        </tr>`;
+      } else if (e.type === 'migration') {
+        return `<tr class="event-row" style="background:rgba(0,123,255,0.1)">
+          <td><i class="fas fa-exchange-alt text-info"></i> Block ${e.round}</td>
+          <td><span class="badge badge-info">Migration</span></td>
+          <td>${fmt(e.performance)}</td>
+          <td>from <code>${e.from_peer}</code></td>
+          <td>${e.domain_id}</td>
+          <td>${fmtTime(e.timestamp)}</td>
+        </tr>`;
+      } else if (e.type === 'no_improvement') {
+        return `<tr class="text-muted">
+          <td>Rounds ${e.from_round}–${e.to_round}</td>
+          <td><span class="badge badge-secondary">${e.rounds_skipped} rounds</span></td>
+          <td colspan="2">No improvement</td>
+          <td>${e.domain_id}</td>
+          <td>${fmtTime(e.timestamp)}</td>
+        </tr>`;
+      }
+      return '';
+    }).join('');
+  }
+
+  // Plugins
+  if (plugins && plugins.plugins) {
+    document.getElementById('pluginBody').innerHTML = plugins.plugins.map(p => {
+      const icon = (v) => v ? `<i class="fas fa-check text-success"></i> ${v.name} <small class="text-muted">(${v.module})</small>` : '<i class="fas fa-times text-muted"></i>';
+      return `<tr><td>${p.domain_id}</td><td>${icon(p.optimizer)}</td><td>${icon(p.evaluator)}</td><td>${icon(p.synthetic)}</td></tr>`;
+    }).join('');
+  }
+
+  // Chain
+  if (chain && chain.blocks) {
+    document.getElementById('chainBody').innerHTML = chain.blocks.reverse().map(b =>
+      `<tr><td>${b.index}</td><td><code>${b.hash}</code></td>
+       <td><span class="badge badge-info">${b.type || 'GENESIS'}</span></td>
+       <td><code>${b.submitter || '-'}</code></td><td>${fmtTime(b.timestamp)}</td></tr>`
+    ).join('');
+  }
+
+  document.getElementById('refreshSpin').style.display = 'none';
+}
+
+// ── Countdown ──
+function startCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownVal = refreshMs / 1000;
+  document.getElementById('countdown').textContent = countdownVal;
+  countdownTimer = setInterval(() => {
+    countdownVal--;
+    document.getElementById('countdown').textContent = Math.max(0, countdownVal);
+    if (countdownVal <= 0) { refreshAll(); countdownVal = refreshMs / 1000; }
+  }, 1000);
+}
+document.getElementById('refreshInterval').addEventListener('change', function() {
+  refreshMs = parseInt(this.value) * 1000;
+  startCountdown();
+});
+
+// Boot
+refreshAll();
+startCountdown();
+</script>
+</body>
+</html>

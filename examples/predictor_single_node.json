@@ -12,7 +12,8 @@
   "eval_poll_interval": 10,
   "storage_backend": "sqlite",
   "network_protocol": "gossipsub",
-  "discovery_enabled": false,
+  "initial_threshold": 1e-6,
+  "discovery_enabled": true,
   "fee_market_enabled": false,
   "require_deterministic_seed": true,
   "domains": [
