@@ -1288,7 +1288,9 @@ class UnifiedNode:
                 logger.warning("Champion broadcast failed: %s", e)
 
         def on_eval_service(gen, candidate_num, stage_info):
-            """Called from optimizer thread between candidates → process 1 pending eval."""
+            """Called from optimizer thread between candidates — disabled to avoid bottleneck.
+            Eval tasks are processed at generation boundaries instead."""
+            return  # Skip interleaved eval — too slow (each eval = full model training)
             import asyncio as _aio
             fut = _aio.run_coroutine_threadsafe(
                 node._process_one_pending_eval(domain_id),
