@@ -384,7 +384,7 @@ async function refreshAll() {
       const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
       const c = d.champion || {};
       const champRow = c.val_mae !== undefined ? `
-        <tr class="table-success" style="font-size:11px">
+        <tr style="font-size:11px; background:rgba(40,167,69,0.15); color:#212529">
           <td colspan="2"><strong>🏆 Champion (round ${c.round || '?'})</strong></td>
           <td colspan="5">
             Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
