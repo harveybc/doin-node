@@ -763,20 +763,12 @@ class UnifiedNode:
             logger.warning("Invalid reveal from %s (hash mismatch or expired)", message.sender_id[:12])
             return
 
-        # Validate parameter bounds
+        # Validate parameter bounds (warn only — don't reject peer optimae)
         validator = self._bounds_validators.get(data.domain_id)
         if validator:
             ok, reason = validator.validate(data.parameters)
             if not ok:
-                logger.warning("Bounds validation failed: %s", reason)
-                return
-
-            role = self._domain_roles.get(data.domain_id)
-            if role:
-                ok, reason = validator.validate_resource_limits(data.parameters, role.resource_limits)
-                if not ok:
-                    logger.warning("Resource limits exceeded: %s", reason)
-                    return
+                logger.info("Bounds note (not rejecting): %s", reason)
 
         # Check minimum reputation
         if not self.reputation.meets_threshold(message.sender_id):
