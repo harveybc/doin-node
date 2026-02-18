@@ -6,14 +6,14 @@
   Data dir: ./doin-data-predictor
   Domains: 1
   Identity: cb47632c063a618b...
-2026-02-18 12:24:07 [doin_node.stats.olap_db] INFO: OLAP schema v2 created at predictor_olap.db
-2026-02-18 12:24:07 [doin_node.unified] INFO: Domain predictor-timeseries-4h registered (optimize=True, evaluate=True, synthetic=True)
+2026-02-18 12:28:08 [doin_node.stats.olap_db] INFO: OLAP schema v2 created at predictor_olap.db
+2026-02-18 12:28:08 [doin_node.unified] INFO: Domain predictor-timeseries-4h registered (optimize=True, evaluate=True, synthetic=True)
 
 Loading plugins...
 Attempting to load plugin: mimo from group: predictor.plugins
 Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1771435449.669831  221356 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 13083 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+I0000 00:00:1771435690.703264  235628 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12806 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
 Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
 Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
 Attempting to load plugin: default_target from group: target.plugins
@@ -44,17 +44,17 @@ Train it first with: synthetic-datagen/examples/scripts/train_generator.py
   Starting node on :8470...
 ============================================================
 
-2026-02-18 12:24:09 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
-2026-02-18 12:24:09 [doin_node.unified] INFO: SQLite storage: height=1
-2026-02-18 12:24:09 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-timeseries-4h id=518a4872dc0e
-2026-02-18 12:24:09 [doin_node.dashboard.routes] INFO: Dashboard enabled at /dashboard
-2026-02-18 12:24:09 [doin_node.network.transport] INFO: Transport listening on 0.0.0.0:8470
-2026-02-18 12:24:09 [aiohttp.access] INFO: 127.0.0.1 [18/Feb/2026:12:24:09 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.13.3"
-2026-02-18 12:24:09 [doin_node.unified] INFO: ✅ Port 8470 self-check passed
-2026-02-18 12:24:09 [doin_node.unified] INFO: Unified node started: peer=cb47632c063a port=8470 optimize=['predictor-timeseries-4h'] evaluate=['predictor-timeseries-4h'] protocol=gossipsub storage=sqlite fee_market=True discovery=True
-2026-02-18 12:24:09 [doin_node.unified] INFO: Optimizer waiting 10s for peer discovery...
-2026-02-18 12:24:09 [doin_node.network.discovery] INFO: LAN discovery active: TCP scan on subnets ['192.168.0', '192.168.1']
-2026-02-18 12:24:19 [doin_node.unified] INFO: 🧬 Starting DEAP GA optimization for predictor-timeseries-4h
+2026-02-18 12:28:10 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
+2026-02-18 12:28:10 [doin_node.unified] INFO: SQLite storage: height=1
+2026-02-18 12:28:10 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-timeseries-4h id=ebdf2cd20697
+2026-02-18 12:28:10 [doin_node.dashboard.routes] INFO: Dashboard enabled at /dashboard
+2026-02-18 12:28:10 [doin_node.network.transport] INFO: Transport listening on 0.0.0.0:8470
+2026-02-18 12:28:10 [aiohttp.access] INFO: 127.0.0.1 [18/Feb/2026:12:28:10 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.13.3"
+2026-02-18 12:28:10 [doin_node.unified] INFO: ✅ Port 8470 self-check passed
+2026-02-18 12:28:10 [doin_node.unified] INFO: Unified node started: peer=cb47632c063a port=8470 optimize=['predictor-timeseries-4h'] evaluate=['predictor-timeseries-4h'] protocol=gossipsub storage=sqlite fee_market=True discovery=True
+2026-02-18 12:28:10 [doin_node.unified] INFO: Optimizer waiting 10s for peer discovery...
+2026-02-18 12:28:10 [doin_node.network.discovery] INFO: LAN discovery active: TCP scan on subnets ['192.168.0', '192.168.1']
+2026-02-18 12:28:20 [doin_node.unified] INFO: 🧬 Starting DEAP GA optimization for predictor-timeseries-4h
 Attempting to load plugin: default_target from group: target.plugins
 Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
 
@@ -82,14 +82,14 @@ Starting hyperparameter optimization (Gen 0 to 4, running 5 generations)...
 
 [VERIFY] Candidate 0 (Champion) Parameters to be evaluated:
 {
-  "encoder_conv_layers": 1,
-  "encoder_base_filters": 217,
-  "encoder_lstm_units": 80
+  "encoder_conv_layers": 2,
+  "encoder_base_filters": 35,
+  "encoder_lstm_units": 53
 }
 ------------------------------------------------------------
 
 --- Evaluating Candidate 1/10 | Stage 1/5 [Base Architecture] | Gen 0/4 | Params: 3 | Total Evals: 1 ---
-Params: {'encoder_conv_layers': 1, 'encoder_base_filters': 217, 'encoder_lstm_units': 80}
+Params: {'encoder_conv_layers': 2, 'encoder_base_filters': 35, 'encoder_lstm_units': 53}
 Attempting to load plugin: default_target from group: target.plugins
 Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
 Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
@@ -97,8 +97,8 @@ Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'p
 Attempting to load plugin: mimo from group: predictor.plugins
 Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1771435462.179061  222036 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
-I0000 00:00:1771435462.179950  222036 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12838 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+I0000 00:00:1771435703.257232  236449 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
+I0000 00:00:1771435703.258093  236449 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12561 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
   Loaded x_train_df: (7300, 8)
   Loaded y_train_df: (7300, 8)
   Loaded x_val_df: (1575, 8)
@@ -110,69 +110,70 @@ Extracting baselines for target column 'CLOSE'... Done.
 Creating sliding windows (Size=79)... Done.
 No columns specified for exclusion
 Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand1 gpu=True gc=False
-[RESOURCE] fit_start ts=1771435463.644 VmRSS_kB=1136136 VmHWM_kB=1136136 gpu_current_B=1280044 gpu_peak_B=1483584 gc=None
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:24:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:24:50 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:24:50 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:25:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:25:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:16 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:16 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:16 [doin_node.unified] INFO: 🔍 Auto-discovered peer 192.168.0.100:8470 from incoming message
-2026-02-18 12:26:16 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
-2026-02-18 12:26:16 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:16 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:18 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:18 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:18 [doin_node.unified] WARNING: Bounds validation failed: Parameter 'encoder_lstm_units' = 123.0 outside bounds [8, 32]
-2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
-2026-02-18 12:26:35 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:26:35 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+[RESOURCE] fit_start ts=1771435704.709 VmRSS_kB=1134956 VmHWM_kB=1134956 gpu_current_B=393516 gpu_peak_B=482576 gc=None
+2026-02-18 12:28:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:28:31 -0500] "GET /chain/status HTTP/1.1" 200 299 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:28:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:28:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:28:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:28:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:28:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:28:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:28:46 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:28:46 -0500] "GET /chain/status HTTP/1.1" 200 318 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:28:46 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:28:46 -0500] "GET /peers HTTP/1.1" 200 191 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:29:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:29:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:29:31 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:29:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:29:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:29:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:29:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:29:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:29:31 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:29:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:10 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:30:10 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:10 [doin_node.unified] INFO: 🔍 Auto-discovered peer 192.168.0.100:8470 from incoming message
+2026-02-18 12:30:10 [doin_node.unified] INFO: 📥 Received commitment from peer dd3da1914193 for predictor-timeseries-4h
+2026-02-18 12:30:10 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:30:10 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:12 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:30:12 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:12 [doin_node.unified] WARNING: Bounds validation failed: Parameter 'encoder_base_filters' = 143.0 outside bounds [16, 64]
+2026-02-18 12:30:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:30:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:31 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:30:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:31 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:30:31 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:30:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:30:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:30:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:31:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:31:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:31:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:31:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:31:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:31:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:31:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:31:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:31:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:31:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:32:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:32:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:32:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:32:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:32:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+MAE (magnitude): 0.004827823024243116
+R2 (magnitude): 0.9357989430427551
+  [CHAMPION] Parameters saved to examples/results/phase_1_daily/phase_1_mimo_1d_optimization_parameters.json
+2026-02-18 12:32:51 [doin_node.unified] INFO: 🏆 New champion [predictor-timeseries-4h] gen=0 stage=1  perf=-0.002328  val_mae=0.008406  train_mae=0.004828  test_mae=0.193862
+2026-02-18 12:32:51 [doin_node.unified] INFO: 📤 Broadcast optimae_commit → 1 peers (gossip mesh)
+2026-02-18 12:32:51 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:32:51 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:51 [doin_node.unified] INFO: 🔍 Updated peer dd3da1914193 → cb47632c063a
+2026-02-18 12:32:51 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:32:51 -0500] "POST /message HTTP/1.1" 200 175 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:32:53 [doin_node.unified] INFO: 📤 Broadcast optimae_reveal → 0 peers (gossip mesh)
+2026-02-18 12:32:53 [doin_node.unified] INFO: 📡 Champion broadcast: domain=predictor-timeseries-4h gen=0 perf=-0.0023 optimae=opt-cb47632c-177
 
-Shutting down...
-2026-02-18 12:26:43 [doin_node.network.transport] INFO: Transport stopped
-2026-02-18 12:26:43 [doin_node.stats.experiment_tracker] INFO: Experiment summary written: predictor_experiment_stats.csv.summary.json
-2026-02-18 12:26:43 [doin_node.unified] INFO: Unified node stopped
-CRITICAL: Worker failed (returncode=-15). Tail of stdout:
-Attempting to load plugin: default_target from group: target.plugins
-Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
-Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
-Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': True, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price']}
-Attempting to load plugin: mimo from group: predictor.plugins
-Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
-WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1771435462.179061  222036 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
-I0000 00:00:1771435462.179950  222036 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12838 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
-  Loaded x_train_df: (7300, 8)
-  Loaded y_train_df: (7300, 8)
-  Loaded x_val_df: (1575, 8)
-  Loaded y_val_df: (1575, 8)
-  Loaded x_test_df: (1575, 8)
-  Loaded y_test_df: (1575, 8)
-Creating sliding windows (Size=79)... Done.
-Extracting baselines for target column 'CLOSE'... Done.
-Creating sliding windows (Size=79)... Done.
-No columns specified for exclusion
-Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand1 gpu=True gc=False
-[RESOURCE] fit_start ts=1771435463.644 VmRSS_kB=1136136 VmHWM_kB=1136136 gpu_current_B=1280044 gpu_peak_B=1483584 gc=None
-
---- End of worker stdout ---
+================================================================================
+CANDIDATE RESULT | Stage 1/5 [Base Architecture] | Gen 0/4 | Candidate 1/10 | Total Evals: 1
+Active Parameters (3): encoder_conv_layers, encoder_base_filters, encoder_lstm_units
+--------------------------------------------------------------------------------
+  TRAINING   -> MAE maxH: 0.004828 | Naive MAE maxH: 0.004704
+  VALIDATION -> MAE maxH: 0.008406 | Naive MAE maxH: 0.003874
+  TEST       -> MAE maxH: 0.193862 | Naive MAE maxH: 0.003034
+  FITNESS (avg delta from naive): 0.002328
+--------------------------------------------------------------------------------
+CHAMPION SO FAR | *** NEW CHAMPION ***
+  TRAINING   -> MAE maxH: 0.004828 | Naive MAE maxH: 0.004704
+  VALIDATION -> MAE maxH: 0.008406 | Naive MAE maxH: 0.003874
+  TEST       -> MAE maxH: 0.193862 | Naive MAE maxH: 0.003034
+  FITNESS: 0.002328
+--------------------------------------------------------------------------------
+GA EARLY STOPPING: No-improve 0/4 | Gen-start fitness to beat: inf | Global best: 0.002328
+================================================================================
 
 --- Evaluating Candidate 2/10 | Stage 1/5 [Base Architecture] | Gen 0/4 | Params: 3 | Total Evals: 2 ---
-Params: {'encoder_conv_layers': 1, 'encoder_base_filters': 40, 'encoder_lstm_units': 88}
+Params: {'encoder_conv_layers': 2, 'encoder_base_filters': 178, 'encoder_lstm_units': 36}
 Attempting to load plugin: default_target from group: target.plugins
 Successfully loaded plugin: default_target with params: {'predicted_horizons': [1], 'target_column': 'typical_price'}
 Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
@@ -180,8 +181,8 @@ Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'p
 Attempting to load plugin: mimo from group: predictor.plugins
 Successfully loaded plugin: mimo with params: {'batch_size': 32, 'learning_rate': 0.001, 'encoder_conv_layers': 2, 'encoder_base_filters': 128, 'encoder_lstm_units': 128, 'horizon_embedding_dim': 32, 'horizon_attn_heads': 2, 'horizon_attn_key_dim': 64, 'decoder_dropout': 0.1, 'activation': 'relu', 'l2_reg': 1e-07, 'predicted_horizons': [1], 'positional_encoding': False}
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1771435606.045603  230806 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
-I0000 00:00:1771435606.046858  230806 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 13614 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+I0000 00:00:1771435975.384864  258771 gpu_process_state.cc:208] Using CUDA malloc Async allocator for GPU: 0
+I0000 00:00:1771435975.385712  258771 gpu_device.cc:2020] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 12657 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4090 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
   Loaded x_train_df: (7300, 8)
   Loaded y_train_df: (7300, 8)
   Loaded x_val_df: (1575, 8)
@@ -193,4 +194,13 @@ Extracting baselines for target column 'CLOSE'... Done.
 Creating sliding windows (Size=79)... Done.
 No columns specified for exclusion
 Resource logging enabled: file=/home/openclaw/predictor/examples/results/phase_1_daily/phase_1_mimo_1d_rss.csv tag=ga_gen0_cand2 gpu=True gc=False
-[RESOURCE] fit_start ts=1771435607.401 VmRSS_kB=1136208 VmHWM_kB=1136208 gpu_current_B=945208 gpu_peak_B=1191628 gc=None
+[RESOURCE] fit_start ts=1771435976.796 VmRSS_kB=1136724 VmHWM_kB=1136724 gpu_current_B=504964 gpu_peak_B=591732 gc=None
+2026-02-18 12:33:26 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.0.100:8470
+2026-02-18 12:33:26 [doin_node.network.discovery] INFO: LAN discovery: found DOIN node at 192.168.1.119:8470
+2026-02-18 12:33:26 [doin_node.unified] INFO: LAN scan: 2 new peers
+2026-02-18 12:33:26 [doin_node.unified] INFO: Connected to discovered peer: 192.168.1.119:8470
+2026-02-18 12:33:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:33:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:33:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:33:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:33:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:33:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:33:32 [aiohttp.access] INFO: 192.168.1.119 [18/Feb/2026:12:33:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"
+2026-02-18 12:33:32 [aiohttp.access] INFO: 192.168.0.100 [18/Feb/2026:12:33:32 -0500] "GET /peers HTTP/1.1" 200 172 "-" "Python/3.12 aiohttp/3.12.14"

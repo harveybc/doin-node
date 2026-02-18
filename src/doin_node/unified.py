@@ -689,7 +689,8 @@ class UnifiedNode:
                         break
             if existing:
                 # Update peer_id if we had a placeholder (e.g. from bootstrap)
-                if existing.peer_id != message.sender_id:
+                # But NEVER replace with our own peer_id (happens when forwarded messages bounce back)
+                if existing.peer_id != message.sender_id and message.sender_id != self.peer_id:
                     old_id = existing.peer_id
                     existing.peer_id = message.sender_id
                     # Update GossipSub mesh with real peer_id
