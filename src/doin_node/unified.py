@@ -883,6 +883,33 @@ class UnifiedNode:
                     current_best[1] if current_best[1] is not None else float('inf'),
                     "lower=better" if role and not role.higher_is_better else "higher=better",
                 )
+
+                # ── Send current champion back to the rejected sender ──
+                # This accelerates convergence: the sender learns the latest
+                # network optimum immediately instead of waiting for the next
+                # generation-start champion request.
+                if message.sender_id != self.peer_id and current_best[0] is not None:
+                    champion_msg = Message(
+                        msg_type=MessageType.CHAMPION_RESPONSE,
+                        sender_id=self.peer_id,
+                        payload={
+                            "domain_id": data.domain_id,
+                            "request_id": f"reject-push-{data.optimae_id[:12]}",
+                            "parameters": current_best[0],
+                            "performance": current_best[1],
+                            "has_champion": True,
+                        },
+                    )
+                    endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
+                    if endpoint:
+                        try:
+                            await self.transport.send(endpoint, champion_msg)
+                            logger.info(
+                                "📡 Pushed champion to rejected sender %s for %s (best=%.6f)",
+                                message.sender_id[:12], data.domain_id, current_best[1],
+                            )
+                        except Exception:
+                            logger.debug("Failed to push champion to %s", message.sender_id[:12])
             return
 
         # ── Full synthetic data verification path ──────────────────
@@ -1318,6 +1345,35 @@ class UnifiedNode:
                 "Optimae %s REJECTED: %s",
                 task.optimae_id[:12], result.reason,
             )
+
+            # ── Push current champion to the rejected optimizer ──
+            # Quorum rejected their result — send the best known solution
+            # so they can immediately update their population baseline.
+            if task.requester_id != self.peer_id:
+                current_best = self._domain_best.get(task.domain_id, (None, None))
+                if current_best[0] is not None:
+                    champion_msg = Message(
+                        msg_type=MessageType.CHAMPION_RESPONSE,
+                        sender_id=self.peer_id,
+                        payload={
+                            "domain_id": task.domain_id,
+                            "request_id": f"quorum-reject-push-{task.optimae_id[:12]}",
+                            "parameters": current_best[0],
+                            "performance": current_best[1],
+                            "has_champion": True,
+                        },
+                    )
+                    # Find the requester's endpoint — they may be a known peer
+                    endpoint = self._find_peer_endpoint_by_id(task.requester_id)
+                    if endpoint:
+                        try:
+                            await self.transport.send(endpoint, champion_msg)
+                            logger.info(
+                                "📡 Pushed champion to quorum-rejected sender %s for %s (best=%.6f)",
+                                task.requester_id[:12], task.domain_id, current_best[1],
+                            )
+                        except Exception:
+                            logger.debug("Failed to push champion to %s", task.requester_id[:12])
 
         # Record task completion
         self.consensus.record_transaction(Transaction(
@@ -2077,6 +2133,13 @@ class UnifiedNode:
         # Try matching by address
         for ep in self._peers:
             if from_addr in ep:
+                return ep
+        return None
+
+    def _find_peer_endpoint_by_id(self, peer_id: str) -> str | None:
+        """Find the endpoint for a peer by peer ID only."""
+        for ep, peer in self._peers.items():
+            if peer.peer_id == peer_id:
                 return ep
         return None
 
