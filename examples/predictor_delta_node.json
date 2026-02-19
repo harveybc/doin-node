@@ -42,7 +42,7 @@
         "population_size": 10,
         "n_generations": 5,
         "early_patience": 15,
-        "optimization_patience": 2
+        "optimization_patience": 5
       },
       "inference_config": {
         "predictor_root": "/home/dragon/predictor",
