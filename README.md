@@ -187,6 +187,20 @@ Same config, but add `bootstrap_peers` pointing to Node 1:
 
 Nodes discover each other via LAN scan + bootstrap. Each runs the **full DEAP genetic algorithm** independently. When a node finds a champion, it broadcasts parameters on-chain; other nodes auto-accept if better and inject into their population (island model migration).
 
+### Three-Level Patience System
+
+DOIN's optimization pipeline uses three distinct patience/stopping levels. Understanding these is critical for tuning:
+
+| Level | Name | Config Key | What It Controls | Default |
+|-------|------|------------|-----------------|---------|
+| **L1** | Candidate Training | `early_patience` | Keras `model.fit()` early stopping — epochs without val_loss improvement before stopping ONE candidate | 80–100 |
+| **L2** | Stage Progression | `optimization_patience` | DEAP GA — generations without best-fitness improvement before advancing to the next incremental stage | 8–10 |
+| **L3** | Meta-Optimizer | *(not yet implemented)* | Network-level performance predictor trained on (params→performance) from many L2 experiments via OLAP data | — |
+
+- **L1** (`early_patience`): Low values (15) = fast but shallow training per candidate. High values (100) = thorough training, slower per candidate.
+- **L2** (`optimization_patience`): Low values (2) = quickly advance through stages. High values (10) = more generations to find improvements per stage.
+- **L3**: Will train on the on-chain OLAP cube data from ALL network participants to predict promising hyperparameter regions.
+
 ### Key Configuration Options
 
 | Field | Description | Default |

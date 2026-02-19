@@ -39,7 +39,7 @@
         "population_size": 10,
         "n_generations": 5,
         "early_patience": 15,
-        "early_stopping_patience": 2
+        "optimization_patience": 2
       },
       "inference_config": {
         "predictor_root": "/home/openclaw/predictor",
