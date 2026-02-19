@@ -1515,12 +1515,20 @@ class UnifiedNode:
         incremental stages, populations, generations). DOIN callbacks
         handle champion broadcasting and evaluation service during the run.
         """
-        # Wait for LAN discovery to complete before starting optimization
-        logger.info("Optimizer waiting 10s for peer discovery...")
-        await asyncio.sleep(10)
+        # Wait for LAN discovery + peer connections before starting optimization
+        logger.info("Optimizer waiting for peer discovery...")
+        for _ in range(30):  # Up to 30s
+            await asyncio.sleep(1)
+            if self._peers:
+                # Give a moment for gossip mesh to form
+                await asyncio.sleep(3)
+                break
 
         # Request current best champion from peers (island model sync)
-        await self._request_champions_from_peers()
+        if self._peers:
+            await self._request_champions_from_peers()
+        else:
+            logger.info("No peers found — starting optimization from scratch")
 
         for domain_id in self.optimizer_domains:
             if domain_id in self._domain_converged:
