@@ -44,11 +44,105 @@ Visit [doin.network](https://doin.network) for the full overview.
 9. Fork choice rule (heaviest chain)
 10. Deterministic per-evaluator seeds
 
+## Requirements
+
+- **Python** >= 3.10 (tested on 3.12)
+- **OS**: Linux (Ubuntu 22.04+, Debian 12+), macOS. Windows via WSL2.
+- **GPU** (optional): NVIDIA GPU with CUDA support for TensorFlow acceleration
+
+### Core Dependencies
+
+| Package | Required By | Purpose |
+|---------|------------|---------|
+| `pydantic>=2.0` | doin-core | Model validation & serialization |
+| `cryptography>=41.0` | doin-core | Identity keys, hashing |
+| `aiohttp>=3.9` | doin-node | HTTP transport, dashboard |
+| `aiosqlite>=0.20` | doin-node | SQLite OLAP storage |
+| `numpy>=1.24` | doin-plugins | Numerical operations |
+
+### Predictor Plugin Dependencies (for ML optimization)
+
+| Package | Purpose |
+|---------|---------|
+| `tensorflow` | Deep learning backend (Keras) |
+| `nvidia-cudnn-cu12` | CUDA acceleration (GPU nodes only) |
+| `numpy`, `pandas`, `scipy` | Data processing |
+| `deap` | Genetic algorithm (DEAP GA optimizer) |
+| `h5py` | Model serialization |
+| `tensorflow-probability` | Bayesian inference |
+| `PyWavelets`, `pmdarima` | Signal decomposition |
+| `tqdm`, `matplotlib` | Progress bars, plotting |
+
+See the full list in [`predictor/requirements.txt`](https://github.com/harveybc/predictor/blob/main/requirements.txt).
+
 ## Install
 
+> **Important**: Modern Linux distros (Debian 12+, Ubuntu 23.04+) enforce PEP 668
+> which blocks system-wide pip installs. You **must** use a virtual environment.
+
+### Option A: Conda (recommended for GPU support)
+
 ```bash
+# Create and activate environment
+conda create -n doin python=3.12 -y
+conda activate doin
+
+# Install TensorFlow with GPU support (if NVIDIA GPU available)
+pip install tensorflow[and-cuda]
+# Or CPU-only:
+# pip install tensorflow
+
+# Install DOIN packages (order matters — core first)
 pip install git+https://github.com/harveybc/doin-core.git
 pip install git+https://github.com/harveybc/doin-node.git
+pip install git+https://github.com/harveybc/doin-plugins.git
+
+# Clone and install predictor (the ML system DOIN wraps)
+git clone --branch main --single-branch --depth 1 https://github.com/harveybc/predictor.git
+cd predictor
+pip install -r requirements.txt
+pip install -e .
+cd ..
+```
+
+### Option B: Python venv
+
+```bash
+# Create and activate virtual environment
+python3 -m venv ~/doin-env
+source ~/doin-env/bin/activate
+
+# Upgrade pip
+pip install --upgrade pip setuptools wheel
+
+# Install TensorFlow
+pip install tensorflow
+
+# Install DOIN packages (order matters — core first)
+pip install git+https://github.com/harveybc/doin-core.git
+pip install git+https://github.com/harveybc/doin-node.git
+pip install git+https://github.com/harveybc/doin-plugins.git
+
+# Clone and install predictor
+git clone --branch main --single-branch --depth 1 https://github.com/harveybc/predictor.git
+cd predictor
+pip install -r requirements.txt
+pip install -e .
+cd ..
+```
+
+### Verify Installation
+
+```bash
+# Check DOIN node is available
+doin-node --help
+
+# Check plugins are registered
+python -c "from importlib.metadata import entry_points; eps = entry_points(); print([ep.name for ep in eps.select(group='doin.optimization')])"
+# Expected: ['simple_quadratic', 'predictor']
+
+# Check TensorFlow GPU (optional)
+python -c "import tensorflow as tf; print('GPUs:', tf.config.list_physical_devices('GPU'))"
 ```
 
 ## Usage
@@ -97,16 +191,19 @@ This deploys the [harveybc/predictor](https://github.com/harveybc/predictor) tim
 
 ### Prerequisites (each machine)
 
-```bash
-# Install DOIN packages
-pip install git+https://github.com/harveybc/doin-core.git
-pip install git+https://github.com/harveybc/doin-node.git
-pip install git+https://github.com/harveybc/doin-plugins.git
+Follow the [Install](#install) section above on **every machine** (conda or venv — same environment everywhere). Then verify:
 
-# Clone predictor (the ML system DOIN wraps)
-git clone --branch main --single-branch --depth 1 https://github.com/harveybc/predictor.git
-cd predictor && pip install -e .
+```bash
+# Activate your environment first
+conda activate doin   # or: source ~/doin-env/bin/activate
+
+# Verify
+doin-node --help
+python -c "from doin_plugins.predictor.optimizer import PredictorOptimizer; print('OK')"
 ```
+
+> **Note**: Each machine needs its own copy of the predictor repo (or a shared
+> NFS mount). The `predictor_root` field in your config must point to it.
 
 ### Node 1 — First Node (seed)
 
