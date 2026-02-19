@@ -24,10 +24,10 @@
       "optimization_plugin": "predictor",
       "inference_plugin": "predictor",
       "synthetic_data_plugin": "predictor",
-      "has_synthetic_data": true,
+      "has_synthetic_data": false,
       "target_performance": 999.0,
       "optimization_config": {
-        "predictor_root": "/home/openclaw/predictor",
+        "predictor_root": "~/predictor",
         "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
@@ -42,7 +42,7 @@
         "optimization_patience": 5
       },
       "inference_config": {
-        "predictor_root": "/home/openclaw/predictor",
+        "predictor_root": "~/predictor",
         "load_config": "examples/config/phase_1/optimization/phase_1_mimo_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
@@ -52,8 +52,8 @@
         "batch_size": 32
       },
       "synthetic_data_config": {
-        "sdg_root": "/home/openclaw/.openclaw/workspace/synthetic-datagen",
-        "model_file": "/home/openclaw/.openclaw/workspace/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib",
+        "sdg_root": "~/synthetic-datagen",
+        "model_file": "~/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib",
         "n_samples": 1855,
         "initial_price": 1.2
       },
