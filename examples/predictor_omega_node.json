@@ -26,7 +26,7 @@
       "optimization_plugin": "predictor",
       "inference_plugin": "predictor",
       "synthetic_data_plugin": "predictor",
-      "has_synthetic_data": true,
+      "has_synthetic_data": false,
       "target_performance": 999.0,
       "optimization_config": {
         "predictor_root": "/home/harveybc/predictor",
