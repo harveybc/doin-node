@@ -155,7 +155,8 @@ async def _api_optimization(request: web.Request) -> web.Response:
         best = node._domain_best.get(domain_id, (None, None))
         if best[1] is not None:
             info["best_performance"] = best[1]
-            info["best_params"] = best[0]
+            # Don't send full params (can be >1MB with model weights)
+            info["best_params"] = {"_param_count": len(best[0]) if isinstance(best[0], dict) else None}
         for dcfg in node.config.domains:
             did = getattr(dcfg, "domain_id", None) or getattr(dcfg, "id", None)
             if did == domain_id:
@@ -183,7 +184,13 @@ async def _api_optimization(request: web.Request) -> web.Response:
             tolerance = getattr(ic, "tolerance_margin", None)
             break
 
-    return web.json_response({"domains": domains, "tolerance_margin": tolerance}, dumps=_dumps)
+    # higher_is_better from first domain config
+    hib = False
+    for dcfg in node.config.domains:
+        hib = getattr(dcfg, "higher_is_better", False)
+        break
+
+    return web.json_response({"domains": domains, "tolerance_margin": tolerance, "higher_is_better": hib}, dumps=_dumps)
 
 
 # ── Live Training State ──────────────────────────────────────

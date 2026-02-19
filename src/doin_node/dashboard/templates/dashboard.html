@@ -377,11 +377,12 @@ async function refreshAll() {
   // Optimization
   if (opt && opt.domains) {
     let rounds = 0, best = null;
+    const hib = opt.higher_is_better || false;
     const tb = document.getElementById('domainBody');
     tb.innerHTML = opt.domains.map(d => {
       rounds += d.round || 0;
       if (d.best_performance !== null && d.best_performance !== undefined) {
-        if (best === null || d.best_performance > best) best = d.best_performance;
+        if (best === null || (hib ? d.best_performance > best : d.best_performance < best)) best = d.best_performance;
       }
       const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
       const c = d.champion || {};
