@@ -328,6 +328,8 @@ class UnifiedNode:
             (MessageType.TASK_CREATED, self._handle_task_created),
             (MessageType.TASK_CLAIMED, self._handle_task_claimed),
             (MessageType.TASK_COMPLETED, self._handle_task_completed),
+            (MessageType.CHAMPION_REQUEST, self._handle_champion_request),
+            (MessageType.CHAMPION_RESPONSE, self._handle_champion_response),
         ]
         for msg_type, handler in all_handlers:
             self.flooding.on_message(msg_type, handler)
@@ -1326,6 +1328,77 @@ class UnifiedNode:
         ))
 
     # ================================================================
+    # Champion sync (island model — fetch best on startup)
+    # ================================================================
+
+    async def _handle_champion_request(self, message: Message, from_peer: str) -> None:
+        """Respond to a champion request with our current domain best."""
+        domain_id = message.payload.get("domain_id", "")
+        request_id = message.payload.get("request_id", "")
+        current_best = self._domain_best.get(domain_id, (None, None))
+        params, perf = current_best
+        resp = Message(
+            msg_type=MessageType.CHAMPION_RESPONSE,
+            sender_id=self.peer_id,
+            payload={
+                "domain_id": domain_id,
+                "request_id": request_id,
+                "parameters": params,
+                "performance": perf,
+                "has_champion": params is not None and perf is not None,
+            },
+        )
+        # Send directly to requester (not broadcast)
+        endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
+        if endpoint:
+            try:
+                await self.transport.send(endpoint, resp)
+            except Exception:
+                logger.debug("Failed to send champion response to %s", endpoint)
+
+    async def _handle_champion_response(self, message: Message, from_peer: str) -> None:
+        """Handle a champion response from a peer — update domain best if better."""
+        payload = message.payload
+        domain_id = payload.get("domain_id", "")
+        if not payload.get("has_champion"):
+            return
+        perf = payload.get("performance")
+        params = payload.get("parameters")
+        if perf is None or params is None:
+            return
+
+        current_best = self._domain_best.get(domain_id, (None, None))
+        if self._is_better(domain_id, perf, current_best[1]):
+            self._domain_best[domain_id] = (params, perf)
+            logger.info(
+                "🏝️  Champion synced from peer %s for %s: perf=%.6f",
+                message.sender_id[:12], domain_id, perf,
+            )
+            # Also inject into optimizer plugin if running
+            plugin = self._optimizer_plugins.get(domain_id)
+            if plugin and hasattr(plugin, "set_network_champion"):
+                plugin.set_network_champion(params)
+
+    async def _request_champions_from_peers(self) -> None:
+        """Request current best champion for each domain from all connected peers."""
+        import uuid
+        for domain_id in self.optimizer_domains:
+            request_id = str(uuid.uuid4())[:8]
+            msg = Message(
+                msg_type=MessageType.CHAMPION_REQUEST,
+                sender_id=self.peer_id,
+                payload={
+                    "domain_id": domain_id,
+                    "request_id": request_id,
+                },
+            )
+            await self._broadcast(msg)
+            logger.info("📡 Requested champion for %s from peers", domain_id)
+
+        # Wait a bit for responses to arrive
+        await asyncio.sleep(3)
+
+    # ================================================================
     # Block generation (with finality + anchoring)
     # ================================================================
 
@@ -1445,6 +1518,9 @@ class UnifiedNode:
         # Wait for LAN discovery to complete before starting optimization
         logger.info("Optimizer waiting 10s for peer discovery...")
         await asyncio.sleep(10)
+
+        # Request current best champion from peers (island model sync)
+        await self._request_champions_from_peers()
 
         for domain_id in self.optimizer_domains:
             if domain_id in self._domain_converged:
