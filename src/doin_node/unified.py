@@ -1631,9 +1631,27 @@ class UnifiedNode:
             except Exception:
                 pass
 
+        def on_stage_start(stage, total_stages):
+            """Called from optimizer thread when a new stage begins → request champion from peers."""
+            import asyncio as _aio
+            logger.info(
+                "🔄 Stage %d/%d starting for %s — requesting champion from peers",
+                stage, total_stages, domain_id,
+            )
+            fut = _aio.run_coroutine_threadsafe(
+                node._request_champions_from_peers(),
+                loop,
+            )
+            try:
+                fut.result(timeout=10)  # Wait for responses
+            except Exception as e:
+                logger.debug("Stage champion request failed: %s", e)
+
         plugin.set_local_champion_callback(on_local_champion)
         plugin.set_eval_service_callback(on_eval_service)
         plugin.set_generation_end_callback(on_generation_end)
+        if hasattr(plugin, "set_stage_start_callback"):
+            plugin.set_stage_start_callback(on_stage_start)
 
     async def _run_full_optimization(self, domain_id: str, plugin: Any) -> None:
         """Run the full DEAP GA optimization in an executor thread."""
