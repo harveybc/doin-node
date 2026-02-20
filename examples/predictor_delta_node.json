@@ -30,14 +30,14 @@
       "has_synthetic_data": false,
       "target_performance": 999.0,
       "optimization_config": {
-        "predictor_root": "predictor",
+        "predictor_root": "~/predictor",
         "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
         "target_plugin": "default_target",
         "pipeline_plugin": "stl_pipeline",
         "step_size_fraction": 0.15,
-        "epochs": 50,
+        "epochs": 200,
         "batch_size": 32,
         "population_size": 10,
         "n_generations": 5,
@@ -45,7 +45,7 @@
         "optimization_patience": 5
       },
       "inference_config": {
-        "predictor_root": "predictor",
+        "predictor_root": "~/predictor",
         "load_config": "examples/config/phase_1/optimization/phase_1_mimo_optimization_config.json",
         "predictor_plugin": "mimo",
         "preprocessor_plugin": "stl_preprocessor",
