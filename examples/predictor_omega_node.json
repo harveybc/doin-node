@@ -40,7 +40,7 @@
         "batch_size": 32,
         "population_size": 20,
         "n_generations": 15,
-        "early_patience": 30,
+        "early_patience": 60,
         "optimization_patience": 5,
         "optimization_pause_on_resume": false
       },
