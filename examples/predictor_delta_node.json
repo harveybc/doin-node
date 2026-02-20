@@ -40,7 +40,7 @@
         "epochs": 200,
         "batch_size": 32,
         "population_size": 10,
-        "n_generations": 5,
+        "n_generations": 15,
         "early_patience": 15,
         "optimization_patience": 5,
         "optimization_pause_on_resume": false
