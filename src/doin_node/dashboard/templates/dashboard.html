@@ -80,8 +80,8 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-warning">
-              <div class="inner"><h3 id="roundCount">0</h3><p>Rounds</p></div>
-              <div class="icon"><i class="fas fa-redo"></i></div>
+              <div class="inner"><h3 id="totalEvalsCard">0</h3><p>Candidates Evaluated</p></div>
+              <div class="icon"><i class="fas fa-flask"></i></div>
             </div>
           </div>
           <div class="col-lg-2 col-6">
@@ -92,14 +92,14 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-primary">
-              <div class="inner"><h3 id="pendingEvals">0</h3><p>Pending Evals</p></div>
+              <div class="inner"><h3 id="remainingCard" style="font-size:1.2rem">--</h3><p>Remaining</p></div>
               <div class="icon"><i class="fas fa-tasks"></i></div>
             </div>
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-secondary">
-              <div class="inner"><h3 id="completedEvals">0</h3><p>Completed Evals</p></div>
-              <div class="icon"><i class="fas fa-check-double"></i></div>
+              <div class="inner"><h3 id="progressCard" style="font-size:1.2rem">--</h3><p>Progress</p></div>
+              <div class="icon"><i class="fas fa-chart-pie"></i></div>
             </div>
           </div>
         </div>
@@ -120,53 +120,76 @@
               <div class="card-body p-2"><canvas id="bestChart" height="260"></canvas></div>
             </div>
           </div>
-          <!-- Live Training Status -->
+          <!-- Champion Stats & Training Progress -->
           <div class="col-lg-3">
             <div class="card" id="trainingCard">
-              <div class="card-header bg-gradient-olive"><h3 class="card-title"><i class="fas fa-brain"></i> Live Training</h3></div>
+              <div class="card-header bg-gradient-olive"><h3 class="card-title"><i class="fas fa-trophy"></i> Champion & Training</h3></div>
               <div class="card-body">
-                <div id="trainingInactive" class="text-center text-muted py-4">
-                  <i class="fas fa-pause-circle fa-2x"></i><br>Waiting for next round...
+                <div id="champStatsEmpty" class="text-center text-muted py-4">
+                  <i class="fas fa-hourglass-half fa-2x"></i><br>Waiting for first evaluation...
                 </div>
-                <div id="trainingActive" style="display:none">
-                  <div class="mb-2">
-                    <span class="metric-label">Domain</span><br>
-                    <span id="tDomain" class="text-info">--</span>
-                  </div>
-                  <div class="row">
-                    <div class="col-6">
-                      <span class="metric-label">Round</span><br>
-                      <span id="tRound" class="metric-value">0</span>
-                    </div>
+                <div id="champStatsActive" style="display:none">
+                  <!-- Progress -->
+                  <div class="row mb-2">
                     <div class="col-6">
                       <span class="metric-label">Stage</span><br>
-                      <span id="tStage" class="metric-value">0</span>/<span id="tTotalStages">0</span>
+                      <span id="csStage" class="metric-value">-</span><small id="csTotalStages">/0</small>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Generation</span><br>
+                      <span id="csGen" class="metric-value">-</span>
                     </div>
                   </div>
-                  <div class="training-progress mt-2">
-                    <span class="metric-label">Epoch <span id="tEpoch">0</span>/<span id="tTotalEpochs">0</span></span>
-                    <div class="progress">
-                      <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" id="epochBar" style="width:0%"></div>
+                  <div class="row mb-2">
+                    <div class="col-6">
+                      <span class="metric-label">Candidate</span><br>
+                      <span id="csCandidate" class="metric-value">-</span><small id="csTotalCandidates">/0</small>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Total Evals</span><br>
+                      <span id="csTotalEvals" class="metric-value">0</span>
                     </div>
                   </div>
-                  <div class="row mt-2">
+                  <hr style="margin:6px 0; border-color:#444">
+                  <!-- Champion Performance -->
+                  <div class="mb-2">
+                    <span class="metric-label">🏆 Champion NDA (lower=better)</span><br>
+                    <span id="csPerformance" class="metric-value text-success">--</span>
+                  </div>
+                  <div class="row mb-1">
                     <div class="col-6">
                       <span class="metric-label">Train MAE</span><br>
-                      <span id="tTrainMAE" class="text-warning">--</span>
+                      <span id="csTrainMAE" class="text-warning">--</span>
                     </div>
                     <div class="col-6">
                       <span class="metric-label">Val MAE</span><br>
-                      <span id="tValMAE" class="text-success">--</span>
+                      <span id="csValMAE" class="text-info">--</span>
                     </div>
                   </div>
-                  <div class="row mt-1">
+                  <div class="row mb-1">
                     <div class="col-6">
-                      <span class="metric-label">Train Loss</span><br>
-                      <span id="tTrainLoss" class="text-warning">--</span>
+                      <span class="metric-label" style="color:#8b6914">Train Naive</span><br>
+                      <span id="csTrainNaive" style="color:#8b6914">--</span>
                     </div>
                     <div class="col-6">
-                      <span class="metric-label">Val Loss</span><br>
-                      <span id="tValLoss" class="text-success">--</span>
+                      <span class="metric-label" style="color:#0b5e6e">Val Naive</span><br>
+                      <span id="csValNaive" style="color:#0b5e6e">--</span>
+                    </div>
+                  </div>
+                  <hr style="margin:6px 0; border-color:#444">
+                  <!-- Last Candidate Evaluated -->
+                  <div class="mb-1">
+                    <span class="metric-label">Last Candidate Fitness</span><br>
+                    <span id="csLastFitness" class="text-light">--</span>
+                  </div>
+                  <div class="row">
+                    <div class="col-6">
+                      <span class="metric-label">Patience</span><br>
+                      <span id="csPatience" class="text-light">--</span>
+                    </div>
+                    <div class="col-6">
+                      <span class="metric-label">Avg Fitness</span><br>
+                      <span id="csAvgFitness" class="text-light">--</span>
                     </div>
                   </div>
                 </div>
@@ -182,8 +205,8 @@
               <div class="card-header p-0 border-bottom-0">
                 <ul class="nav nav-tabs" role="tablist">
                   <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tabPeers"><i class="fas fa-server"></i> Peers</a></li>
-                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvals"><i class="fas fa-tasks"></i> Evaluations</a></li>
-                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvents"><i class="fas fa-list"></i> Optimizer Events</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvals"><i class="fas fa-flask"></i> Candidate Evaluations</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvents"><i class="fas fa-list"></i> Network Events</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPlugins"><i class="fas fa-plug"></i> Plugins</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabChain"><i class="fas fa-cubes"></i> Chain</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabDomains"><i class="fas fa-cogs"></i> Domains</a></li>
@@ -200,18 +223,14 @@
                     </table>
                   </div>
 
-                  <!-- Evaluations Tab -->
+                  <!-- Candidate Evaluations Tab -->
                   <div class="tab-pane fade" id="tabEvals">
-                    <h6>Pending</h6>
-                    <table class="table table-sm table-striped">
-                      <thead><tr><th>Task ID</th><th>Domain</th><th>Submitter</th><th>Status</th><th>Claimed By</th></tr></thead>
-                      <tbody id="pendingEvalBody"></tbody>
+                    <div style="max-height:500px; overflow-y:auto">
+                    <table class="table table-sm table-striped" style="font-size:12px">
+                      <thead><tr><th style="width:120px">#</th><th>Metrics</th><th style="width:80px">Time</th></tr></thead>
+                      <tbody id="evalEventsBody"></tbody>
                     </table>
-                    <h6 class="mt-3">Completed</h6>
-                    <table class="table table-sm table-striped">
-                      <thead><tr><th>Task ID</th><th>Domain</th><th>Submitter</th><th>Performance</th><th>Status</th></tr></thead>
-                      <tbody id="completedEvalBody"></tbody>
-                    </table>
+                    </div>
                   </div>
 
                   <!-- Events Tab -->
@@ -302,10 +321,10 @@ const perfChart = new Chart(perfCtx, {
 const bestChart = new Chart(bestCtx, {
   type: 'line',
   data: { labels: [], datasets: [
-    { label: 'Val MAE', data: [], borderColor: '#17a2b8', backgroundColor: 'rgba(23,162,184,0.05)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
-    { label: 'Train MAE', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.05)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
-    { label: 'Val Naive MAE', data: [], borderColor: '#0d6efd', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] },
-    { label: 'Train Naive MAE', data: [], borderColor: '#b8860b', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] },
+    { label: 'Val MAE', data: [], borderColor: '#17a2b8', backgroundColor: 'rgba(23,162,184,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Train MAE', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Val Naive MAE', data: [], borderColor: '#0b5e6e', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
+    { label: 'Train Naive MAE', data: [], borderColor: '#8b6914', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
   ]},
   options: {
     responsive: true, maintainAspectRatio: false,
@@ -338,9 +357,9 @@ async function refreshAll() {
   document.getElementById('refreshSpin').style.display = 'inline-block';
 
   const [node, peers, opt, training, evals, metrics, plugins, chain, events] = await Promise.all([
-    api('/api/node'), api('/api/peers'), api('/api/optimization'), api('/api/training'),
-    api('/api/evaluations'), api('/api/metrics?limit=500'), api('/api/plugins'),
-    api('/api/chain?limit=30'), api('/api/events?limit=100'),
+    api('/api/node'), api('/api/peers'), api('/api/optimization'), null,
+    null, api('/api/metrics?limit=500'), api('/api/plugins'),
+    api('/api/chain?limit=30'), api('/api/events?limit=300'),
   ]);
 
   // Node
@@ -401,46 +420,112 @@ async function refreshAll() {
         <td>${params}</td>
       </tr>${champRow}`;
     }).join('');
-    document.getElementById('roundCount').textContent = rounds;
     document.getElementById('bestPerf').textContent = best !== null ? fmt(best) : '--';
   }
 
-  // Training
-  if (training) {
-    if (training.active) {
-      document.getElementById('trainingInactive').style.display = 'none';
-      document.getElementById('trainingActive').style.display = 'block';
-      document.getElementById('trainingCard').classList.add('card-outline');
-      document.getElementById('tDomain').textContent = training.domain_id;
-      document.getElementById('tRound').textContent = training.round;
-      document.getElementById('tStage').textContent = training.stage;
-      document.getElementById('tTotalStages').textContent = training.total_stages;
-      document.getElementById('tEpoch').textContent = training.epoch;
-      document.getElementById('tTotalEpochs').textContent = training.total_epochs;
-      const pct = training.total_epochs > 0 ? (training.epoch / training.total_epochs * 100) : 0;
-      document.getElementById('epochBar').style.width = pct + '%';
-      document.getElementById('tTrainMAE').textContent = fmt(training.train_mae, 6);
-      document.getElementById('tValMAE').textContent = fmt(training.val_mae, 6);
-      document.getElementById('tTrainLoss').textContent = fmt(training.train_loss, 6);
-      document.getElementById('tValLoss').textContent = fmt(training.val_loss, 6);
-    } else {
-      document.getElementById('trainingInactive').style.display = 'block';
-      document.getElementById('trainingActive').style.display = 'none';
+  // Champion & Training panel — populated from latest events
+  if (events && events.events && events.events.length > 0) {
+    const evList = events.events;  // newest first
+
+    // Find latest candidate_eval or generation_end for progress info
+    const latestEval = evList.find(e => e.type === 'candidate_eval');
+    const latestGenEnd = evList.find(e => e.type === 'generation_end');
+    // Find latest champion event for champion metrics
+    const latestChamp = evList.find(e => e.type === 'champion' || e.type === 'auto_accept');
+
+    if (latestEval || latestGenEnd || latestChamp) {
+      document.getElementById('champStatsEmpty').style.display = 'none';
+      document.getElementById('champStatsActive').style.display = 'block';
+
+      // Progress from latest candidate_eval (most granular) or generation_end
+      const prog = latestEval || latestGenEnd || {};
+      document.getElementById('csStage').textContent = prog.stage || '-';
+      document.getElementById('csTotalStages').textContent = '/' + (prog.total_stages || '?');
+      document.getElementById('csGen').textContent = prog.gen != null ? prog.gen : '-';
+      document.getElementById('csCandidate').textContent = prog.candidate_num != null ? prog.candidate_num : '-';
+      document.getElementById('csTotalCandidates').textContent = '/' + (prog.total_candidates || '?');
+      document.getElementById('csTotalEvals').textContent = prog.total_evals || '0';
+
+      // Champion performance — from /api/optimization (most authoritative) or from champion event
+      if (opt && opt.domains && opt.domains.length > 0) {
+        const d = opt.domains[0];
+        document.getElementById('csPerformance').textContent = d.best_performance != null ? fmt(d.best_performance, 6) : '--';
+        const c = d.champion || {};
+        document.getElementById('csTrainMAE').textContent = c.train_mae != null ? fmt(c.train_mae, 6) : '--';
+        document.getElementById('csValMAE').textContent = c.val_mae != null ? fmt(c.val_mae, 6) : '--';
+        document.getElementById('csTrainNaive').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 6) : '--';
+        document.getElementById('csValNaive').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 6) : '--';
+      } else if (latestChamp) {
+        document.getElementById('csPerformance').textContent = latestChamp.performance != null ? fmt(latestChamp.performance, 6) : '--';
+        document.getElementById('csTrainMAE').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 6) : '--';
+        document.getElementById('csValMAE').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 6) : '--';
+        document.getElementById('csTrainNaive').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 6) : '--';
+        document.getElementById('csValNaive').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 6) : '--';
+      }
+
+      // Last candidate fitness + generation stats
+      if (latestEval) {
+        document.getElementById('csLastFitness').textContent = latestEval.fitness != null ? fmt(latestEval.fitness, 6) : '--';
+      }
+      if (latestGenEnd) {
+        document.getElementById('csPatience').textContent = latestGenEnd.patience || '--';
+        document.getElementById('csAvgFitness').textContent = latestGenEnd.avg_fitness != null ? fmt(latestGenEnd.avg_fitness, 6) : '--';
+      }
     }
   }
 
-  // Evaluations
-  if (evals) {
-    document.getElementById('pendingEvals').textContent = evals.pending_count;
-    document.getElementById('completedEvals').textContent = evals.completed_count;
-    document.getElementById('pendingEvalBody').innerHTML = evals.pending.map(e =>
-      `<tr><td><code>${e.task_id}</code></td><td>${e.domain_id}</td><td><code>${e.submitter}</code></td>
-       <td><span class="badge badge-warning">${e.status}</span></td><td><code>${e.claimed_by||'-'}</code></td></tr>`
-    ).join('');
-    document.getElementById('completedEvalBody').innerHTML = evals.completed.map(e =>
-      `<tr><td><code>${e.task_id}</code></td><td>${e.domain_id}</td><td><code>${e.submitter}</code></td>
-       <td>${fmt(e.performance)}</td><td><span class="badge badge-success">${e.status}</span></td></tr>`
-    ).join('');
+  // Candidate Evaluations tab — show candidate_eval + generation_end events
+  if (events && events.events) {
+    const evalTypeEvents = events.events.filter(e => e.type === 'candidate_eval' || e.type === 'generation_end');
+    document.getElementById('evalEventsBody').innerHTML = evalTypeEvents.map(e => {
+      const t = fmtTime(e.timestamp);
+      const f = (v,d) => v != null ? fmt(v,d||6) : '--';
+      if (e.type === 'candidate_eval') {
+        const isBetter = e.fitness != null && e.champion_fitness != null && parseFloat(e.fitness) < parseFloat(e.champion_fitness);
+        const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
+        return `<tr style="${bg}">
+          <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen} S${e.stage}/${e.total_stages}</td>
+          <td>fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${isBetter ? ' ⬆️' : ''}</td>
+          <td>${t}</td></tr>`;
+      } else {
+        return `<tr style="background:rgba(108,117,125,0.15)">
+          <td><span class="badge badge-secondary">Gen ${e.gen}</span> S${e.stage}/${e.total_stages}</td>
+          <td>champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} | avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''} | evals=${e.total_evals||0}</td>
+          <td>${t}</td></tr>`;
+      }
+    }).join('');
+  }
+
+  // Top summary cards: Candidates Evaluated, Remaining, Progress
+  if (events && events.events && events.events.length > 0) {
+    const evList = events.events;  // newest first
+    const latEval = evList.find(e => e.type === 'candidate_eval');
+    const latGen = evList.find(e => e.type === 'generation_end');
+    const prog = latEval || latGen || {};
+    const totalEvals = parseInt(prog.total_evals || 0);
+    const curStage = parseInt(prog.stage || 1);
+    const totStages = parseInt(prog.total_stages || 1);
+    const curGen = parseInt(prog.gen != null ? prog.gen : 0);
+    const curCand = parseInt(latEval ? (latEval.candidate_num || 0) : 0);
+    const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : 20));
+    // Read n_generations from optimization config if available
+    const nGens = parseInt(prog.n_generations || 15);  // fallback 15
+
+    document.getElementById('totalEvalsCard').textContent = totalEvals;
+
+    // Remaining: candidates in current gen + remaining gens in stage + remaining stages
+    const candsLeftThisGen = Math.max(0, totCand - curCand);
+    const gensLeftThisStage = Math.max(0, nGens - curGen - 1);
+    const stagesLeft = Math.max(0, totStages - curStage);
+    document.getElementById('remainingCard').innerHTML =
+      `S${curStage}/${totStages} G${curGen} C${curCand}/${totCand}`;
+
+    // Progress: compute overall % (stage-weighted)
+    const stageProgress = (curStage - 1) / totStages;  // completed stages
+    const genProgressInStage = (curGen / nGens);  // within current stage
+    const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
+    const overallPct = ((stageProgress + (genProgressInStage + candProgressInGen / nGens) / totStages) * 100).toFixed(1);
+    document.getElementById('progressCard').innerHTML = `${overallPct}%`;
   }
 
   // Metrics → Charts (use events data for real-time champion & MAE history)
@@ -466,21 +551,64 @@ async function refreshAll() {
       perfChart.update();
     }
 
-    // Build MAE History from generation_end events (newest first → reverse for chronological)
-    const genEndEvents = events.events.filter(e => e.type === 'generation_end').reverse();
-    if (genEndEvents.length > 0) {
+    // Build MAE History from champion + generation_end events
+    // Champion events carry the actual MAE when the champion improved;
+    // generation_end events carry champion MAE after each generation.
+    // We combine both to get the fullest timeline possible.
+    const maeSourceEvents = events.events.filter(
+      e => e.type === 'champion' || e.type === 'generation_end'
+    ).reverse();  // oldest first
+
+    if (maeSourceEvents.length > 0) {
       const maeLabels = [];
       const valMaeData = [];
       const trainMaeData = [];
       const valNaiveData = [];
       const trainNaiveData = [];
-      for (const ge of genEndEvents) {
-        maeLabels.push('S' + (ge.stage||'?') + '/G' + (ge.gen||'?'));
-        valMaeData.push(ge.champion_val_mae != null ? parseFloat(ge.champion_val_mae) : null);
-        trainMaeData.push(ge.champion_train_mae != null ? parseFloat(ge.champion_train_mae) : null);
-        valNaiveData.push(ge.champion_val_naive_mae != null ? parseFloat(ge.champion_val_naive_mae) : null);
-        trainNaiveData.push(ge.champion_train_naive_mae != null ? parseFloat(ge.champion_train_naive_mae) : null);
+      // Track latest naive values for horizontal reference lines
+      let lastValNaive = null;
+      let lastTrainNaive = null;
+
+      for (const ev of maeSourceEvents) {
+        // Determine label
+        let lbl;
+        if (ev.type === 'champion') {
+          lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?') + '🏆';
+        } else {
+          lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?');
+        }
+
+        // Extract MAE fields — champion events use val_mae/train_mae,
+        // generation_end events use champion_val_mae/champion_train_mae
+        let vm, tm, vnm, tnm;
+        if (ev.type === 'champion') {
+          vm = ev.val_mae;
+          tm = ev.train_mae;
+          vnm = ev.val_naive_mae;
+          tnm = ev.train_naive_mae;
+        } else {
+          vm = ev.champion_val_mae;
+          tm = ev.champion_train_mae;
+          vnm = ev.champion_val_naive_mae;
+          tnm = ev.champion_train_naive_mae;
+        }
+
+        // Only add if at least one MAE value is present
+        if (vm == null && tm == null) continue;
+
+        maeLabels.push(lbl);
+        valMaeData.push(vm != null ? parseFloat(vm) : null);
+        trainMaeData.push(tm != null ? parseFloat(tm) : null);
+
+        // Track latest naive values
+        if (vnm != null) lastValNaive = parseFloat(vnm);
+        if (tnm != null) lastTrainNaive = parseFloat(tnm);
+
+        // Fill naive arrays with the latest known value at each point
+        valNaiveData.push(lastValNaive);
+        trainNaiveData.push(lastTrainNaive);
       }
+
       bestChart.data.labels = maeLabels;
       bestChart.data.datasets[0].data = valMaeData;
       bestChart.data.datasets[1].data = trainMaeData;
@@ -490,9 +618,10 @@ async function refreshAll() {
     }
   }
 
-  // Events
+  // Network Events (excluding candidate_eval which goes to Evaluations tab)
   if (events && events.events) {
-    document.getElementById('eventsBody').innerHTML = events.events.map(e => {
+    const networkEvents = events.events.filter(e => e.type !== 'candidate_eval');
+    document.getElementById('eventsBody').innerHTML = networkEvents.map(e => {
       const t = fmtTime(e.timestamp);
       const f = (v,d) => v != null ? fmt(v,d||6) : '--';
       switch (e.type) {
@@ -522,11 +651,6 @@ async function refreshAll() {
           return `<tr>
             <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
             <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}</td>
-            <td>${t}</td></tr>`;
-        case 'candidate_eval':
-          return `<tr style="font-size:11px">
-            <td><span class="badge badge-light">📊 Eval ${e.candidate_num||'?'}/${e.total_candidates||'?'}</span></td>
-            <td>Gen ${e.gen} S${e.stage}/${e.total_stages} | fit=${f(e.fitness,6)} val=${f(e.val_mae)} train=${f(e.train_mae)} naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} total=${e.total_evals||0}</td>
             <td>${t}</td></tr>`;
         case 'stage_end':
           return `<tr style="background:rgba(255,193,7,0.15)">
