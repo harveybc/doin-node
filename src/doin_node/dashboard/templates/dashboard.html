@@ -8,33 +8,35 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    html, body { height: 100%; margin: 0; overflow: hidden; }
+    html, body { height: 100%; margin: 0; }
     body { font-size: 13px; }
     .wrapper { display: flex; flex-direction: column; height: 100vh; }
-    .content-wrapper { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-    .content-wrapper > section.content { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding-top: 0.5rem !important; }
-    .content-wrapper > section.content > .container-fluid { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-    .row.charts-row { flex: 0 0 auto; }
-    .row.tabs-row { flex: 1; min-height: 0; }
-    .row.tabs-row > .col-12 { height: 100%; display: flex; flex-direction: column; }
-    .row.tabs-row .card { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
-    .row.tabs-row .card > .card-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 0.5rem; }
-    .row.tabs-row .tab-content { flex: 1; overflow: hidden; min-height: 0; }
-    .row.tabs-row .tab-pane { height: 100%; overflow-y: auto; }
-    .row.tabs-row .tab-pane > div[style*="max-height"] { max-height: none !important; height: 100%; overflow-y: auto; }
+    .content-wrapper { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .content-wrapper > section.content { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-top: 0.5rem !important; }
+    .content-wrapper > section.content > .container-fluid { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    /* Summary cards row */
+    .summary-row { flex: 0 0 auto; }
+    /* Charts row: equal-height columns via flex stretch */
+    .charts-row { flex: 0 0 auto; }
+    .charts-row > [class*="col-"] { display: flex !important; }
+    .charts-row > [class*="col-"] > .card { flex: 1; display: flex; flex-direction: column; width: 100%; }
+    .charts-row .card > .card-body { flex: 1; min-height: 0; overflow: hidden; }
+    /* Tabs row: height set dynamically by recalcLayout() */
+    .tabs-row { min-height: 0; }
+    .tabs-row > .col-12 { height: 100%; display: flex; flex-direction: column; }
+    .tabs-row .card { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
+    .tabs-row .card > .card-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 0.5rem; }
+    .tabs-row .tab-content { flex: 1; overflow: hidden; min-height: 0; }
+    .tabs-row .tab-pane { height: 100%; overflow-y: auto; }
     .small-box .inner h3 { font-size: 1.8rem; }
     .small-box { margin-bottom: 8px; }
     .badge-connected { background: #28a745; color: #fff; }
     .badge-known { background: #6c757d; color: #fff; }
     .badge-lan { background: #17a2b8; color: #fff; }
-    .training-progress { margin: 5px 0; }
-    .training-progress .progress { height: 20px; }
     .metric-value { font-size: 1.5rem; font-weight: bold; }
     .metric-label { color: #aaa; font-size: 11px; text-transform: uppercase; }
-    .event-row.improvement { background: rgba(40, 167, 69, 0.1); }
     code { font-size: 11px; }
     .status-badge { font-size: 11px; padding: 2px 6px; }
-    #perfChart, #bestChart { max-height: 280px; }
     .card-header { padding: 0.5rem 1rem; }
     .main-footer { flex: 0 0 auto; padding: 4px 0; font-size: 11px; }
   </style>
@@ -79,7 +81,7 @@
       <div class="container-fluid">
 
         <!-- Summary Cards -->
-        <div class="row" style="flex:0 0 auto">
+        <div class="row summary-row">
           <div class="col-lg-2 col-6">
             <div class="small-box bg-info">
               <div class="inner"><h3 id="peerCount">0</h3><p>Peers</p></div>
@@ -124,14 +126,14 @@
           <div class="col-lg-5">
             <div class="card">
               <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-line"></i> NDA Performance History</h3></div>
-              <div class="card-body p-2"><canvas id="perfChart" height="260"></canvas></div>
+              <div class="card-body p-2"><canvas id="perfChart"></canvas></div>
             </div>
           </div>
           <!-- MAE History (val/train + naive) -->
           <div class="col-lg-4">
             <div class="card">
               <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-area"></i> MAE History (Champion)</h3></div>
-              <div class="card-body p-2"><canvas id="bestChart" height="260"></canvas></div>
+              <div class="card-body p-2"><canvas id="bestChart"></canvas></div>
             </div>
           </div>
           <!-- Champion Stats & Training Progress -->
@@ -239,7 +241,7 @@
 
                   <!-- Candidate Evaluations Tab -->
                   <div class="tab-pane fade" id="tabEvals">
-                    <div style="max-height:500px; overflow-y:auto">
+                    <div>
                     <table class="table table-sm table-striped" style="font-size:12px">
                       <thead><tr><th style="width:120px">#</th><th>Metrics</th><th style="width:80px">Time</th></tr></thead>
                       <tbody id="evalEventsBody"></tbody>
@@ -249,7 +251,7 @@
 
                   <!-- Events Tab -->
                   <div class="tab-pane fade" id="tabEvents">
-                    <div style="max-height:500px; overflow-y:auto">
+                    <div>
                     <table class="table table-sm table-striped" style="font-size:12px">
                       <thead><tr><th>Type</th><th>Details</th><th>Time</th></tr></thead>
                       <tbody id="eventsBody"></tbody>
@@ -705,7 +707,37 @@ async function refreshAll() {
   }
 
   document.getElementById('refreshSpin').style.display = 'none';
+  requestAnimationFrame(recalcLayout);
 }
+
+// ── Layout: dynamically size tabs to fill remaining viewport ──
+function recalcLayout() {
+  var vh = window.innerHeight;
+  var tabsRow = document.querySelector('.tabs-row');
+  var footer = document.querySelector('.main-footer');
+  var wrapper = document.querySelector('.wrapper');
+  var cw = document.querySelector('.content-wrapper');
+  if (!tabsRow || !footer || !wrapper || !cw) return;
+  var tabsTop = tabsRow.getBoundingClientRect().top;
+  var footerH = footer.offsetHeight;
+  var avail = vh - tabsTop - footerH - 4;
+  var MIN = 250;
+  if (avail >= MIN) {
+    // Large screen: viewport-lock, tabs fill remaining space
+    document.body.style.overflow = 'hidden';
+    wrapper.style.height = '100vh';
+    cw.style.overflow = 'hidden';
+    tabsRow.style.height = avail + 'px';
+  } else {
+    // Small screen: allow page scroll, give tabs a minimum height
+    document.body.style.overflowY = 'auto';
+    document.body.style.overflowX = 'hidden';
+    wrapper.style.height = 'auto';
+    cw.style.overflow = 'visible';
+    tabsRow.style.height = MIN + 'px';
+  }
+}
+window.addEventListener('resize', recalcLayout);
 
 // ── Countdown ──
 function startCountdown() {
@@ -726,6 +758,7 @@ document.getElementById('refreshInterval').addEventListener('change', function()
 // Boot
 refreshAll();
 startCountdown();
+setTimeout(recalcLayout, 200);
 </script>
 </body>
 </html>
