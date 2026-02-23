@@ -8,8 +8,22 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; }
     body { font-size: 13px; }
+    .wrapper { display: flex; flex-direction: column; height: 100vh; }
+    .content-wrapper { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .content-wrapper > section.content { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding-top: 0.5rem !important; }
+    .content-wrapper > section.content > .container-fluid { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .row.charts-row { flex: 0 0 auto; }
+    .row.tabs-row { flex: 1; min-height: 0; }
+    .row.tabs-row > .col-12 { height: 100%; display: flex; flex-direction: column; }
+    .row.tabs-row .card { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
+    .row.tabs-row .card > .card-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 0.5rem; }
+    .row.tabs-row .tab-content { flex: 1; overflow: hidden; min-height: 0; }
+    .row.tabs-row .tab-pane { height: 100%; overflow-y: auto; }
+    .row.tabs-row .tab-pane > div[style*="max-height"] { max-height: none !important; height: 100%; overflow-y: auto; }
     .small-box .inner h3 { font-size: 1.8rem; }
+    .small-box { margin-bottom: 8px; }
     .badge-connected { background: #28a745; color: #fff; }
     .badge-known { background: #6c757d; color: #fff; }
     .badge-lan { background: #17a2b8; color: #fff; }
@@ -18,11 +32,11 @@
     .metric-value { font-size: 1.5rem; font-weight: bold; }
     .metric-label { color: #aaa; font-size: 11px; text-transform: uppercase; }
     .event-row.improvement { background: rgba(40, 167, 69, 0.1); }
-    .tab-content { min-height: 300px; }
     code { font-size: 11px; }
     .status-badge { font-size: 11px; padding: 2px 6px; }
     #perfChart, #bestChart { max-height: 280px; }
     .card-header { padding: 0.5rem 1rem; }
+    .main-footer { flex: 0 0 auto; padding: 4px 0; font-size: 11px; }
   </style>
 </head>
 <body class="hold-transition sidebar-collapse layout-fixed dark-mode">
@@ -65,7 +79,7 @@
       <div class="container-fluid">
 
         <!-- Summary Cards -->
-        <div class="row">
+        <div class="row" style="flex:0 0 auto">
           <div class="col-lg-2 col-6">
             <div class="small-box bg-info">
               <div class="inner"><h3 id="peerCount">0</h3><p>Peers</p></div>
@@ -105,7 +119,7 @@
         </div>
 
         <!-- Charts + Training -->
-        <div class="row">
+        <div class="row charts-row">
           <!-- NDA Performance History -->
           <div class="col-lg-5">
             <div class="card">
@@ -199,7 +213,7 @@
         </div>
 
         <!-- Tabs: Peers, Evaluations, Events, Plugins, Chain -->
-        <div class="row">
+        <div class="row tabs-row">
           <div class="col-12">
             <div class="card card-primary card-outline card-outline-tabs">
               <div class="card-header p-0 border-bottom-0">
