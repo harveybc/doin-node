@@ -62,6 +62,7 @@ TOPIC_MAP: dict[MessageType, str] = {
     MessageType.PEER_DISCOVERY: "discovery",
     MessageType.CHAMPION_REQUEST: "optimae",
     MessageType.CHAMPION_RESPONSE: "optimae",
+    MessageType.STAGE_COMPLETE: "optimae",
 }
 
 

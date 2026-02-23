@@ -106,17 +106,17 @@
 
         <!-- Charts + Training -->
         <div class="row">
-          <!-- Performance Chart -->
+          <!-- NDA Performance History -->
           <div class="col-lg-5">
             <div class="card">
-              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-line"></i> Performance Per Round</h3></div>
+              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-line"></i> NDA Performance History</h3></div>
               <div class="card-body p-2"><canvas id="perfChart" height="260"></canvas></div>
             </div>
           </div>
-          <!-- Best Performance Chart -->
+          <!-- MAE History (val/train + naive) -->
           <div class="col-lg-4">
             <div class="card">
-              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-area"></i> Best Performance Over Time</h3></div>
+              <div class="card-header"><h3 class="card-title"><i class="fas fa-chart-area"></i> MAE History (Champion)</h3></div>
               <div class="card-body p-2"><canvas id="bestChart" height="260"></canvas></div>
             </div>
           </div>
@@ -279,46 +279,42 @@ const perfCtx = document.getElementById('perfChart').getContext('2d');
 const bestCtx = document.getElementById('bestChart').getContext('2d');
 
 const perfChart = new Chart(perfCtx, {
-  type: 'scatter',
-  data: { datasets: [{
-    label: 'Round Performance',
-    data: [],
-    borderColor: '#17a2b8',
-    backgroundColor: 'rgba(23,162,184,0.4)',
-    pointRadius: 3,
-    showLine: true,
-    tension: 0.1,
-  }, {
-    label: 'Improvements',
+  type: 'line',
+  data: { labels: [], datasets: [{
+    label: 'Champion NDA (lower=better)',
     data: [],
     borderColor: '#28a745',
-    backgroundColor: '#28a745',
-    pointRadius: 6,
-    pointStyle: 'star',
-    showLine: false,
+    backgroundColor: 'rgba(40,167,69,0.15)',
+    fill: true, tension: 0.2, pointRadius: 4,
+    pointBackgroundColor: '#28a745',
   }]},
   options: {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 200 },
-    scales: { x: { title: { display: true, text: 'Round' }}, y: { title: { display: true, text: 'Performance' }}},
+    scales: {
+      x: { title: { display: true, text: 'Time' }, ticks: { maxTicksLimit: 12, font: { size: 10 }}},
+      y: { title: { display: true, text: 'NDA Performance (lower=better)' }}
+    },
     plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
   }
 });
 
 const bestChart = new Chart(bestCtx, {
   type: 'line',
-  data: { labels: [], datasets: [{
-    label: 'Best Performance',
-    data: [],
-    borderColor: '#ffc107',
-    backgroundColor: 'rgba(255,193,7,0.1)',
-    fill: true, tension: 0.3, pointRadius: 2,
-  }]},
+  data: { labels: [], datasets: [
+    { label: 'Val MAE', data: [], borderColor: '#17a2b8', backgroundColor: 'rgba(23,162,184,0.05)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Train MAE', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.05)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Val Naive MAE', data: [], borderColor: '#0d6efd', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] },
+    { label: 'Train Naive MAE', data: [], borderColor: '#b8860b', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [6, 3] },
+  ]},
   options: {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 200 },
-    scales: { x: { display: true }, y: { title: { display: true, text: 'Best Perf' }}},
-    plugins: { legend: { display: false }}
+    scales: {
+      x: { title: { display: true, text: 'Generation' }, ticks: { maxTicksLimit: 20, font: { size: 10 }}},
+      y: { title: { display: true, text: 'MAE' }}
+    },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
   }
 });
 
@@ -447,19 +443,51 @@ async function refreshAll() {
     ).join('');
   }
 
-  // Metrics → Charts
-  if (metrics && metrics.metrics.length > 0) {
-    const m = metrics.metrics;
-    // Scatter: all round performances
-    perfChart.data.datasets[0].data = m.map(r => ({x: parseInt(r.round_num), y: parseFloat(r.performance)}));
-    // Stars: improvements only
-    perfChart.data.datasets[1].data = m.filter(r => r.is_improvement === true || r.is_improvement === 'True' || r.is_improvement === 1)
-      .map(r => ({x: parseInt(r.round_num), y: parseFloat(r.performance)}));
-    perfChart.update();
-    // Best performance line
-    bestChart.data.labels = m.map(r => r.round_num);
-    bestChart.data.datasets[0].data = m.map(r => parseFloat(r.best_performance || r.performance));
-    bestChart.update();
+  // Metrics → Charts (use events data for real-time champion & MAE history)
+  if (events && events.events && events.events.length > 0) {
+    // Build NDA Performance History from champion events (newest first → reverse for chronological)
+    const champEvents = events.events.filter(e => e.type === 'champion' || e.type === 'auto_accept').reverse();
+    if (champEvents.length > 0) {
+      let runningBest = null;
+      const ndaLabels = [];
+      const ndaData = [];
+      for (const ce of champEvents) {
+        const perf = parseFloat(ce.performance);
+        if (isNaN(perf)) continue;
+        // Track running best (lower=better)
+        if (runningBest === null || perf < runningBest) {
+          runningBest = perf;
+          ndaLabels.push(ce.timestamp ? new Date(ce.timestamp).toLocaleTimeString() : '');
+          ndaData.push(runningBest);
+        }
+      }
+      perfChart.data.labels = ndaLabels;
+      perfChart.data.datasets[0].data = ndaData;
+      perfChart.update();
+    }
+
+    // Build MAE History from generation_end events (newest first → reverse for chronological)
+    const genEndEvents = events.events.filter(e => e.type === 'generation_end').reverse();
+    if (genEndEvents.length > 0) {
+      const maeLabels = [];
+      const valMaeData = [];
+      const trainMaeData = [];
+      const valNaiveData = [];
+      const trainNaiveData = [];
+      for (const ge of genEndEvents) {
+        maeLabels.push('S' + (ge.stage||'?') + '/G' + (ge.gen||'?'));
+        valMaeData.push(ge.champion_val_mae != null ? parseFloat(ge.champion_val_mae) : null);
+        trainMaeData.push(ge.champion_train_mae != null ? parseFloat(ge.champion_train_mae) : null);
+        valNaiveData.push(ge.champion_val_naive_mae != null ? parseFloat(ge.champion_val_naive_mae) : null);
+        trainNaiveData.push(ge.champion_train_naive_mae != null ? parseFloat(ge.champion_train_naive_mae) : null);
+      }
+      bestChart.data.labels = maeLabels;
+      bestChart.data.datasets[0].data = valMaeData;
+      bestChart.data.datasets[1].data = trainMaeData;
+      bestChart.data.datasets[2].data = valNaiveData;
+      bestChart.data.datasets[3].data = trainNaiveData;
+      bestChart.update();
+    }
   }
 
   // Events
@@ -493,7 +521,22 @@ async function refreshAll() {
         case 'generation_end':
           return `<tr>
             <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
-            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_val=${f(e.champion_val_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}</td>
+            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}</td>
+            <td>${t}</td></tr>`;
+        case 'candidate_eval':
+          return `<tr style="font-size:11px">
+            <td><span class="badge badge-light">📊 Eval ${e.candidate_num||'?'}/${e.total_candidates||'?'}</span></td>
+            <td>Gen ${e.gen} S${e.stage}/${e.total_stages} | fit=${f(e.fitness,6)} val=${f(e.val_mae)} train=${f(e.train_mae)} naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} total=${e.total_evals||0}</td>
+            <td>${t}</td></tr>`;
+        case 'stage_end':
+          return `<tr style="background:rgba(255,193,7,0.15)">
+            <td><span class="badge badge-warning">🏁 Stage ${e.stage}/${e.total_stages}</span></td>
+            <td>Stage complete | Champion NDA=${f(e.performance,6)}</td>
+            <td>${t}</td></tr>`;
+        case 'stage_sync':
+          return `<tr style="background:rgba(255,193,7,0.1)">
+            <td><span class="badge badge-warning">🔄 Stage Sync</span></td>
+            <td>Received stage ${e.stage}/${e.total_stages} complete from <code>${e.peer||''}</code> | NDA=${f(e.performance,6)} → advancing</td>
             <td>${t}</td></tr>`;
         case 'peer_connected':
           return `<tr style="background:rgba(23,162,184,0.05)">

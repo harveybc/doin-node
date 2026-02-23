@@ -330,6 +330,7 @@ class UnifiedNode:
             (MessageType.TASK_COMPLETED, self._handle_task_completed),
             (MessageType.CHAMPION_REQUEST, self._handle_champion_request),
             (MessageType.CHAMPION_RESPONSE, self._handle_champion_response),
+            (MessageType.STAGE_COMPLETE, self._handle_stage_complete),
         ]
         for msg_type, handler in all_handlers:
             self.flooding.on_message(msg_type, handler)
@@ -1612,9 +1613,29 @@ class UnifiedNode:
         node = self  # Capture for closures
 
         def on_local_champion(params, fitness, metrics, gen, stage_info):
-            """Called from optimizer thread when new local champion found → broadcast."""
-            # Schedule async broadcast on the event loop
+            """Called from optimizer thread when new local champion found → broadcast if better than network."""
             import asyncio as _aio
+
+            # Guard: only broadcast if this local champion actually beats the current
+            # network best.  Without this check every node floods the network with its
+            # local improvements even when peers already hold a superior solution,
+            # causing a cascade of auto-rejections and wasted bandwidth.
+            current_net_best = node._domain_best.get(domain_id, (None, None))
+            if not node._is_better(domain_id, fitness, current_net_best[1]):
+                net_params, net_perf = current_net_best
+                logger.info(
+                    "[%s] Local champion (%.6f) does not beat network best (%.6f)"
+                    " — skipping broadcast, injecting network champion",
+                    domain_id, fitness, net_perf,
+                )
+                # Inject the superior network champion so the optimizer benefits immediately
+                if net_params is not None:
+                    p = node._optimizer_plugins.get(domain_id)
+                    if p and hasattr(p, "set_network_champion"):
+                        p.set_network_champion(net_params)
+                return
+
+            # Local champion is genuinely better than the known network best → broadcast
             fut = _aio.run_coroutine_threadsafe(
                 node._broadcast_champion(domain_id, params, fitness, metrics, gen, stage_info),
                 loop,
@@ -1625,7 +1646,7 @@ class UnifiedNode:
                 logger.warning("Champion broadcast failed: %s", e)
 
         def on_eval_service(gen, candidate_num, stage_info):
-            """Called from optimizer thread between candidates → process 1 pending eval (inference-only, fast)."""
+            """Called from optimizer thread between candidates → process 1 pending eval + log event + request champion."""
             import asyncio as _aio
             fut = _aio.run_coroutine_threadsafe(
                 node._process_one_pending_eval(domain_id),
@@ -1636,6 +1657,26 @@ class UnifiedNode:
             except Exception as e:
                 logger.debug("Eval service between candidates: %s", e)
 
+            # Log per-candidate evaluation event (for dashboard)
+            node._log_event("candidate_eval",
+                domain_id=domain_id, gen=gen,
+                candidate_num=stage_info.get("candidate_num"),
+                total_candidates=stage_info.get("total_candidates"),
+                stage=stage_info.get("stage"), total_stages=stage_info.get("total_stages"),
+                total_evals=stage_info.get("total_candidates_evaluated"),
+                fitness=stage_info.get("fitness"),
+                val_mae=stage_info.get("val_mae"), train_mae=stage_info.get("train_mae"),
+                val_naive_mae=stage_info.get("val_naive_mae"),
+                train_naive_mae=stage_info.get("train_naive_mae"),
+                champion_fitness=stage_info.get("champion_fitness"))
+
+            # Fire-and-forget champion request: keeps network champion fresh
+            # so by the next generation-start injection the node has the latest optimum.
+            _aio.run_coroutine_threadsafe(
+                node._request_champions_from_peers(),
+                loop,
+            )  # result NOT awaited — non-blocking
+
         def on_generation_end(population, hof, hyper_keys, gen, stage_info, stats):
             """Called from optimizer thread at end of each generation."""
             # Update tracking
@@ -1643,6 +1684,9 @@ class UnifiedNode:
             # Log generation summary
             champ_fit = stage_info.get("champion_fitness")
             champ_val = stage_info.get("champion_val_mae")
+            champ_train = stage_info.get("champion_train_mae")
+            champ_val_naive = stage_info.get("champion_naive_mae")
+            champ_train_naive = stage_info.get("champion_train_naive_mae")
             avg_fit = stage_info.get("avg_fitness")
             stage = stage_info.get("stage", 1)
             total_stages = stage_info.get("total_stages", 1)
@@ -1653,6 +1697,9 @@ class UnifiedNode:
                 domain_id=domain_id, gen=gen, stage=stage, total_stages=total_stages,
                 total_evals=n_evals,
                 champion_fitness=champ_fit, champion_val_mae=champ_val,
+                champion_train_mae=champ_train,
+                champion_val_naive_mae=champ_val_naive,
+                champion_train_naive_mae=champ_train_naive,
                 avg_fitness=avg_fit, patience=patience_str)
 
             logger.info(
@@ -1670,14 +1717,15 @@ class UnifiedNode:
                 "stage": stage,
                 "total_stages": total_stages,
                 "total_candidates_evaluated": n_evals,
-                "train_mae": stage_info.get("champion_train_mae"),
+                "train_mae": champ_train,
+                "train_naive_mae": champ_train_naive,
                 "val_mae": champ_val,
-                "val_naive_mae": stage_info.get("champion_naive_mae"),
+                "val_naive_mae": champ_val_naive,
             }
             try:
                 node.experiment_tracker.record_round(
                     domain_id,
-                    performance=-champ_fit if champ_fit is not None else 0.0,
+                    performance=champ_fit if champ_fit is not None else 0.0,
                     parameters={},
                     wall_clock_seconds=0,
                     chain_height=node._get_height(),
@@ -1708,6 +1756,23 @@ class UnifiedNode:
         plugin.set_generation_end_callback(on_generation_end)
         if hasattr(plugin, "set_stage_start_callback"):
             plugin.set_stage_start_callback(on_stage_start)
+
+        # Stage-end broadcast: called when a stage completes so all nodes advance together
+        def on_stage_end_broadcast(stage, total_stages, champion_params, champion_fitness, metrics):
+            """Called from optimizer thread when a stage completes → broadcast to peers."""
+            import asyncio as _aio
+            fut = _aio.run_coroutine_threadsafe(
+                node._broadcast_stage_complete(domain_id, stage, total_stages,
+                                               champion_params, champion_fitness, metrics),
+                loop,
+            )
+            try:
+                fut.result(timeout=30)
+            except Exception as e:
+                logger.warning("Stage complete broadcast failed: %s", e)
+
+        if hasattr(plugin, "set_stage_end_callback"):
+            plugin.set_stage_end_callback(on_stage_end_broadcast)
 
     async def _run_full_optimization(self, domain_id: str, plugin: Any) -> None:
         """Run the full DEAP GA optimization in an executor thread."""
@@ -1827,6 +1892,74 @@ class UnifiedNode:
             "📡 Champion broadcast: domain=%s gen=%d perf=%.4f optimae=%s",
             domain_id, gen, performance, optimae_id[:16],
         )
+
+    async def _broadcast_stage_complete(
+        self, domain_id: str, stage: int, total_stages: int,
+        champion_params: dict, champion_fitness: float, metrics: dict,
+    ) -> None:
+        """Broadcast stage completion so all nodes advance stages together."""
+        msg = Message(
+            msg_type=MessageType.STAGE_COMPLETE,
+            sender_id=self.peer_id,
+            payload={
+                "domain_id": domain_id,
+                "stage": stage,
+                "total_stages": total_stages,
+                "champion_params": champion_params,
+                "champion_fitness": champion_fitness,
+                "champion_metrics": metrics or {},
+            },
+        )
+        await self._broadcast(msg)
+
+        self._log_event("stage_end",
+            domain_id=domain_id, stage=stage, total_stages=total_stages,
+            performance=champion_fitness)
+
+        logger.info(
+            "📢 Stage %d/%d complete broadcast for %s (champion fitness=%.6f)",
+            stage, total_stages, domain_id,
+            champion_fitness if champion_fitness is not None else float("nan"),
+        )
+
+    async def _handle_stage_complete(self, message: Message, from_peer: str) -> None:
+        """Handle STAGE_COMPLETE from a peer — inject champion and signal stage advance."""
+        payload = message.payload
+        domain_id = payload.get("domain_id")
+        stage = payload.get("stage")
+        total_stages = payload.get("total_stages")
+        champion_params = payload.get("champion_params")
+        champion_fitness = payload.get("champion_fitness")
+
+        if domain_id is None or stage is None:
+            return
+
+        logger.info(
+            "📢 Received stage_complete for %s: stage=%d/%d from %s (champion=%.6f)",
+            domain_id, stage, total_stages or 0, message.sender_id[:12],
+            champion_fitness if champion_fitness is not None else float("nan"),
+        )
+
+        # Inject the stage champion into our optimizer's next generation
+        plugin = self._optimizer_plugins.get(domain_id)
+        if champion_params:
+            if plugin and hasattr(plugin, "set_network_champion"):
+                plugin.set_network_champion(champion_params)
+
+        # Update domain best if this champion is better
+        if champion_params and champion_fitness is not None:
+            current_best = self._domain_best.get(domain_id, (None, None))
+            if self._is_better(domain_id, champion_fitness, current_best[1]):
+                self._domain_best[domain_id] = (champion_params, champion_fitness)
+
+        # Signal the optimizer plugin to finish its current stage at the next generation boundary
+        if plugin and hasattr(plugin, "force_stage_advance"):
+            plugin.force_stage_advance()
+            logger.info("↗️  Signalled optimizer to advance stage for %s", domain_id)
+
+        self._log_event("stage_sync",
+            domain_id=domain_id, stage=stage, total_stages=total_stages,
+            peer=message.sender_id[:12], performance=champion_fitness)
 
     async def _process_one_pending_eval(self, domain_id: str) -> None:
         """Process one pending evaluation task (called between candidate evaluations)."""
