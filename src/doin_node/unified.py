@@ -297,6 +297,7 @@ class UnifiedNode:
         self._domain_converged: set[str] = set()  # domains that reached target_performance
         self._domain_round_count: dict[str, int] = {}  # domain_id → round number
         self._domain_champion_metrics: dict[str, dict[str, Any]] = {}  # domain_id → champion detail metrics
+        self._domain_stage_start_fitness: dict[str, float] = {}  # domain_id → fitness at start of current stage
         self._start_time: float = time.time()
 
         # ── Live event log (for dashboard) ──
@@ -651,6 +652,7 @@ class UnifiedNode:
         This is critical for the island model: when syncing blocks from peers,
         we pick up champion solutions from other nodes and use them as the
         starting point for our next optimization round.
+        Also restores champion metrics (MAE breakdowns) from the chain.
         """
         height = self._get_height()
         for i in range(height):
@@ -666,6 +668,16 @@ class UnifiedNode:
                         current = self._domain_best.get(domain_id, (None, None))
                         if self._is_better(domain_id, verified, current[1]):
                             self._domain_best[domain_id] = (parameters, verified)
+                            # Restore champion metrics from chain transaction
+                            cm = {k: tx.payload.get(k) for k in [
+                                "val_mae", "train_mae", "val_naive_mae",
+                                "train_naive_mae", "test_mae", "test_naive_mae",
+                            ] if tx.payload.get(k) is not None}
+                            if cm:
+                                self._domain_champion_metrics[domain_id] = {
+                                    "performance": verified,
+                                    **cm,
+                                }
                             logger.info(
                                 "⚡ Synced champion for %s: perf=%.6f (from block #%d)",
                                 domain_id, verified, block.header.index,
@@ -832,6 +844,16 @@ class UnifiedNode:
             current_best = self._domain_best.get(data.domain_id, (None, None))
             if self._is_better(data.domain_id, data.reported_performance, current_best[1]):
                 self._domain_best[data.domain_id] = (data.parameters, data.reported_performance)
+                # Update champion metrics from reveal
+                cm = getattr(data, 'champion_metrics', None) or {}
+                if cm:
+                    self._domain_champion_metrics[data.domain_id] = {
+                        "performance": data.reported_performance,
+                        **{k: cm[k] for k in [
+                            "val_mae", "train_mae", "val_naive_mae", "train_naive_mae",
+                            "test_mae", "test_naive_mae",
+                        ] if k in cm and cm[k] is not None},
+                    }
                 logger.info(
                     "🏝️  MIGRATION: optimistic adopt from peer %s for %s: %.6f → %.6f",
                     message.sender_id[:12], data.domain_id,
@@ -851,11 +873,16 @@ class UnifiedNode:
             if is_better:
                 # Auto-accept — treat reported_performance as verified
                 await self._auto_accept_optimae(data, message.sender_id)
+                # Extract champion metrics from reveal (if originator included them)
+                cm = getattr(data, 'champion_metrics', None) or {}
                 self._log_event("auto_accept",
                     domain_id=data.domain_id, optimae_id=data.optimae_id[:12],
                     peer=message.sender_id[:12], is_self=message.sender_id == self.peer_id,
                     performance=data.reported_performance,
-                    previous_best=current_best[1] if current_best[1] is not None else None)
+                    previous_best=current_best[1] if current_best[1] is not None else None,
+                    val_mae=cm.get("val_mae"), train_mae=cm.get("train_mae"),
+                    val_naive_mae=cm.get("val_naive_mae"), train_naive_mae=cm.get("train_naive_mae"),
+                    test_mae=cm.get("test_mae"), test_naive_mae=cm.get("test_naive_mae"))
                 logger.info(
                     "✅ AUTO-ACCEPT optimae %s (no synthetic validation): perf=%.6f beats best=%.6f (%s)",
                     data.optimae_id[:12], data.reported_performance,
@@ -1019,7 +1046,8 @@ class UnifiedNode:
                 reported_performance=reported,
             )
 
-        # Record OPTIMAE_ACCEPTED transaction on chain
+        # Record OPTIMAE_ACCEPTED transaction on chain (include MAE breakdowns for chain history)
+        cm = getattr(data, 'champion_metrics', None) or {}
         self.consensus.record_transaction(Transaction(
             tx_type=TransactionType.OPTIMAE_ACCEPTED,
             domain_id=data.domain_id,
@@ -1032,6 +1060,12 @@ class UnifiedNode:
                 "reward_fraction": incentive_result.reward_fraction,
                 "quorum_agree_fraction": 1.0,  # Auto-accepted
                 "incentive_reason": "auto_accept_no_synthetic_validation",
+                "val_mae": cm.get("val_mae"),
+                "train_mae": cm.get("train_mae"),
+                "val_naive_mae": cm.get("val_naive_mae"),
+                "train_naive_mae": cm.get("train_naive_mae"),
+                "test_mae": cm.get("test_mae"),
+                "test_naive_mae": cm.get("test_naive_mae"),
                 **onchain_metrics,
             },
         ))
@@ -1059,6 +1093,20 @@ class UnifiedNode:
         if self._is_better(data.domain_id, verified, current_best[1]):
             prev_best = current_best[1]
             self._domain_best[data.domain_id] = (data.parameters, verified)
+
+            # Update champion metrics from originator (if attached to reveal)
+            cm = getattr(data, 'champion_metrics', None) or {}
+            if cm:
+                self._domain_champion_metrics[data.domain_id] = {
+                    "round": -1,
+                    "performance": verified,
+                    "parameters": data.parameters,
+                    **{k: cm[k] for k in [
+                        "val_mae", "train_mae", "val_naive_mae", "train_naive_mae",
+                        "test_mae", "test_naive_mae",
+                    ] if k in cm and cm[k] is not None},
+                }
+
             is_remote = sender_id != self.peer_id
             if is_remote:
                 logger.info(
@@ -1403,6 +1451,7 @@ class UnifiedNode:
                 "parameters": params,
                 "performance": perf,
                 "has_champion": params is not None and perf is not None,
+                "champion_metrics": self._domain_champion_metrics.get(domain_id),
             },
         )
         # Send directly to requester (not broadcast)
@@ -1431,6 +1480,16 @@ class UnifiedNode:
                 "🏝️  Champion synced from peer %s for %s: perf=%.6f",
                 message.sender_id[:12], domain_id, perf,
             )
+            # Update champion metrics from peer (authoritative from originator)
+            cm = payload.get("champion_metrics")
+            if cm and isinstance(cm, dict):
+                self._domain_champion_metrics[domain_id] = {
+                    "performance": perf,
+                    **{k: cm[k] for k in [
+                        "round", "val_mae", "train_mae", "val_naive_mae",
+                        "train_naive_mae", "test_mae", "test_naive_mae",
+                    ] if k in cm and cm[k] is not None},
+                }
             # Also inject into optimizer plugin if running
             plugin = self._optimizer_plugins.get(domain_id)
             if plugin and hasattr(plugin, "set_network_champion"):
@@ -1613,7 +1672,11 @@ class UnifiedNode:
         node = self  # Capture for closures
 
         def on_local_champion(params, fitness, metrics, gen, stage_info):
-            """Called from optimizer thread when new local champion found → broadcast if better than network."""
+            """Called from optimizer thread when new local champion found → broadcast if better than network.
+            
+            Also triggers network-wide stage advance if the cumulative improvement
+            within the current stage exceeds the configured threshold.
+            """
             import asyncio as _aio
 
             # Guard: only broadcast if this local champion actually beats the current
@@ -1644,6 +1707,50 @@ class UnifiedNode:
                 fut.result(timeout=30)  # Block optimizer thread until broadcast completes
             except Exception as e:
                 logger.warning("Champion broadcast failed: %s", e)
+
+            # ── Stage-sync: trigger network-wide stage advance on significant improvement ──
+            # If the fitness improvement since stage start exceeds the threshold,
+            # broadcast STAGE_COMPLETE so ALL nodes advance to the next stage.
+            stage_advance_threshold = node.config.get("stage_advance_threshold", 1e-5)
+            stage_start_fit = node._domain_stage_start_fitness.get(domain_id)
+            current_stage = stage_info.get("stage", 1)
+            total_stages = stage_info.get("total_stages", 1)
+
+            # Initialize stage-start fitness if not set yet
+            if stage_start_fit is None:
+                node._domain_stage_start_fitness[domain_id] = fitness
+                logger.info(
+                    "[%s] Stage %d: initialized stage-start fitness to %.6f",
+                    domain_id, current_stage, fitness,
+                )
+            else:
+                # Lower is better for predictor NDA
+                improvement = stage_start_fit - fitness
+                if improvement > stage_advance_threshold:
+                    logger.info(
+                        "🚀 [%s] Stage %d: improvement %.6f > threshold %.6f"
+                        " — triggering network-wide stage advance!",
+                        domain_id, current_stage, improvement, stage_advance_threshold,
+                    )
+                    # Broadcast stage complete to all peers
+                    stage_metrics = {k: v for k, v in metrics.items() if k != "_model_b64" and k != "fitness"}
+                    fut2 = _aio.run_coroutine_threadsafe(
+                        node._broadcast_stage_complete(
+                            domain_id, current_stage, total_stages,
+                            params, fitness, stage_metrics,
+                        ),
+                        loop,
+                    )
+                    try:
+                        fut2.result(timeout=30)
+                    except Exception as e:
+                        logger.warning("Stage complete broadcast failed: %s", e)
+
+                    # Also advance our own optimizer
+                    p = node._optimizer_plugins.get(domain_id)
+                    if p and hasattr(p, "force_stage_advance"):
+                        p.force_stage_advance()
+                        logger.info("↗️  Signalled local optimizer to advance stage for %s", domain_id)
 
         def on_eval_service(gen, candidate_num, stage_info):
             """Called from optimizer thread between candidates → process 1 pending eval + log event + request champion."""
@@ -1736,12 +1843,25 @@ class UnifiedNode:
                 pass
 
         def on_stage_start(stage, total_stages):
-            """Called from optimizer thread when a new stage begins → request champion from peers."""
+            """Called from optimizer thread when a new stage begins → request champion from peers
+            and initialize stage-start fitness tracking for the stage-advance threshold."""
             import asyncio as _aio
             logger.info(
                 "🔄 Stage %d/%d starting for %s — requesting champion from peers",
                 stage, total_stages, domain_id,
             )
+            # Reset stage-start fitness for the new stage
+            current_best = node._domain_best.get(domain_id, (None, None))
+            if current_best[1] is not None:
+                node._domain_stage_start_fitness[domain_id] = current_best[1]
+                logger.info(
+                    "[%s] Stage %d: tracking stage-start fitness = %.6f",
+                    domain_id, stage, current_best[1],
+                )
+            else:
+                # First stage, no best yet — will be set when first champion is found
+                node._domain_stage_start_fitness.pop(domain_id, None)
+
             fut = _aio.run_coroutine_threadsafe(
                 node._request_champions_from_peers(),
                 loop,
@@ -1880,6 +2000,14 @@ class UnifiedNode:
                 parameters=params,
                 reported_performance=performance,
                 nonce=nonce,
+                champion_metrics={
+                    "val_mae": metrics.get("val_mae"),
+                    "train_mae": metrics.get("train_mae"),
+                    "val_naive_mae": metrics.get("val_naive_mae"),
+                    "train_naive_mae": metrics.get("train_naive_mae"),
+                    "test_mae": metrics.get("test_mae"),
+                    "test_naive_mae": metrics.get("test_naive_mae"),
+                },
             ).model_dump_json()),
         )
         await self._broadcast(reveal_msg)
@@ -1911,6 +2039,10 @@ class UnifiedNode:
             },
         )
         await self._broadcast(msg)
+
+        # Reset stage-start fitness for the next stage (local tracking)
+        if champion_fitness is not None:
+            self._domain_stage_start_fitness[domain_id] = champion_fitness
 
         self._log_event("stage_end",
             domain_id=domain_id, stage=stage, total_stages=total_stages,
@@ -1952,7 +2084,16 @@ class UnifiedNode:
             if self._is_better(domain_id, champion_fitness, current_best[1]):
                 self._domain_best[domain_id] = (champion_params, champion_fitness)
 
-        # Signal the optimizer plugin to finish its current stage at the next generation boundary
+        # Reset stage-start fitness for the new stage (the champion's fitness
+        # becomes the baseline for the next stage's improvement threshold)
+        if champion_fitness is not None:
+            self._domain_stage_start_fitness[domain_id] = champion_fitness
+            logger.info(
+                "[%s] Stage-start fitness reset to %.6f for next stage",
+                domain_id, champion_fitness,
+            )
+
+        # Signal the optimizer plugin to finish its current stage at the next candidate boundary
         if plugin and hasattr(plugin, "force_stage_advance"):
             plugin.force_stage_advance()
             logger.info("↗️  Signalled optimizer to advance stage for %s", domain_id)

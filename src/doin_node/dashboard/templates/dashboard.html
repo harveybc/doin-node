@@ -567,12 +567,13 @@ async function refreshAll() {
       perfChart.update();
     }
 
-    // Build MAE History from champion + generation_end events
+    // Build MAE History from champion + auto_accept + generation_end events
     // Champion events carry the actual MAE when the champion improved;
+    // auto_accept events carry MAE from the originator node;
     // generation_end events carry champion MAE after each generation.
-    // We combine both to get the fullest timeline possible.
+    // We combine all to get the fullest timeline possible.
     const maeSourceEvents = events.events.filter(
-      e => e.type === 'champion' || e.type === 'generation_end'
+      e => e.type === 'champion' || e.type === 'auto_accept' || e.type === 'generation_end'
     ).reverse();  // oldest first
 
     if (maeSourceEvents.length > 0) {
@@ -590,14 +591,16 @@ async function refreshAll() {
         let lbl;
         if (ev.type === 'champion') {
           lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?') + '🏆';
+        } else if (ev.type === 'auto_accept') {
+          lbl = (ev.is_self ? '🏆' : '📡') + ' NDA=' + (ev.performance != null ? parseFloat(ev.performance).toFixed(6) : '?');
         } else {
           lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?');
         }
 
-        // Extract MAE fields — champion events use val_mae/train_mae,
+        // Extract MAE fields — champion and auto_accept use val_mae/train_mae,
         // generation_end events use champion_val_mae/champion_train_mae
         let vm, tm, vnm, tnm;
-        if (ev.type === 'champion') {
+        if (ev.type === 'champion' || ev.type === 'auto_accept') {
           vm = ev.val_mae;
           tm = ev.train_mae;
           vnm = ev.val_naive_mae;
