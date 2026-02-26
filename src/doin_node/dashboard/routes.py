@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import time
 from datetime import datetime
 
@@ -32,6 +33,93 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+
+# ── Package versions (computed once at import time) ──────────
+
+def _get_git_short_hash(package_path: str) -> str:
+    """Return the 7-char git short hash for a repo, or 'unknown'."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=package_path,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _compute_versions() -> dict[str, str]:
+    """Compute git short hashes for all DOIN packages.
+
+    Strategy:
+      1. Try importlib to find the package source (works for editable installs).
+      2. Try well-known repo paths (~/Documents/GitHub/<name>, ~/doin-plugins, etc.).
+      3. Fall back to pip metadata version string.
+    """
+    import importlib.metadata
+    import importlib.util
+
+    versions = {}
+    # label → (import_name, pip_dist_name, candidate_dirs)
+    pkg_map = {
+        "doin-core": ("doin_core", "doin-core", [
+            Path.home() / "Documents" / "GitHub" / "doin-core",
+            Path.home() / "doin-core",
+        ]),
+        "doin-node": ("doin_node", "doin-node", [
+            Path.home() / "Documents" / "GitHub" / "doin-node",
+            Path.home() / "doin-node",
+        ]),
+        "doin-plugins": ("doin_plugins", "doin-plugins", [
+            Path.home() / "doin-plugins",
+            Path.home() / "Documents" / "GitHub" / "doin-plugins",
+        ]),
+        "predictor": ("predictor", "predictor", [
+            Path.home() / "Documents" / "GitHub" / "predictor",
+            Path.home() / "predictor",
+        ]),
+    }
+    for label, (import_name, dist_name, candidates) in pkg_map.items():
+        found = False
+        # 1. importlib spec → walk up to .git
+        try:
+            spec = importlib.util.find_spec(import_name)
+            if spec and spec.origin:
+                pkg_dir = Path(spec.origin).resolve().parent
+                for parent in [pkg_dir] + list(pkg_dir.parents):
+                    if (parent / ".git").exists():
+                        versions[label] = _get_git_short_hash(str(parent))
+                        found = True
+                        break
+        except Exception:
+            pass
+        if found:
+            continue
+
+        # 2. Try well-known repo directories
+        for cand in candidates:
+            if cand.exists() and (cand / ".git").exists():
+                versions[label] = _get_git_short_hash(str(cand))
+                found = True
+                break
+        if found:
+            continue
+
+        # 3. Fall back to pip metadata version
+        try:
+            ver = importlib.metadata.version(dist_name)
+            versions[label] = f"v{ver}"
+        except Exception:
+            versions[label] = "?"
+
+    return versions
+
+
+_PACKAGE_VERSIONS: dict[str, str] = _compute_versions()
 
 # Shared mutable state for live training progress (updated by callbacks)
 _training_state: dict[str, Any] = {
@@ -105,6 +193,7 @@ async def _api_node(request: web.Request) -> web.Response:
         "chain_height": node.chaindb.height if node.chaindb else 0,
         "discovery_enabled": node.config.discovery_enabled,
         "dashboard_enabled": node.config.dashboard_enabled,
+        "versions": _PACKAGE_VERSIONS,
     }, dumps=_dumps)
 
 

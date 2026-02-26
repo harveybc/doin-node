@@ -295,6 +295,7 @@
 
   <footer class="main-footer text-center" style="margin-left:0">
     <strong>DOIN</strong> — Decentralized Optimization &amp; Inference Network
+    <span id="versionInfo" style="margin-left:16px; color:#888; font-size:10px;"></span>
   </footer>
 </div>
 
@@ -384,6 +385,16 @@ async function refreshAll() {
     document.getElementById('nodePort').textContent = node.port;
     document.getElementById('uptime').textContent = fmtUptime(node.uptime_s);
     document.getElementById('chainHeight').textContent = node.chain_height;
+    // Show package versions in footer
+    if (node.versions) {
+      var v = node.versions;
+      var parts = [];
+      if (v['doin-core'])    parts.push('core:' + v['doin-core']);
+      if (v['doin-node'])    parts.push('node:' + v['doin-node']);
+      if (v['doin-plugins'])  parts.push('plugins:' + v['doin-plugins']);
+      if (v['predictor'])    parts.push('predictor:' + v['predictor']);
+      document.getElementById('versionInfo').textContent = parts.join(' | ');
+    }
   }
 
   // Peers
