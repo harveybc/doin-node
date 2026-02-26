@@ -497,15 +497,35 @@ class UnifiedNode:
 
         # Discover own local IP addresses so we never register ourselves as a peer.
         import socket
+        self._own_addresses = set()
         try:
-            hostname = socket.gethostname()
-            self._own_addresses = {
-                info[4][0]
-                for info in socket.getaddrinfo(hostname, None)
-                if info[0] in (socket.AF_INET, socket.AF_INET6)
-            }
+            import psutil
+            self._own_addresses.update({
+                addr.address.split('%')[0]
+                for iface, addrs in psutil.net_if_addrs().items()
+                for addr in addrs
+                if addr.family in (socket.AF_INET, socket.AF_INET6)
+            })
         except Exception:
-            self._own_addresses = set()
+            pass
+        
+        if not self._own_addresses:
+            try:
+                hostname = socket.gethostname()
+                self._own_addresses.update({
+                    info[4][0]
+                    for info in socket.getaddrinfo(hostname, None)
+                    if info[0] in (socket.AF_INET, socket.AF_INET6)
+                })
+            except Exception:
+                pass
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                self._own_addresses.add(s.getsockname()[0])
+                s.close()
+            except Exception:
+                pass
         # Always include loopback variants.
         self._own_addresses.update({"127.0.0.1", "::1", "localhost", "unknown"})
         logger.info("Own addresses: %s", self._own_addresses)

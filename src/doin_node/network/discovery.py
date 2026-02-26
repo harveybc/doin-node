@@ -32,7 +32,19 @@ logger = logging.getLogger(__name__)
 def _get_local_ips() -> list[str]:
     """Get all local IPv4 addresses (non-loopback) from all interfaces."""
     ips: list[str] = []
-    # Method 1: parse `ip -4 -o addr` (most reliable on Linux)
+    # Method 1: psutil — enumerates every interface reliably
+    try:
+        import psutil
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    if addr.address not in ips:
+                        ips.append(addr.address)
+        if ips:
+            return ips
+    except Exception:
+        pass
+    # Method 2: parse `ip -4 -o addr` (reliable on Linux without psutil)
     try:
         import subprocess
         result = subprocess.run(
@@ -44,26 +56,18 @@ def _get_local_ips() -> list[str]:
                 ip = parts[3].split("/")[0]
                 if ip not in ips:
                     ips.append(ip)
+        if ips:
+            return ips
     except Exception:
         pass
-    # Method 2: getaddrinfo fallback
-    if not ips:
-        try:
-            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-                ip = info[4][0]
-                if not ip.startswith("127.") and ip not in ips:
-                    ips.append(ip)
-        except Exception:
-            pass
-    # Method 3: connect trick
-    if not ips:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ips.append(s.getsockname()[0])
-            s.close()
-        except Exception:
-            pass
+    # Method 3: connect trick (last resort)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ips.append(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
     return ips
 
 DISCOVERY_TIMEOUT = ClientTimeout(total=5)
@@ -221,8 +225,13 @@ class PeerDiscovery:
         """Initialize LAN TCP scan discovery — probes local subnet for DOIN HTTP ports."""
         self._lan_domains = domains or []
         self._lan_subnets: list[str] = []
-        # Skip non-routable / Docker / virtual subnets
-        _SKIP_PREFIXES = ("172.", "10.0.", "100.")  # Docker bridges, VPNs
+        # Skip Docker bridges, VPNs (Tailscale 100.x), and other virtual subnets
+        _SKIP_PREFIXES = (
+            "172.",    # Docker / container bridges
+            "10.",     # RFC-1918 10/8 — often VPN tun/tap or container nets
+            "100.",    # Tailscale / CGNAT / VPN overlay
+            "169.254.",# link-local / APIPA
+        )
         for ip in _get_local_ips():
             parts = ip.split(".")
             if len(parts) == 4:
