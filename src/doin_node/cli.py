@@ -129,6 +129,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         domains=domain_roles,
         target_block_time=raw.get("target_block_time", 600.0),
         initial_threshold=raw.get("initial_threshold", 1.0),
+        acceptance_tolerance=raw.get("acceptance_tolerance", 1e-5),
         quorum_min_evaluators=raw.get("quorum_min_evaluators", 3),
         quorum_fraction=raw.get("quorum_fraction", 0.67),
         quorum_tolerance=raw.get("quorum_tolerance", 0.05),

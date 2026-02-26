@@ -13,6 +13,7 @@
   "storage_backend": "sqlite",
   "network_protocol": "gossipsub",
   "initial_threshold": 1e-06,
+  "acceptance_tolerance": 1e-5,
   "discovery_enabled": true,
   "fee_market_enabled": false,
   "require_deterministic_seed": true,

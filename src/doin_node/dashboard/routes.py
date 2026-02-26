@@ -232,6 +232,50 @@ async def _api_peers(request: web.Request) -> web.Response:
 async def _api_optimization(request: web.Request) -> web.Response:
     node = request.app["_doin_node"]
     domains = []
+
+    # ── Derive champion data from blockchain (single source of truth) ──
+    chain_champions: dict[str, dict[str, Any]] = {}
+    if node.chaindb:
+        height = node.chaindb.height
+        for i in range(height):
+            block = node.chaindb.get_block(i)
+            if block is None:
+                continue
+            for tx in block.transactions:
+                tx_type_val = tx.tx_type.value if hasattr(tx.tx_type, "value") else str(tx.tx_type)
+                if tx_type_val == "optimae_accepted":
+                    domain_id = tx.domain_id
+                    verified = tx.payload.get("verified_performance")
+                    parameters = tx.payload.get("parameters")
+                    if verified is not None:
+                        prev = chain_champions.get(domain_id)
+                        # Determine if this is better
+                        hib_domain = False
+                        for dcfg in node.config.domains:
+                            did = getattr(dcfg, "domain_id", None) or getattr(dcfg, "id", None)
+                            if did == domain_id:
+                                hib_domain = getattr(dcfg, "higher_is_better", False)
+                                break
+                        is_better = (
+                            prev is None
+                            or (hib_domain and verified > prev["performance"])
+                            or (not hib_domain and verified < prev["performance"])
+                        )
+                        if is_better:
+                            chain_champions[domain_id] = {
+                                "performance": verified,
+                                "parameters": parameters,
+                                "block_index": block.header.index,
+                                "peer_id": tx.peer_id,
+                                "val_mae": tx.payload.get("val_mae"),
+                                "train_mae": tx.payload.get("train_mae"),
+                                "val_naive_mae": tx.payload.get("val_naive_mae"),
+                                "train_naive_mae": tx.payload.get("train_naive_mae"),
+                                "test_mae": tx.payload.get("test_mae"),
+                                "test_naive_mae": tx.payload.get("test_naive_mae"),
+                                "effective_increment": tx.payload.get("effective_increment"),
+                            }
+
     for domain_id, dr in node._domain_roles.items():
         info: dict[str, Any] = {
             "domain_id": domain_id,
@@ -241,28 +285,48 @@ async def _api_optimization(request: web.Request) -> web.Response:
             "target_performance": None,
             "converged": domain_id in node._domain_converged,
         }
-        best = node._domain_best.get(domain_id, (None, None))
-        if best[1] is not None:
-            info["best_performance"] = best[1]
-            # Don't send full params (can be >1MB with model weights)
-            info["best_params"] = {"_param_count": len(best[0]) if isinstance(best[0], dict) else None}
+
+        # Use chain-derived champion as primary source
+        chain_champ = chain_champions.get(domain_id)
+        if chain_champ:
+            info["best_performance"] = chain_champ["performance"]
+            params = chain_champ.get("parameters")
+            info["best_params"] = {"_param_count": len(params) if isinstance(params, dict) else None}
+            info["champion"] = {
+                "source": "blockchain",
+                "block_index": chain_champ.get("block_index"),
+                "train_mae": chain_champ.get("train_mae"),
+                "train_naive_mae": chain_champ.get("train_naive_mae"),
+                "val_mae": chain_champ.get("val_mae"),
+                "val_naive_mae": chain_champ.get("val_naive_mae"),
+                "test_mae": chain_champ.get("test_mae"),
+                "test_naive_mae": chain_champ.get("test_naive_mae"),
+            }
+        else:
+            # Fallback to local state only if chain has no data yet
+            best = node._domain_best.get(domain_id, (None, None))
+            if best[1] is not None:
+                info["best_performance"] = best[1]
+                info["best_params"] = {"_param_count": len(best[0]) if isinstance(best[0], dict) else None}
+            champion = node._domain_champion_metrics.get(domain_id)
+            if champion:
+                info["champion"] = {
+                    "source": "local",
+                    "round": champion.get("round"),
+                    "train_mae": champion.get("train_mae"),
+                    "train_naive_mae": champion.get("train_naive_mae"),
+                    "val_mae": champion.get("val_mae"),
+                    "val_naive_mae": champion.get("val_naive_mae"),
+                    "test_mae": champion.get("test_mae"),
+                    "test_naive_mae": champion.get("test_naive_mae"),
+                }
+
         for dcfg in node.config.domains:
             did = getattr(dcfg, "domain_id", None) or getattr(dcfg, "id", None)
             if did == domain_id:
                 info["target_performance"] = getattr(dcfg, "target_performance", None)
                 break
-        # Champion detailed metrics (MAE breakdowns)
-        champion = node._domain_champion_metrics.get(domain_id)
-        if champion:
-            info["champion"] = {
-                "round": champion.get("round"),
-                "train_mae": champion.get("train_mae"),
-                "train_naive_mae": champion.get("train_naive_mae"),
-                "val_mae": champion.get("val_mae"),
-                "val_naive_mae": champion.get("val_naive_mae"),
-                "test_mae": champion.get("test_mae"),
-                "test_naive_mae": champion.get("test_naive_mae"),
-            }
+
         domains.append(info)
 
     # Tolerance config
@@ -395,13 +459,26 @@ async def _api_chain(request: web.Request) -> web.Response:
         height = node.chaindb.height
         chain_blocks = node.chaindb.get_blocks_range(max(0, height - limit), height)
         for block in chain_blocks:
-            b = block if isinstance(block, dict) else (block.__dict__ if hasattr(block, "__dict__") else {})
+            txns = []
+            for tx in block.transactions:
+                txns.append({
+                    "id": tx.id[:16] if tx.id else "",
+                    "tx_type": tx.tx_type.value if hasattr(tx.tx_type, "value") else str(tx.tx_type),
+                    "domain_id": tx.domain_id,
+                    "peer_id": str(tx.peer_id)[:12],
+                    "timestamp": tx.timestamp.isoformat() if hasattr(tx.timestamp, "isoformat") else str(tx.timestamp),
+                    "payload": tx.payload,
+                })
             blocks.append({
-                "index": b.get("index", b.get("block_index", 0)),
-                "hash": str(b.get("hash", b.get("block_hash", "")))[:16],
-                "type": b.get("payload_type", b.get("type", "")),
-                "timestamp": b.get("timestamp", 0),
-                "submitter": str(b.get("submitter", b.get("peer_id", "")))[:12],
+                "index": block.header.index,
+                "hash": str(block.hash)[:16],
+                "previous_hash": str(block.header.previous_hash)[:16],
+                "timestamp": block.header.timestamp.isoformat() if hasattr(block.header.timestamp, "isoformat") else str(block.header.timestamp),
+                "generator_id": str(block.header.generator_id)[:12],
+                "weighted_sum": block.header.weighted_performance_sum,
+                "threshold": block.header.threshold,
+                "tx_count": len(block.transactions),
+                "transactions": txns,
             })
     return web.json_response({
         "height": node.chaindb.height if node.chaindb else 0,

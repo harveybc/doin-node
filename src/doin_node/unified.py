@@ -145,6 +145,7 @@ class UnifiedNodeConfig:
     # Consensus
     target_block_time: float = 600.0
     initial_threshold: float = 1.0
+    acceptance_tolerance: float = 1e-5  # Min improvement required to accept a new champion
 
     # Security
     quorum_min_evaluators: int = 3
@@ -417,13 +418,14 @@ class UnifiedNode:
         return any(p.peer_id == peer_id for p in self._peers.values())
 
     def _is_better(self, domain_id: str, new_perf: float, old_perf: float | None) -> bool:
-        """Compare performances respecting higher_is_better setting."""
+        """Compare performances respecting higher_is_better setting and acceptance_tolerance."""
         if old_perf is None:
             return True
+        tol = self.config.acceptance_tolerance
         role = self._domain_roles.get(domain_id)
         if role and not role.higher_is_better:
-            return new_perf < old_perf  # Lower = better (e.g. predictor fitness)
-        return new_perf > old_perf  # Higher = better (default)
+            return new_perf < old_perf - tol  # Lower = better (e.g. predictor fitness)
+        return new_perf > old_perf + tol  # Higher = better (default)
 
     def _log_event(self, event_type: str, **kwargs: Any) -> None:
         """Add an event to the live event log (for dashboard display)."""
@@ -1019,6 +1021,13 @@ class UnifiedNode:
         )
         effective_increment = incentive_result.effective_increment
 
+        logger.info(
+            "🧮 INCENTIVE: raw=%.6f, dw=%.4f, rep=%.4f, reward=%.2f → eff=%.8f | threshold=%.2e | pending=%s",
+            raw_increment, domain_weight, rep_factor, incentive_result.reward_fraction,
+            effective_increment, self.consensus.state.threshold,
+            {k: f"{v:.8f}" for k, v in self.consensus.state.pending_increments.items()},
+        )
+
         # Record optimae
         optimae = Optimae(
             id=data.optimae_id,
@@ -1519,7 +1528,14 @@ class UnifiedNode:
     # ================================================================
 
     async def try_generate_block(self) -> Block | None:
-        if not self.consensus.can_generate_block():
+        can = self.consensus.can_generate_block()
+        ws = sum(self.consensus.state.pending_increments.values())
+        logger.info(
+            "🔨 try_generate_block: can=%s weighted_sum=%.8f threshold=%.2e pending=%s",
+            can, ws, self.consensus.state.threshold,
+            {k: f"{v:.8f}" for k, v in self.consensus.state.pending_increments.items()},
+        )
+        if not can:
             return None
 
         tip = self._get_tip()

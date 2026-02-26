@@ -269,10 +269,7 @@
 
                   <!-- Chain Tab -->
                   <div class="tab-pane fade" id="tabChain">
-                    <table class="table table-sm table-striped">
-                      <thead><tr><th>#</th><th>Hash</th><th>Type</th><th>Submitter</th><th>Time</th></tr></thead>
-                      <tbody id="chainBody"></tbody>
-                    </table>
+                    <div id="chainContent" style="max-height:100%;overflow-y:auto;"></div>
                   </div>
 
                   <!-- Domains Tab -->
@@ -428,9 +425,10 @@ async function refreshAll() {
       }
       const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
       const c = d.champion || {};
+      const srcBadge = c.source === 'blockchain' ? '<span class="badge badge-success">chain</span>' : (c.source === 'local' ? '<span class="badge badge-warning">local</span>' : '');
       const champRow = c.val_mae !== undefined ? `
         <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
-          <td colspan="2"><strong>🏆 Champion (round ${c.round || '?'})</strong></td>
+          <td colspan="2"><strong>🏆 Champion ${srcBadge} ${c.block_index != null ? '(block #'+c.block_index+')' : (c.round != null ? '(round '+c.round+')' : '')}</strong></td>
           <td colspan="5">
             Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
             Val MAE: <strong>${fmt(c.val_mae,6)}</strong> / naive ${fmt(c.val_naive_mae,6)} &nbsp;|&nbsp;
@@ -711,13 +709,37 @@ async function refreshAll() {
     }).join('');
   }
 
-  // Chain
+  // Chain — show blocks with full transaction details
   if (chain && chain.blocks) {
-    document.getElementById('chainBody').innerHTML = chain.blocks.reverse().map(b =>
-      `<tr><td>${b.index}</td><td><code>${b.hash}</code></td>
-       <td><span class="badge badge-info">${b.type || 'GENESIS'}</span></td>
-       <td><code>${b.submitter || '-'}</code></td><td>${fmtTime(b.timestamp)}</td></tr>`
-    ).join('');
+    let html = '<table class="table table-sm table-striped"><thead><tr><th>#</th><th>Hash</th><th>Generator</th><th>Weighted Sum</th><th>Threshold</th><th>Txns</th><th>Time</th></tr></thead><tbody>';
+    chain.blocks.slice().reverse().forEach(b => {
+      html += `<tr class="table-active"><td><strong>${b.index}</strong></td><td><code>${b.hash}</code></td>
+        <td><code>${b.generator_id || '-'}</code></td>
+        <td>${b.weighted_sum != null ? b.weighted_sum.toExponential(3) : '-'}</td>
+        <td>${b.threshold != null ? b.threshold.toExponential(3) : '-'}</td>
+        <td>${b.tx_count || 0}</td><td>${fmtTime(b.timestamp)}</td></tr>`;
+      if (b.transactions && b.transactions.length > 0) {
+        b.transactions.forEach(tx => {
+          let payloadHtml = '';
+          if (tx.payload) {
+            const p = tx.payload;
+            const keys = ['verified_performance','effective_increment','reward_fraction',
+                          'val_mae','train_mae','val_naive_mae','train_naive_mae',
+                          'test_mae','test_naive_mae','incentive_reason'];
+            const parts = keys.filter(k => p[k] != null).map(k => {
+              const v = typeof p[k] === 'number' ? p[k].toFixed(6) : p[k];
+              return `<span class="text-muted">${k}:</span> ${v}`;
+            });
+            payloadHtml = parts.join(' &middot; ');
+          }
+          html += `<tr><td></td><td colspan="6"><span class="badge badge-${tx.tx_type==='optimae_accepted'?'success':'secondary'}">${tx.tx_type}</span>
+            <code>${tx.domain_id}</code> by <code>${tx.peer_id}</code>
+            <br><small>${payloadHtml}</small></td></tr>`;
+        });
+      }
+    });
+    html += '</tbody></table>';
+    document.getElementById('chainContent').innerHTML = html;
   }
 
   document.getElementById('refreshSpin').style.display = 'none';
