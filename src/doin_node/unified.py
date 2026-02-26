@@ -731,6 +731,11 @@ class UnifiedNode:
         # Extract sender's actual port from message payload or probe
         sender_port = (message.payload or {}).get("_sender_port", self.config.port)
         sender_endpoint = f"{sender}:{sender_port}"
+        # _forwarder_id is present when a peer forwarded this message on behalf of the
+        # original sender_id. Use it to correctly map the HTTP sender's IP to its real
+        # peer_id (avoids corrupting routing tables with the original author's ID).
+        forwarder_id = (message.payload or {}).get("_forwarder_id")
+        effective_sender_id = forwarder_id if forwarder_id and forwarder_id != self.peer_id else message.sender_id
         _local = {"unknown", "127.0.0.1", "::1", "localhost"}
         if sender not in _local:
             # Check if we already have this peer by peer_id (on any endpoint)
@@ -738,31 +743,32 @@ class UnifiedNode:
             if not existing:
                 # Check if peer_id exists on a different endpoint
                 for ep, p in list(self._peers.items()):
-                    if p.peer_id == message.sender_id:
+                    if p.peer_id == effective_sender_id:
                         existing = p
                         break
             if existing:
                 # Update peer_id if we had a placeholder (e.g. from bootstrap)
                 # But NEVER replace with our own peer_id (happens when forwarded messages bounce back)
-                if existing.peer_id != message.sender_id and message.sender_id != self.peer_id:
+                if existing.peer_id != effective_sender_id and effective_sender_id != self.peer_id:
                     old_id = existing.peer_id
-                    existing.peer_id = message.sender_id
+                    existing.peer_id = effective_sender_id
                     # Update GossipSub mesh with real peer_id
                     if self.gossip:
                         self.gossip.remove_peer(old_id)
-                        self.gossip.add_peer(message.sender_id)
+                        self.gossip.add_peer(effective_sender_id)
                         for topic_state in self.gossip._topics.values():
                             topic_state.mesh.discard(old_id)
-                            topic_state.mesh.add(message.sender_id)
-                    logger.info("🔍 Updated peer %s → %s", old_id[:12], message.sender_id[:12])
+                            topic_state.mesh.add(effective_sender_id)
+                    logger.info("🔍 Updated peer %s → %s", old_id[:12], effective_sender_id[:12])
             else:
-                self.add_peer(sender, sender_port, peer_id=message.sender_id)
-                logger.info("🔍 Auto-discovered peer %s:%s from incoming message", sender, sender_port)
+                self.add_peer(sender, sender_port, peer_id=effective_sender_id)
+                logger.info("🔍 Auto-discovered peer %s:%s from incoming message (id=%s)",
+                             sender, sender_port, effective_sender_id[:12])
                 # Register in GossipSub mesh so messages flow bidirectionally
                 if self.gossip:
-                    self.gossip.add_peer(message.sender_id)
+                    self.gossip.add_peer(effective_sender_id)
                     for topic_state in self.gossip._topics.values():
-                        topic_state.mesh.add(message.sender_id)
+                        topic_state.mesh.add(effective_sender_id)
 
         if self.gossip:
             # GossipSub handles dedup, dispatch, and mesh forwarding
@@ -772,6 +778,12 @@ class UnifiedNode:
             should_forward = await self.flooding.handle_incoming(message, sender)
             if should_forward:
                 forward_msg = self.flooding.prepare_forward(message)
+                # Stamp forwarder identity so receivers can correctly map the HTTP
+                # sender's IP to OUR peer_id, not the original author's sender_id.
+                if forward_msg.payload is None:
+                    forward_msg.payload = {}
+                forward_msg.payload["_forwarder_id"] = self.peer_id
+                forward_msg.payload["_sender_port"] = self.config.port
                 endpoints = [ep for ep in self._peers if ep != sender]
                 await self.transport.broadcast(endpoints, forward_msg)
 
