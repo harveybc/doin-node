@@ -496,38 +496,44 @@ class UnifiedNode:
         self._running = True
 
         # Discover own local IP addresses so we never register ourselves as a peer.
+        # Three independent methods tried in order; results are merged so that
+        # failure of one method doesn't leave us blind.
         import socket
+        import subprocess as _sp
         self._own_addresses = set()
+
+        # Method 1 — psutil (most reliable, enumerates every interface)
         try:
-            import psutil
-            self._own_addresses.update({
-                addr.address.split('%')[0]
-                for iface, addrs in psutil.net_if_addrs().items()
-                for addr in addrs
-                if addr.family in (socket.AF_INET, socket.AF_INET6)
-            })
+            import psutil as _psutil
+            for _addrs in _psutil.net_if_addrs().values():
+                for _a in _addrs:
+                    if _a.family in (socket.AF_INET, socket.AF_INET6):
+                        self._own_addresses.add(_a.address.split('%')[0])
         except Exception:
             pass
-        
-        if not self._own_addresses:
-            try:
-                hostname = socket.gethostname()
-                self._own_addresses.update({
-                    info[4][0]
-                    for info in socket.getaddrinfo(hostname, None)
-                    if info[0] in (socket.AF_INET, socket.AF_INET6)
-                })
-            except Exception:
-                pass
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(('8.8.8.8', 80))
-                self._own_addresses.add(s.getsockname()[0])
-                s.close()
-            except Exception:
-                pass
-        # Always include loopback variants.
-        self._own_addresses.update({"127.0.0.1", "::1", "localhost", "unknown"})
+
+        # Method 2 — `ip -4 -o addr` (Linux, reliable even without psutil)
+        try:
+            _res = _sp.run(["ip", "-4", "-o", "addr"],
+                           capture_output=True, text=True, timeout=3)
+            for _line in _res.stdout.strip().split("\n"):
+                _parts = _line.split()
+                if len(_parts) >= 4 and _parts[1] != "lo":
+                    self._own_addresses.add(_parts[3].split("/")[0])
+        except Exception:
+            pass
+
+        # Method 3 — UDP connect trick (gets the primary outbound IP)
+        try:
+            _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _s.connect(("8.8.8.8", 80))
+            self._own_addresses.add(_s.getsockname()[0])
+            _s.close()
+        except Exception:
+            pass
+
+        # Always include loopback variants
+        self._own_addresses.update({"127.0.0.1", "127.0.1.1", "::1", "localhost", "unknown"})
         logger.info("Own addresses: %s", self._own_addresses)
 
         # Initialize storage
