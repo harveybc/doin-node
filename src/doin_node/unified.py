@@ -284,6 +284,10 @@ class UnifiedNode:
         self.sync_manager = SyncManager()
         self._block_contributors: list[ContributorWork] = []  # Contributors for current block
 
+        # Own network addresses (all local IPs) — populated on start() to prevent
+        # self-registration in the peer table when messages bounce back via multi-homed routes.
+        self._own_addresses: set[str] = set()
+
         # ── Per-domain state ──
         self._domains: dict[str, Domain] = {}
         self._domain_roles: dict[str, DomainRole] = {}
@@ -448,12 +452,14 @@ class UnifiedNode:
 
     def add_peer(self, address: str, port: int, peer_id: str = "") -> Peer:
         pid = peer_id or f"{address}:{port}"
-        # Dedup by peer_id: if same identity already connected on another IP, skip
-        if peer_id and self._peer_id_exists(peer_id):
-            # Return existing peer
-            for p in self._peers.values():
-                if p.peer_id == peer_id:
-                    return p
+        endpoint = f"{address}:{port}"
+        # If we already know this endpoint, just return it.
+        if endpoint in self._peers:
+            existing = self._peers[endpoint]
+            # Update placeholder with real peer_id if we now know it.
+            if peer_id and existing.peer_id != peer_id and existing.peer_id == endpoint:
+                existing.peer_id = peer_id
+            return existing
         peer = Peer(
             peer_id=pid,
             address=address,
@@ -488,6 +494,21 @@ class UnifiedNode:
     async def start(self) -> None:
         """Start the unified node."""
         self._running = True
+
+        # Discover own local IP addresses so we never register ourselves as a peer.
+        import socket
+        try:
+            hostname = socket.gethostname()
+            self._own_addresses = {
+                info[4][0]
+                for info in socket.getaddrinfo(hostname, None)
+                if info[0] in (socket.AF_INET, socket.AF_INET6)
+            }
+        except Exception:
+            self._own_addresses = set()
+        # Always include loopback variants.
+        self._own_addresses.update({"127.0.0.1", "::1", "localhost", "unknown"})
+        logger.info("Own addresses: %s", self._own_addresses)
 
         # Initialize storage
         if self.chaindb:
@@ -727,40 +748,36 @@ class UnifiedNode:
     # ================================================================
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
-        # Auto-discover peers from incoming connections (skip localhost)
-        # Extract sender's actual port from message payload or probe
+        # Auto-discover peers from incoming connections.
+        # Extract the sender's advertised port from the payload.
         sender_port = (message.payload or {}).get("_sender_port", self.config.port)
         sender_endpoint = f"{sender}:{sender_port}"
-        # _forwarder_id is present when a peer forwarded this message on behalf of the
-        # original sender_id. Use it to correctly map the HTTP sender's IP to its real
-        # peer_id (avoids corrupting routing tables with the original author's ID).
+
+        # _forwarder_id is stamped by the node that physically relayed this message.
+        # When present, the HTTP connection came from the forwarder, not the original author.
+        # Rule:
+        #   - Direct message  (no _forwarder_id): sender IP → message.sender_id
+        #   - Forwarded message (_forwarder_id present): sender IP → _forwarder_id
+        #     The original message.sender_id is preserved for protocol logic but does NOT
+        #     change the routing table (it may be a peer on a different subnet).
         forwarder_id = (message.payload or {}).get("_forwarder_id")
-        effective_sender_id = forwarder_id if forwarder_id and forwarder_id != self.peer_id else message.sender_id
-        _local = {"unknown", "127.0.0.1", "::1", "localhost"}
-        if sender not in _local and effective_sender_id != self.peer_id:
+        is_forwarded = bool(forwarder_id and forwarder_id != self.peer_id)
+        routing_peer_id = forwarder_id if is_forwarded else message.sender_id
+
+        # Never register our own IPs as peers (happens when messages loop back
+        # via a different interface on dual-homed machines).
+        if sender not in self._own_addresses and routing_peer_id != self.peer_id:
             existing = self._peers.get(sender_endpoint)
             if existing:
-                # Update placeholder peer_id with the real one from the message.
-                if existing.peer_id != effective_sender_id:
+                # Update placeholder ID (e.g. "IP:port" string) with the real peer_id.
+                if existing.peer_id != routing_peer_id and existing.peer_id == sender_endpoint:
                     old_id = existing.peer_id
-                    # Remove any OTHER entry that already claims this peer_id
-                    # (stale entry created by forwarded message confusion).
-                    for ep in list(self._peers):
-                        if ep != sender_endpoint and self._peers[ep].peer_id == effective_sender_id:
-                            del self._peers[ep]
-                            logger.info("🔍 Removed stale duplicate peer %s at %s", effective_sender_id[:12], ep)
-                    existing.peer_id = effective_sender_id
-                    logger.info("🔍 Updated peer %s:%s: %s → %s",
-                                sender, sender_port, old_id[:12], effective_sender_id[:12])
+                    existing.peer_id = routing_peer_id
+                    logger.info("🔍 Resolved peer %s → %s", old_id, routing_peer_id[:12])
             else:
-                # Remove any stale entry with this peer_id before adding the authoritative one.
-                for ep in list(self._peers):
-                    if self._peers[ep].peer_id == effective_sender_id:
-                        del self._peers[ep]
-                        logger.info("🔍 Removed stale peer %s at %s (now at %s)", effective_sender_id[:12], ep, sender_endpoint)
-                self.add_peer(sender, sender_port, peer_id=effective_sender_id)
+                self.add_peer(sender, sender_port, peer_id=routing_peer_id)
                 logger.info("🔍 Auto-discovered peer %s:%s (id=%s)",
-                             sender, sender_port, effective_sender_id[:12])
+                             sender, sender_port, routing_peer_id[:12])
 
         if self.gossip:
             # GossipSub handles dedup, dispatch, and mesh forwarding
