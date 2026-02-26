@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to OLAP SQLite database (overrides config)",
     )
     parser.add_argument(
+        "--reset-chain",
+        action="store_true",
+        default=False,
+        help="Delete existing chain database before starting (fresh genesis)",
+    )
+    parser.add_argument(
         "--log-level", "-l",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -257,6 +263,19 @@ def main() -> None:
 
     # Load identity
     identity = load_identity(args.identity, config.data_dir)
+
+    # Reset chain if requested
+    if args.reset_chain:
+        import glob
+        data_path = Path(config.data_dir)
+        chain_files = list(data_path.glob("chain.db*")) + list(data_path.glob("chain.json"))
+        if chain_files:
+            for cf in chain_files:
+                cf.unlink()
+                print(f"  Deleted: {cf}")
+            print(f"  Chain reset complete — {len(chain_files)} file(s) removed")
+        else:
+            print("  No chain files found to reset")
 
     # Create node
     node = UnifiedNode(config, identity)

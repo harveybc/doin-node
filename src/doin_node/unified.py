@@ -493,14 +493,14 @@ class UnifiedNode:
         if self.chaindb:
             self.chaindb.open()
             if self.chaindb.height == 0:
-                self.chaindb.initialize(self.peer_id)
+                self.chaindb.initialize("genesis")
             logger.info("SQLite storage: height=%d", self.chaindb.height)
         else:
             chain_path = Path(self.config.data_dir) / "chain.json"
             if chain_path.exists():
                 self.chain.load()
             else:
-                self.chain.initialize(self.peer_id)
+                self.chain.initialize("genesis")
                 self.chain.save()
 
         # Wire gossip send function to transport

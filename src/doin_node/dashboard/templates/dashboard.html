@@ -448,9 +448,10 @@ async function refreshAll() {
     document.getElementById('bestPerf').textContent = best !== null ? fmt(best) : '--';
   }
 
-  // Champion & Training panel — populated from latest events
-  if (events && events.events && events.events.length > 0) {
-    const evList = events.events;  // newest first
+  // Champion & Training panel — populated from events + blockchain
+  {
+    const hasEvents = events && events.events && events.events.length > 0;
+    const evList = hasEvents ? events.events : [];  // newest first
 
     // Find latest candidate_eval or generation_end for progress info
     const latestEval = evList.find(e => e.type === 'candidate_eval');
@@ -458,7 +459,10 @@ async function refreshAll() {
     // Find latest champion event for champion metrics
     const latestChamp = evList.find(e => e.type === 'champion' || e.type === 'auto_accept');
 
-    if (latestEval || latestGenEnd || latestChamp) {
+    // Check if blockchain has champion data (from /api/optimization)
+    const hasChainChampion = opt && opt.domains && opt.domains.length > 0 && opt.domains[0].champion;
+
+    if (latestEval || latestGenEnd || latestChamp || hasChainChampion) {
       document.getElementById('champStatsEmpty').style.display = 'none';
       document.getElementById('champStatsActive').style.display = 'block';
 
@@ -472,7 +476,7 @@ async function refreshAll() {
       document.getElementById('csTotalEvals').textContent = prog.total_evals || '0';
 
       // Champion performance — from /api/optimization (most authoritative) or from champion event
-      if (opt && opt.domains && opt.domains.length > 0) {
+      if (hasChainChampion) {
         const d = opt.domains[0];
         document.getElementById('csPerformance').textContent = d.best_performance != null ? fmt(d.best_performance, 6) : '--';
         const c = d.champion || {};
