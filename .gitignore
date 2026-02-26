@@ -26,3 +26,4 @@ cross_machine_config.json
 *.keras
 node_modules/
 dragon_node.log
+omega_node.log
