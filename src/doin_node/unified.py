@@ -1215,7 +1215,7 @@ class UnifiedNode:
         logger.info("Block #%d announced by %s", ann.block_index, from_peer[:12] if from_peer else "?")
 
         # If the announced block is ahead of us, trigger sync
-        if ann.block_index >= self.chain.height:
+        if ann.block_index >= self._get_height():
             # Find the peer endpoint that sent this
             peer_endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
             if peer_endpoint:
@@ -2375,6 +2375,92 @@ class UnifiedNode:
     # Block sync
     # ================================================================
 
+    async def _find_common_ancestor(
+        self, session, endpoint: str, our_height: int
+    ) -> int:
+        """Binary-search for the highest block index we share with *endpoint*.
+
+        Returns the common ancestor index (always >= 0 because genesis
+        blocks are deterministic and identical across all nodes).
+        """
+        if our_height <= 1:
+            return 0
+
+        lo, hi = 0, our_height - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            our_block = self._get_block(mid)
+            if our_block is None:
+                hi = mid - 1
+                continue
+            peer_blocks = await fetch_blocks(session, endpoint, mid, mid)
+            if not peer_blocks:
+                hi = mid - 1
+                continue
+            if peer_blocks[0].hash == our_block.hash:
+                lo = mid          # common ancestor is at least *mid*
+            else:
+                hi = mid - 1      # divergence; common ancestor is earlier
+        return lo
+
+    async def _attempt_chain_reorg(
+        self, session, endpoint: str
+    ) -> bool:
+        """Detect a chain fork with *endpoint* and reorganise if the peer
+        has a strictly longer chain.
+
+        Returns True if a rollback was performed and the caller should
+        retry the sync loop, False otherwise.
+        """
+        if not self.chaindb:
+            logger.warning("Chain reorg requires chaindb — skipping")
+            return False
+
+        our_height = self._get_height()
+        state = self.sync_manager.peers.get(endpoint)
+        peer_height = state.their_height if state else 0
+
+        # Only reorg when the peer is strictly ahead
+        if peer_height <= our_height:
+            logger.debug(
+                "Reorg skipped: peer %s not ahead (%d vs %d)",
+                endpoint, peer_height, our_height,
+            )
+            return False
+
+        common = await self._find_common_ancestor(session, endpoint, our_height)
+
+        # Safety: never roll back past finalised blocks
+        if common < self.finality.finalized_height:
+            logger.warning(
+                "Cannot reorg past finalized height %d (common ancestor %d)",
+                self.finality.finalized_height, common,
+            )
+            return False
+
+        if common >= our_height - 1:
+            # No actual fork — the chains are compatible, failure must be
+            # something else (e.g. hash / merkle mismatch).
+            return False
+
+        logger.info(
+            "Chain fork detected at index %d — rolling back from height %d "
+            "(peer %s has longer chain at height %d)",
+            common + 1, our_height, endpoint, peer_height,
+        )
+
+        blocks_removed = self.chaindb.rollback_to(common)
+        logger.info("Rolled back %d block(s) to index %d", blocks_removed, common)
+
+        # Refresh cached sync-manager state after the rollback
+        new_tip = self._get_tip()
+        self.sync_manager.update_our_state(
+            self._get_height(),
+            new_tip.hash if new_tip else "",
+            self.finality.finalized_height,
+        )
+        return True
+
     async def _sync_with_peer(self, endpoint: str) -> None:
         """Sync our chain with a peer that's ahead of us.
 
@@ -2390,6 +2476,7 @@ class UnifiedNode:
             return
 
         try:
+            reorg_attempts = 0
             while True:
                 needed = self.sync_manager.compute_blocks_needed(endpoint)
                 if needed is None:
@@ -2406,6 +2493,14 @@ class UnifiedNode:
 
                 appended = self._validate_and_append_blocks(blocks)
                 if appended == 0:
+                    # ── Fork detection & chain reorganisation ───────
+                    if reorg_attempts < 1:
+                        reorged = await self._attempt_chain_reorg(session, endpoint)
+                        if reorged:
+                            reorg_attempts += 1
+                            # Chain was rolled back — restart the sync loop
+                            # so compute_blocks_needed picks up the new height.
+                            continue
                     logger.warning("Failed to append any blocks from %s", endpoint)
                     self.sync_manager.record_sync_failure(endpoint)
                     return
@@ -2443,7 +2538,7 @@ class UnifiedNode:
 
             self._save_chain()
             self.sync_manager.record_sync_success(endpoint, self._get_height())
-            logger.info("Sync complete with %s (height now %d)", endpoint, self.chain.height)
+            logger.info("Sync complete with %s (height now %d)", endpoint, self._get_height())
 
         except Exception:
             logger.exception("Sync error with %s", endpoint)

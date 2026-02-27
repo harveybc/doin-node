@@ -245,6 +245,31 @@ class ChainDB:
                 break
         return appended
 
+    def rollback_to(self, index: int) -> int:
+        """Remove all blocks with block_index > *index*.
+
+        Used during chain reorganisation when we discover a longer
+        valid chain from a peer.  Returns the number of blocks removed.
+        """
+        assert self._conn is not None
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "DELETE FROM transactions WHERE block_index > ?", (index,)
+            )
+            cur = self._conn.execute(
+                "DELETE FROM blocks WHERE block_index > ?", (index,)
+            )
+            # Also remove any state snapshots that are now invalid
+            self._conn.execute(
+                "DELETE FROM state_snapshots WHERE block_index > ?", (index,)
+            )
+            self._conn.execute("COMMIT")
+            return cur.rowcount
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
     def _validate_block(self, block: Block) -> None:
         """Validate block before appending."""
         expected_index = self.height
