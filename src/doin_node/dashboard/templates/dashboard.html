@@ -539,6 +539,9 @@ async function refreshAll() {
     const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : 20));
     // Read n_generations from optimization config if available
     const nGens = parseInt(prog.n_generations || 15);  // fallback 15
+    // Read patience counter (from latest event that carries it)
+    const noImprove = parseInt(prog.no_improve_counter || (latGen ? (latGen.no_improve_counter || 0) : 0));
+    const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : 0));
 
     document.getElementById('totalEvalsCard').textContent = totalEvals;
 
@@ -547,7 +550,7 @@ async function refreshAll() {
     const gensLeftThisStage = Math.max(0, nGens - curGen - 1);
     const stagesLeft = Math.max(0, totStages - curStage);
     document.getElementById('remainingCard').innerHTML =
-      `S${curStage}/${totStages} G${curGen} C${curCand}/${totCand}`;
+      `S${curStage}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
 
     // Progress: compute overall % (stage-weighted)
     const stageProgress = (curStage - 1) / totStages;  // completed stages

@@ -303,6 +303,7 @@ class UnifiedNode:
         self._domain_round_count: dict[str, int] = {}  # domain_id → round number
         self._domain_champion_metrics: dict[str, dict[str, Any]] = {}  # domain_id → champion detail metrics
         self._domain_stage_start_fitness: dict[str, float] = {}  # domain_id → fitness at start of current stage
+        self._domain_patience: dict[str, tuple[int, int]] = {}  # domain_id → (no_improve_counter, patience_max)
         self._start_time: float = time.time()
 
         # ── Live event log (for dashboard) ──
@@ -1831,6 +1832,9 @@ class UnifiedNode:
                 logger.debug("Eval service between candidates: %s", e)
 
             # Log per-candidate evaluation event (for dashboard)
+            role = node._domain_roles.get(domain_id)
+            opt_cfg = role.optimization_config if role else {}
+            pat = node._domain_patience.get(domain_id, (0, 0))
             node._log_event("candidate_eval",
                 domain_id=domain_id, gen=gen,
                 candidate_num=stage_info.get("candidate_num"),
@@ -1841,7 +1845,9 @@ class UnifiedNode:
                 val_mae=stage_info.get("val_mae"), train_mae=stage_info.get("train_mae"),
                 val_naive_mae=stage_info.get("val_naive_mae"),
                 train_naive_mae=stage_info.get("train_naive_mae"),
-                champion_fitness=stage_info.get("champion_fitness"))
+                champion_fitness=stage_info.get("champion_fitness"),
+                n_generations=opt_cfg.get("n_generations", 15),
+                no_improve_counter=pat[0], optimization_patience=pat[1])
 
             # Fire-and-forget champion request: keeps network champion fresh
             # so by the next generation-start injection the node has the latest optimum.
@@ -1864,7 +1870,13 @@ class UnifiedNode:
             stage = stage_info.get("stage", 1)
             total_stages = stage_info.get("total_stages", 1)
             n_evals = stage_info.get("total_candidates_evaluated", 0)
-            patience_str = f"{stage_info.get('no_improve_counter', 0)}/{stage_info.get('patience', '?')}"
+            no_improve = stage_info.get('no_improve_counter', 0)
+            pat_max = stage_info.get('patience', 0)
+            node._domain_patience[domain_id] = (no_improve, pat_max)
+            patience_str = f"{no_improve}/{pat_max}"
+            role = node._domain_roles.get(domain_id)
+            opt_cfg = role.optimization_config if role else {}
+            n_gens = opt_cfg.get("n_generations", 15)
 
             node._log_event("generation_end",
                 domain_id=domain_id, gen=gen, stage=stage, total_stages=total_stages,
@@ -1873,7 +1885,9 @@ class UnifiedNode:
                 champion_train_mae=champ_train,
                 champion_val_naive_mae=champ_val_naive,
                 champion_train_naive_mae=champ_train_naive,
-                avg_fitness=avg_fit, patience=patience_str)
+                avg_fitness=avg_fit, patience=patience_str,
+                n_generations=n_gens,
+                no_improve_counter=no_improve, optimization_patience=pat_max)
 
             logger.info(
                 "[%s] gen=%d stage=%d/%d evals=%d  champ_fitness=%.6f  champ_val_mae=%s  avg_fitness=%.6f  patience=%s",
