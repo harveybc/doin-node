@@ -386,48 +386,76 @@ async def _api_evaluations(request: web.Request) -> web.Response:
 # ── Metrics Time Series ─────────────────────────────────────
 
 async def _api_metrics(request: web.Request) -> web.Response:
+    """Build metrics from blockchain — identical on every synced node."""
     node = request.app["_doin_node"]
     limit = int(request.query.get("limit", "500"))
     metrics: list[dict] = []
 
-    # OLAP DB — use tracker's existing connection to see WAL data
-    tracker = getattr(node, "experiment_tracker", None)
-    olap = getattr(tracker, "_olap", None) if tracker else None
-    olap_conn = getattr(olap, "_conn", None) if olap else None
-    if olap_conn:
-        try:
-            cur = olap_conn.cursor()
-            # Get current experiment_id if available
-            exp_id = None
-            if tracker and hasattr(tracker, "_experiments"):
-                for de in tracker._experiments.values():
-                    exp_id = getattr(de, "experiment_id", None)
-                    break
-            if exp_id:
-                cur.execute(
-                    "SELECT round_number as round_num, performance, "
-                    "best_performance, timestamp_utc as timestamp, "
-                    "domain_id, is_improvement "
-                    "FROM fact_round WHERE experiment_id = ? "
-                    "ORDER BY round_number ASC LIMIT ?",
-                    (exp_id, limit))
-            else:
-                # Fallback: all data from latest experiment
-                cur.execute(
-                    "SELECT round_number as round_num, performance, "
-                    "best_performance, timestamp_utc as timestamp, "
-                    "domain_id, is_improvement "
-                    "FROM fact_round WHERE experiment_id = ("
-                    "SELECT experiment_id FROM fact_round ORDER BY rowid DESC LIMIT 1"
-                    ") ORDER BY round_number ASC LIMIT ?",
-                    (limit,))
-            for row in cur.fetchall():
-                metrics.append(dict(row))
-        except Exception as e:
-            import traceback
-            print(f"[OLAP ERROR] {e}\n{traceback.format_exc()}", flush=True)
+    # Determine higher_is_better per domain
+    hib_map: dict[str, bool] = {}
+    for dcfg in node.config.domains:
+        did = getattr(dcfg, "domain_id", None) or getattr(dcfg, "id", None)
+        if did:
+            hib_map[did] = getattr(dcfg, "higher_is_better", False)
 
-    # No CSV fallback — OLAP is the single source of truth
+    if node.chaindb:
+        height = node.chaindb.height
+        # Track running best per domain
+        running_best: dict[str, float] = {}
+        champion_index: dict[str, int] = {}  # sequential champion number per domain
+
+        for i in range(height):
+            block = node.chaindb.get_block(i)
+            if block is None:
+                continue
+            for tx in block.transactions:
+                tx_type_val = tx.tx_type.value if hasattr(tx.tx_type, "value") else str(tx.tx_type)
+                if tx_type_val != "optimae_accepted":
+                    continue
+
+                domain_id = tx.domain_id
+                perf = tx.payload.get("verified_performance")
+                if perf is None:
+                    continue
+
+                hib = hib_map.get(domain_id, False)
+                prev = running_best.get(domain_id)
+                is_improvement = (
+                    prev is None
+                    or (hib and perf > prev)
+                    or (not hib and perf < prev)
+                )
+                if is_improvement:
+                    running_best[domain_id] = perf
+
+                seq = champion_index.get(domain_id, 0) + 1
+                champion_index[domain_id] = seq
+
+                # Block timestamp
+                ts = block.header.timestamp
+                ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+
+                metrics.append({
+                    "champion_num": seq,
+                    "block_index": block.header.index,
+                    "domain_id": domain_id,
+                    "performance": perf,
+                    "best_performance": running_best[domain_id],
+                    "is_improvement": is_improvement,
+                    "peer_id": str(tx.peer_id)[:12],
+                    "timestamp": ts_str,
+                    "val_mae": tx.payload.get("val_mae"),
+                    "train_mae": tx.payload.get("train_mae"),
+                    "val_naive_mae": tx.payload.get("val_naive_mae"),
+                    "train_naive_mae": tx.payload.get("train_naive_mae"),
+                    "test_mae": tx.payload.get("test_mae"),
+                    "test_naive_mae": tx.payload.get("test_naive_mae"),
+                })
+
+        # Apply limit (keep latest)
+        if len(metrics) > limit:
+            metrics = metrics[-limit:]
+
     return web.json_response({"metrics": metrics, "count": len(metrics)}, dumps=_dumps)
 
 

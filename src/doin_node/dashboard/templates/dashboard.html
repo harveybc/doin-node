@@ -557,97 +557,52 @@ async function refreshAll() {
     document.getElementById('progressCard').innerHTML = `${overallPct}%`;
   }
 
-  // Metrics → Charts (use events data for real-time champion & MAE history)
-  if (events && events.events && events.events.length > 0) {
-    // Build NDA Performance History from champion events (newest first → reverse for chronological)
-    const champEvents = events.events.filter(e => e.type === 'champion' || e.type === 'auto_accept').reverse();
-    if (champEvents.length > 0) {
-      let runningBest = null;
-      const ndaLabels = [];
-      const ndaData = [];
-      for (const ce of champEvents) {
-        const perf = parseFloat(ce.performance);
-        if (isNaN(perf)) continue;
-        // Track running best (lower=better)
-        if (runningBest === null || perf < runningBest) {
-          runningBest = perf;
-          ndaLabels.push(ce.timestamp ? new Date(ce.timestamp).toLocaleTimeString() : '');
-          ndaData.push(runningBest);
-        }
-      }
-      perfChart.data.labels = ndaLabels;
-      perfChart.data.datasets[0].data = ndaData;
-      perfChart.update();
+  // Metrics → Charts (from blockchain via /api/metrics — identical on all synced nodes)
+  if (metrics && metrics.metrics && metrics.metrics.length > 0) {
+    const chainMetrics = metrics.metrics;
+
+    // NDA Performance History — plot best_performance over chain champions
+    const ndaLabels = [];
+    const ndaData = [];
+    for (const m of chainMetrics) {
+      if (m.best_performance == null) continue;
+      ndaLabels.push(m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '#' + m.champion_num);
+      ndaData.push(parseFloat(m.best_performance));
+    }
+    perfChart.data.labels = ndaLabels;
+    perfChart.data.datasets[0].data = ndaData;
+    perfChart.update();
+
+    // MAE History — val_mae, train_mae, val_naive_mae, train_naive_mae per champion
+    const maeLabels = [];
+    const valMaeData = [];
+    const trainMaeData = [];
+    const valNaiveData = [];
+    const trainNaiveData = [];
+    let lastValNaive = null;
+    let lastTrainNaive = null;
+
+    for (const m of chainMetrics) {
+      const vm = m.val_mae;
+      const tm = m.train_mae;
+      if (vm == null && tm == null) continue;
+
+      maeLabels.push(m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '#' + m.champion_num);
+      valMaeData.push(vm != null ? parseFloat(vm) : null);
+      trainMaeData.push(tm != null ? parseFloat(tm) : null);
+
+      if (m.val_naive_mae != null) lastValNaive = parseFloat(m.val_naive_mae);
+      if (m.train_naive_mae != null) lastTrainNaive = parseFloat(m.train_naive_mae);
+      valNaiveData.push(lastValNaive);
+      trainNaiveData.push(lastTrainNaive);
     }
 
-    // Build MAE History from champion + auto_accept + generation_end events
-    // Champion events carry the actual MAE when the champion improved;
-    // auto_accept events carry MAE from the originator node;
-    // generation_end events carry champion MAE after each generation.
-    // We combine all to get the fullest timeline possible.
-    const maeSourceEvents = events.events.filter(
-      e => e.type === 'champion' || e.type === 'auto_accept' || e.type === 'generation_end'
-    ).reverse();  // oldest first
-
-    if (maeSourceEvents.length > 0) {
-      const maeLabels = [];
-      const valMaeData = [];
-      const trainMaeData = [];
-      const valNaiveData = [];
-      const trainNaiveData = [];
-      // Track latest naive values for horizontal reference lines
-      let lastValNaive = null;
-      let lastTrainNaive = null;
-
-      for (const ev of maeSourceEvents) {
-        // Determine label
-        let lbl;
-        if (ev.type === 'champion') {
-          lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?') + '🏆';
-        } else if (ev.type === 'auto_accept') {
-          lbl = (ev.is_self ? '🏆' : '📡') + ' NDA=' + (ev.performance != null ? parseFloat(ev.performance).toFixed(6) : '?');
-        } else {
-          lbl = 'S' + (ev.stage||'?') + '/G' + (ev.gen||'?');
-        }
-
-        // Extract MAE fields — champion and auto_accept use val_mae/train_mae,
-        // generation_end events use champion_val_mae/champion_train_mae
-        let vm, tm, vnm, tnm;
-        if (ev.type === 'champion' || ev.type === 'auto_accept') {
-          vm = ev.val_mae;
-          tm = ev.train_mae;
-          vnm = ev.val_naive_mae;
-          tnm = ev.train_naive_mae;
-        } else {
-          vm = ev.champion_val_mae;
-          tm = ev.champion_train_mae;
-          vnm = ev.champion_val_naive_mae;
-          tnm = ev.champion_train_naive_mae;
-        }
-
-        // Only add if at least one MAE value is present
-        if (vm == null && tm == null) continue;
-
-        maeLabels.push(lbl);
-        valMaeData.push(vm != null ? parseFloat(vm) : null);
-        trainMaeData.push(tm != null ? parseFloat(tm) : null);
-
-        // Track latest naive values
-        if (vnm != null) lastValNaive = parseFloat(vnm);
-        if (tnm != null) lastTrainNaive = parseFloat(tnm);
-
-        // Fill naive arrays with the latest known value at each point
-        valNaiveData.push(lastValNaive);
-        trainNaiveData.push(lastTrainNaive);
-      }
-
-      bestChart.data.labels = maeLabels;
-      bestChart.data.datasets[0].data = valMaeData;
-      bestChart.data.datasets[1].data = trainMaeData;
-      bestChart.data.datasets[2].data = valNaiveData;
-      bestChart.data.datasets[3].data = trainNaiveData;
-      bestChart.update();
-    }
+    bestChart.data.labels = maeLabels;
+    bestChart.data.datasets[0].data = valMaeData;
+    bestChart.data.datasets[1].data = trainMaeData;
+    bestChart.data.datasets[2].data = valNaiveData;
+    bestChart.data.datasets[3].data = trainNaiveData;
+    bestChart.update();
   }
 
   // Network Events (excluding candidate_eval which goes to Evaluations tab)
