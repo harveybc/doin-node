@@ -1727,6 +1727,7 @@ class UnifiedNode:
                 logger.info("🧬 Starting DEAP GA optimization for %s", domain_id)
                 await self._run_full_optimization(domain_id, plugin)
                 logger.info("✅ Optimization complete for %s", domain_id)
+                self._log_event("optimization_complete", domain_id=domain_id)
             except Exception:
                 logger.exception("Optimization error for %s", domain_id)
 

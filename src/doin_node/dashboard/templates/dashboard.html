@@ -528,6 +528,7 @@ async function refreshAll() {
   // Top summary cards: Candidates Evaluated, Remaining, Progress
   if (events && events.events && events.events.length > 0) {
     const evList = events.events;  // newest first
+    const optComplete = evList.find(e => e.type === 'optimization_complete');
     const latEval = evList.find(e => e.type === 'candidate_eval');
     const latGen = evList.find(e => e.type === 'generation_end');
     const prog = latEval || latGen || {};
@@ -545,19 +546,26 @@ async function refreshAll() {
 
     document.getElementById('totalEvalsCard').textContent = totalEvals;
 
-    // Remaining: candidates in current gen + remaining gens in stage + remaining stages
-    const candsLeftThisGen = Math.max(0, totCand - curCand);
-    const gensLeftThisStage = Math.max(0, nGens - curGen - 1);
-    const stagesLeft = Math.max(0, totStages - curStage);
-    document.getElementById('remainingCard').innerHTML =
-      `S${curStage}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
+    if (optComplete) {
+      // Optimization finished — show completion state
+      document.getElementById('remainingCard').innerHTML =
+        `S${totStages}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}<br><small>Complete</small>`;
+      document.getElementById('progressCard').innerHTML = `100%`;
+    } else {
+      // Remaining: candidates in current gen + remaining gens in stage + remaining stages
+      const candsLeftThisGen = Math.max(0, totCand - curCand);
+      const gensLeftThisStage = Math.max(0, nGens - curGen - 1);
+      const stagesLeft = Math.max(0, totStages - curStage);
+      document.getElementById('remainingCard').innerHTML =
+        `S${curStage}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
 
-    // Progress: compute overall % (stage-weighted)
-    const stageProgress = (curStage - 1) / totStages;  // completed stages
-    const genProgressInStage = (curGen / nGens);  // within current stage
-    const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
-    const overallPct = ((stageProgress + (genProgressInStage + candProgressInGen / nGens) / totStages) * 100).toFixed(1);
-    document.getElementById('progressCard').innerHTML = `${overallPct}%`;
+      // Progress: compute overall % (stage-weighted)
+      const stageProgress = (curStage - 1) / totStages;  // completed stages
+      const genProgressInStage = (curGen / nGens);  // within current stage
+      const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
+      const overallPct = ((stageProgress + (genProgressInStage + candProgressInGen / nGens) / totStages) * 100).toFixed(1);
+      document.getElementById('progressCard').innerHTML = `${overallPct}%`;
+    }
   }
 
   // Metrics → Charts (from blockchain via /api/metrics — identical on all synced nodes)
