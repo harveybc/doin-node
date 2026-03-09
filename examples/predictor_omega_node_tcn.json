@@ -1,0 +1,100 @@
+{
+  "$doc": "Omega node config for TCN predictor timeseries domain.",
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-predictor",
+  "bootstrap_peers": [
+    "192.168.0.103:8470"
+  ],
+  "target_block_time": 600,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 0.67,
+  "quorum_tolerance": 0.5,
+  "optimizer_loop_interval": 30,
+  "eval_poll_interval": 10,
+  "storage_backend": "sqlite",
+  "network_protocol": "flooding",
+  "initial_threshold": 1e-06,
+  "acceptance_tolerance": 1e-5,
+  "discovery_enabled": true,
+  "fee_market_enabled": false,
+  "require_deterministic_seed": true,
+  "domains": [
+    {
+      "domain_id": "predictor-timeseries-tcn-4h",
+      "optimize": true,
+      "evaluate": true,
+      "optimization_plugin": "predictor",
+      "inference_plugin": "predictor",
+      "synthetic_data_plugin": "predictor",
+      "has_synthetic_data": false,
+      "target_performance": 999.0,
+      "optimization_config": {
+        "predictor_root": "/home/harveybc/predictor",
+        "load_config": "examples/config/phase_1_daily/optimization/phase_1_tcn_1d_optimization_config.json",
+        "predictor_plugin": "tcn",
+        "preprocessor_plugin": "stl_preprocessor",
+        "target_plugin": "default_target",
+        "pipeline_plugin": "stl_pipeline",
+        "step_size_fraction": 0.15,
+        "epochs": 200,
+        "batch_size": 32,
+        "population_size": 20,
+        "n_generations": 20,
+        "early_patience": 80,
+        "optimization_patience": 6,
+        "optimization_pause_on_resume": false
+      },
+      "inference_config": {
+        "predictor_root": "/home/harveybc/predictor",
+        "load_config": "examples/config/phase_1_daily/optimization/phase_1_tcn_1d_optimization_config.json",
+        "predictor_plugin": "tcn",
+        "preprocessor_plugin": "stl_preprocessor",
+        "target_plugin": "default_target",
+        "pipeline_plugin": "stl_pipeline",
+        "epochs": 200,
+        "batch_size": 32
+      },
+      "synthetic_data_config": {
+        "sdg_root": "synthetic-datagen",
+        "model_file": "synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib",
+        "n_samples": 1855,
+        "initial_price": 1.2
+      },
+      "param_bounds": {
+        "window_size": [48, 160],
+        "tcn_filters": [16, 128],
+        "tcn_kernel_size": [2, 7],
+        "tcn_stack_layers": [1, 4],
+        "tcn_dilations_per_stack": [2, 6],
+        "tcn_head_layers": [1, 3],
+        "tcn_head_units": [16, 64],
+        "use_log1p_features": [0, 1],
+        "positional_encoding": [0, 1],
+        "learning_rate": [1e-05, 0.01],
+        "batch_size": [16, 64],
+        "tcn_dropout": [0.0, 0.3],
+        "tcn_use_batch_norm": [0, 1],
+        "tcn_use_layer_norm": [0, 1],
+        "l2_reg": [1e-07, 0.001],
+        "min_delta": [1e-10, 1e-06]
+      },
+      "resource_limits": {
+        "max_training_seconds": 3600,
+        "max_memory_mb": 14000,
+        "max_epochs": 2000,
+        "max_batch_size": 128
+      },
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 0.28,
+        "bonus_threshold": 0.05,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      },
+      "synthetic_data_validation": false,
+      "higher_is_better": false
+    }
+  ],
+  "experiment_stats_file": "./predictor_experiment_stats.csv"
+}
