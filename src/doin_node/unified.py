@@ -304,6 +304,7 @@ class UnifiedNode:
         self._domain_champion_metrics: dict[str, dict[str, Any]] = {}  # domain_id → champion detail metrics
         self._domain_stage_start_fitness: dict[str, float] = {}  # domain_id → fitness at start of current stage
         self._domain_patience: dict[str, tuple[int, int]] = {}  # domain_id → (no_improve_counter, patience_max)
+        self._current_candidate: dict[str, Any] = {}  # current candidate being evaluated (local, per-machine)
         self._start_time: float = time.time()
 
         # ── Live event log (for dashboard) ──
@@ -1836,6 +1837,32 @@ class UnifiedNode:
             role = node._domain_roles.get(domain_id)
             opt_cfg = role.optimization_config if role else {}
             pat = node._domain_patience.get(domain_id, (0, 0))
+
+            # Store current candidate state for /api/candidate (local, per-machine)
+            _cand_params = stage_info.get("candidate_params")
+            _model_summary = stage_info.get("model_summary")
+            node._current_candidate = {
+                "domain_id": domain_id,
+                "gen": gen,
+                "candidate_num": stage_info.get("candidate_num"),
+                "total_candidates": stage_info.get("total_candidates"),
+                "stage": stage_info.get("stage"),
+                "total_stages": stage_info.get("total_stages"),
+                "total_evals": stage_info.get("total_candidates_evaluated"),
+                "fitness": stage_info.get("fitness"),
+                "val_mae": stage_info.get("val_mae"),
+                "train_mae": stage_info.get("train_mae"),
+                "val_naive_mae": stage_info.get("val_naive_mae"),
+                "train_naive_mae": stage_info.get("train_naive_mae"),
+                "champion_fitness": stage_info.get("champion_fitness"),
+                "candidate_params": _cand_params,
+                "model_summary": _model_summary,
+                "n_generations": opt_cfg.get("n_generations", 15),
+                "no_improve_counter": pat[0],
+                "optimization_patience": pat[1],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+
             node._log_event("candidate_eval",
                 domain_id=domain_id, gen=gen,
                 candidate_num=stage_info.get("candidate_num"),

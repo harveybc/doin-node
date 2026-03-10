@@ -164,6 +164,7 @@ def setup_dashboard(app: web.Application, node: Any) -> None:
     app.router.add_get("/api/plugins", _api_plugins)
     app.router.add_get("/api/chain", _api_chain)
     app.router.add_get("/api/events", _api_events)
+    app.router.add_get("/api/candidate", _api_candidate)
     logger.info("Dashboard enabled at /dashboard")
 
 
@@ -523,3 +524,11 @@ async def _api_events(request: web.Request) -> web.Response:
 
     events = list(reversed(node._live_events[-limit:]))
     return web.json_response({"events": events, "count": len(events)}, dumps=_dumps)
+
+
+# ── Current Candidate (local, per-machine) ───────────────────
+
+async def _api_candidate(request: web.Request) -> web.Response:
+    """Return current candidate being evaluated (local state, not on blockchain)."""
+    node = request.app["_doin_node"]
+    return web.json_response(node._current_candidate or {}, dumps=_dumps)

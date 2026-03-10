@@ -226,6 +226,7 @@
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPlugins"><i class="fas fa-plug"></i> Plugins</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabChain"><i class="fas fa-cubes"></i> Chain</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabDomains"><i class="fas fa-cogs"></i> Domains</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabCandidate"><i class="fas fa-microscope"></i> Current Candidate</a></li>
                 </ul>
               </div>
               <div class="card-body">
@@ -278,6 +279,48 @@
                       <thead><tr><th>Domain</th><th>Rounds</th><th>Best Performance</th><th>Target</th><th>Tolerance</th><th>Converged</th><th>Best Params</th></tr></thead>
                       <tbody id="domainBody"></tbody>
                     </table>
+                  </div>
+
+                  <!-- Current Candidate Tab -->
+                  <div class="tab-pane fade" id="tabCandidate">
+                    <div id="candidateEmpty" class="text-center text-muted p-3"><i class="fas fa-hourglass-half"></i> Waiting for candidate evaluation...</div>
+                    <div id="candidateContent" style="display:none;">
+                      <div class="row" style="margin:0;">
+                        <!-- Left column: Candidate Info + Parameters -->
+                        <div class="col-md-5" style="padding:4px;">
+                          <h6 style="margin:4px 0;"><i class="fas fa-info-circle"></i> Candidate Info</h6>
+                          <table class="table table-sm table-bordered" style="font-size:12px; margin-bottom:8px;">
+                            <tbody>
+                              <tr><td style="width:40%"><strong>Domain</strong></td><td id="candDomain">--</td></tr>
+                              <tr><td><strong>Stage</strong></td><td id="candStage">--</td></tr>
+                              <tr><td><strong>Generation</strong></td><td id="candGen">--</td></tr>
+                              <tr><td><strong>Candidate</strong></td><td id="candNum">--</td></tr>
+                              <tr><td><strong>Total Evals</strong></td><td id="candTotalEvals">--</td></tr>
+                              <tr><td><strong>Fitness</strong></td><td id="candFitness">--</td></tr>
+                              <tr><td><strong>Champion Fitness</strong></td><td id="candChampFitness">--</td></tr>
+                              <tr><td><strong>Val MAE</strong></td><td id="candValMAE">--</td></tr>
+                              <tr><td><strong>Train MAE</strong></td><td id="candTrainMAE">--</td></tr>
+                              <tr><td><strong>Val Naive MAE</strong></td><td id="candValNaive">--</td></tr>
+                              <tr><td><strong>Train Naive MAE</strong></td><td id="candTrainNaive">--</td></tr>
+                              <tr><td><strong>Patience</strong></td><td id="candPatience">--</td></tr>
+                              <tr><td><strong>Updated</strong></td><td id="candTimestamp">--</td></tr>
+                            </tbody>
+                          </table>
+                          <h6 style="margin:4px 0;"><i class="fas fa-sliders-h"></i> Candidate Parameters</h6>
+                          <div id="candParamsContent" style="max-height:300px; overflow-y:auto;">
+                            <table class="table table-sm table-striped table-bordered" style="font-size:11px;">
+                              <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+                              <tbody id="candParamsBody"></tbody>
+                            </table>
+                          </div>
+                        </div>
+                        <!-- Right column: Model Summary -->
+                        <div class="col-md-7" style="padding:4px;">
+                          <h6 style="margin:4px 0;"><i class="fas fa-project-diagram"></i> Model Architecture</h6>
+                          <pre id="candModelSummary" style="font-size:10px; max-height:600px; overflow:auto; background:#1a1a2e; color:#e0e0e0; padding:8px; border-radius:4px; margin:0; white-space:pre; line-height:1.3;">No model summary available</pre>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                 </div>
@@ -370,10 +413,10 @@ async function api(url) {
 async function refreshAll() {
   document.getElementById('refreshSpin').style.display = 'inline-block';
 
-  const [node, peers, opt, training, evals, metrics, plugins, chain, events] = await Promise.all([
+  const [node, peers, opt, training, evals, metrics, plugins, chain, events, candidate] = await Promise.all([
     api('/api/node'), api('/api/peers'), api('/api/optimization'), null,
     null, api('/api/metrics?limit=500'), api('/api/plugins'),
-    api('/api/chain?limit=30'), api('/api/events?limit=300'),
+    api('/api/chain?limit=30'), api('/api/events?limit=300'), api('/api/candidate'),
   ]);
 
   // Node
@@ -713,6 +756,43 @@ async function refreshAll() {
   }
 
   document.getElementById('refreshSpin').style.display = 'none';
+
+  // Current Candidate tab
+  if (candidate && candidate.timestamp) {
+    document.getElementById('candidateEmpty').style.display = 'none';
+    document.getElementById('candidateContent').style.display = 'block';
+    document.getElementById('candDomain').textContent = candidate.domain_id || '--';
+    document.getElementById('candStage').textContent = (candidate.stage || '-') + '/' + (candidate.total_stages || '?');
+    document.getElementById('candGen').textContent = candidate.gen != null ? candidate.gen : '--';
+    document.getElementById('candNum').textContent = (candidate.candidate_num || '-') + '/' + (candidate.total_candidates || '?');
+    document.getElementById('candTotalEvals').textContent = candidate.total_evals || '--';
+    document.getElementById('candFitness').textContent = candidate.fitness != null ? fmt(candidate.fitness, 6) : '--';
+    document.getElementById('candChampFitness').textContent = candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--';
+    document.getElementById('candValMAE').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, 6) : '--';
+    document.getElementById('candTrainMAE').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, 6) : '--';
+    document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, 6) : '--';
+    document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, 6) : '--';
+    document.getElementById('candPatience').textContent = (candidate.no_improve_counter || 0) + '/' + (candidate.optimization_patience || '?');
+    document.getElementById('candTimestamp').textContent = fmtTime(candidate.timestamp);
+    // Parameters table
+    const params = candidate.candidate_params;
+    if (params && typeof params === 'object') {
+      const isBetter = candidate.fitness != null && candidate.champion_fitness != null && parseFloat(candidate.fitness) < parseFloat(candidate.champion_fitness);
+      document.getElementById('candParamsBody').innerHTML = Object.entries(params).sort((a,b) => a[0].localeCompare(b[0])).map(([k,v]) => {
+        const val = typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(8)) : JSON.stringify(v);
+        return `<tr><td><strong>${k}</strong></td><td><code>${val}</code></td></tr>`;
+      }).join('');
+    } else {
+      document.getElementById('candParamsBody').innerHTML = '<tr><td colspan="2" class="text-muted">No parameters available</td></tr>';
+    }
+    // Model summary
+    const summary = candidate.model_summary;
+    document.getElementById('candModelSummary').textContent = summary || 'No model summary available';
+  } else {
+    document.getElementById('candidateEmpty').style.display = 'block';
+    document.getElementById('candidateContent').style.display = 'none';
+  }
+
   requestAnimationFrame(recalcLayout);
 }
 
