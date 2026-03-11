@@ -1815,11 +1815,11 @@ class UnifiedNode:
                     except Exception as e:
                         logger.warning("Stage complete broadcast failed: %s", e)
 
-                    # Also advance our own optimizer
-                    p = node._optimizer_plugins.get(domain_id)
-                    if p and hasattr(p, "force_stage_advance"):
-                        p.force_stage_advance()
-                        logger.info("↗️  Signalled local optimizer to advance stage for %s", domain_id)
+                    # NOTE: Do NOT call force_stage_advance() on our own optimizer.
+                    # The local optimizer must complete its stage naturally (via
+                    # patience / n_generations).  Only *remote* STAGE_COMPLETE
+                    # messages should trigger an early stage advance so that each
+                    # node explores its own stage fully before being forced ahead.
 
         def on_eval_service(gen, candidate_num, stage_info):
             """Called from optimizer thread between candidates → process 1 pending eval + log event + request champion."""
@@ -2201,10 +2201,20 @@ class UnifiedNode:
                 domain_id, champion_fitness,
             )
 
-        # Signal the optimizer plugin to finish its current stage at the next candidate boundary
+        # Signal the optimizer to finish its current stage at the next candidate boundary.
+        # Guard against stale messages: only advance if the incoming stage matches or
+        # exceeds the optimizer's current stage, preventing a late-arriving
+        # STAGE_COMPLETE for an already-passed stage from triggering an extra advance.
         if plugin and hasattr(plugin, "force_stage_advance"):
-            plugin.force_stage_advance()
-            logger.info("↗️  Signalled optimizer to advance stage for %s", domain_id)
+            optimizer_stage = getattr(plugin, "_current_stage", None)
+            if optimizer_stage is not None and stage < optimizer_stage:
+                logger.info(
+                    "⏭️  Ignoring stale STAGE_COMPLETE (peer stage=%d < our stage=%d) for %s",
+                    stage, optimizer_stage, domain_id,
+                )
+            else:
+                plugin.force_stage_advance()
+                logger.info("↗️  Signalled optimizer to advance stage for %s", domain_id)
 
         self._log_event("stage_sync",
             domain_id=domain_id, stage=stage, total_stages=total_stages,
