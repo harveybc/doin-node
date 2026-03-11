@@ -132,6 +132,7 @@ class PeerDiscovery:
         our_peer_id: str,
         our_port: int,
         bootstrap_nodes: list[str] | None = None,
+        required_versions: dict[str, str] | None = None,
     ) -> None:
         self.our_peer_id = our_peer_id
         self.our_port = our_port
@@ -139,6 +140,7 @@ class PeerDiscovery:
         self._known_peers: dict[str, DiscoveredPeer] = {}
         self._connected: set[str] = set()  # Currently connected peer endpoints
         self._running = False
+        self._required_versions = required_versions or {}
 
     @property
     def known_count(self) -> int:
@@ -314,7 +316,28 @@ class PeerDiscovery:
                     ) as resp:
                         if resp.status != 200:
                             continue
-                        await resp.json()
+                        status_data = await resp.json()
+                    # Version handshake: reject peers with mismatched component versions
+                    if self._required_versions:
+                        peer_versions = status_data.get("component_versions", {})
+                        if not peer_versions:
+                            logger.warning(
+                                "🚫 Rejecting peer %s:%d — no component_versions in /chain/status (old node?)",
+                                ip, port,
+                            )
+                            continue
+                        mismatches = {
+                            k: (v, peer_versions.get(k, "?"))
+                            for k, v in self._required_versions.items()
+                            if peer_versions.get(k) != v
+                        }
+                        if mismatches:
+                            logger.warning(
+                                "🚫 Rejecting peer %s:%d — version mismatch: %s",
+                                ip, port,
+                                ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in mismatches.items()),
+                            )
+                            continue
                     peer_id = f"lan-{ip}-{port}"
                     try:
                         async with verify_session.get(
@@ -346,6 +369,31 @@ class PeerDiscovery:
         discovered = 0
         for addr in self._bootstrap:
             try:
+                # Version handshake: check bootstrap node versions before accepting
+                if self._required_versions:
+                    try:
+                        async with session.get(
+                            f"http://{addr}/chain/status",
+                            timeout=DISCOVERY_TIMEOUT,
+                        ) as resp:
+                            if resp.status == 200:
+                                status_data = await resp.json()
+                                peer_versions = status_data.get("component_versions", {})
+                                mismatches = {
+                                    k: (v, peer_versions.get(k, "?"))
+                                    for k, v in self._required_versions.items()
+                                    if peer_versions.get(k) != v
+                                }
+                                if mismatches:
+                                    logger.warning(
+                                        "🚫 Rejecting bootstrap %s — version mismatch: %s",
+                                        addr,
+                                        ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in mismatches.items()),
+                                    )
+                                    continue
+                    except Exception:
+                        logger.debug("Bootstrap %s version check failed, skipping", addr)
+                        continue
                 peers = await self._fetch_peers(session, addr)
                 for p in peers:
                     self.add_peer(p)

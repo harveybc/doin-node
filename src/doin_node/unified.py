@@ -235,6 +235,10 @@ class UnifiedNode:
             db_path = config.db_path or str(Path(config.data_dir) / "chain.db")
             self.chaindb = ChainDB(db_path)
 
+        # ── Component versions (computed once, used for peer version handshake) ──
+        self._component_versions: dict[str, str] = self._compute_component_versions()
+        logger.info("Component versions: %s", self._component_versions)
+
         # Peer discovery
         self.discovery: PeerDiscovery | None = None
         if config.discovery_enabled:
@@ -242,6 +246,7 @@ class UnifiedNode:
                 our_peer_id=self.identity.peer_id,
                 our_port=config.port,
                 bootstrap_nodes=config.bootstrap_peers,
+                required_versions=self._component_versions,
             )
 
         # Fee market
@@ -418,6 +423,77 @@ class UnifiedNode:
     def register_synthetic_plugin(self, domain_id: str, plugin: Any) -> None:
         """Register a synthetic data generator plugin for a domain."""
         self._synthetic_plugins[domain_id] = plugin
+
+    @staticmethod
+    def _compute_component_versions() -> dict[str, str]:
+        """Compute git short hashes for DOIN component packages.
+
+        Used for the version handshake protocol: peers must have identical
+        component versions to be accepted into the network.
+        """
+        import importlib.metadata
+        import importlib.util
+        import subprocess as _sp
+
+        def _git_hash(path: str) -> str:
+            try:
+                r = _sp.run(
+                    ["git", "rev-parse", "--short=7", "HEAD"],
+                    capture_output=True, text=True, timeout=5, cwd=path,
+                )
+                if r.returncode == 0:
+                    return r.stdout.strip()
+            except Exception:
+                pass
+            return "unknown"
+
+        versions: dict[str, str] = {}
+        pkg_map = {
+            "doin-core": ("doin_core", "doin-core", [
+                Path.home() / "Documents" / "GitHub" / "doin-core",
+                Path.home() / "doin-core",
+            ]),
+            "doin-node": ("doin_node", "doin-node", [
+                Path.home() / "Documents" / "GitHub" / "doin-node",
+                Path.home() / "doin-node",
+            ]),
+            "doin-plugins": ("doin_plugins", "doin-plugins", [
+                Path.home() / "doin-plugins",
+                Path.home() / "Documents" / "GitHub" / "doin-plugins",
+            ]),
+            "predictor": ("predictor", "predictor", [
+                Path.home() / "Documents" / "GitHub" / "predictor",
+                Path.home() / "predictor",
+            ]),
+        }
+        for label, (import_name, dist_name, candidates) in pkg_map.items():
+            found = False
+            try:
+                spec = importlib.util.find_spec(import_name)
+                if spec and spec.origin:
+                    pkg_dir = Path(spec.origin).resolve().parent
+                    for parent in [pkg_dir] + list(pkg_dir.parents):
+                        if (parent / ".git").exists():
+                            versions[label] = _git_hash(str(parent))
+                            found = True
+                            break
+            except Exception:
+                pass
+            if found:
+                continue
+            for cand in candidates:
+                if cand.exists() and (cand / ".git").exists():
+                    versions[label] = _git_hash(str(cand))
+                    found = True
+                    break
+            if found:
+                continue
+            try:
+                ver = importlib.metadata.version(dist_name)
+                versions[label] = f"v{ver}"
+            except Exception:
+                versions[label] = "?"
+        return versions
 
     def _peer_id_exists(self, peer_id: str) -> bool:
         """Check if a peer with this ID already exists (on any endpoint)."""
@@ -743,8 +819,9 @@ class UnifiedNode:
         # Include sender port so receivers can connect back on the right port
         if message.payload and isinstance(message.payload, dict):
             message.payload["_sender_port"] = self.config.port
+            message.payload["_component_versions"] = self._component_versions
         elif message.payload is None:
-            message.payload = {"_sender_port": self.config.port}
+            message.payload = {"_sender_port": self.config.port, "_component_versions": self._component_versions}
         if self.gossip:
             sent = await self.gossip.publish(message)
             logger.info("📤 Broadcast %s → %d peers (gossip mesh)", message.msg_type.value, sent)
@@ -780,6 +857,22 @@ class UnifiedNode:
         # Extract the sender's advertised port from the payload.
         sender_port = (message.payload or {}).get("_sender_port", self.config.port)
         sender_endpoint = f"{sender}:{sender_port}"
+
+        # Version handshake: reject messages from peers with mismatched component versions.
+        peer_versions = (message.payload or {}).get("_component_versions")
+        if peer_versions and self._component_versions:
+            mismatches = {
+                k: (v, peer_versions.get(k, "?"))
+                for k, v in self._component_versions.items()
+                if peer_versions.get(k) != v
+            }
+            if mismatches:
+                logger.warning(
+                    "🚫 Dropping message %s from %s — version mismatch: %s",
+                    message.msg_type.value, sender_endpoint,
+                    ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in mismatches.items()),
+                )
+                return
 
         # _forwarder_id is stamped by the node that physically relayed this message.
         # When present, the HTTP connection came from the forwarder, not the original author.
@@ -820,7 +913,8 @@ class UnifiedNode:
                 forward_msg = forward_msg.model_copy(
                     update={"payload": {**(forward_msg.payload or {}),
                                         "_forwarder_id": self.peer_id,
-                                        "_sender_port": self.config.port}}
+                                        "_sender_port": self.config.port,
+                                        "_component_versions": self._component_versions}}
                 )
                 # Exclude the actual sender endpoint (compare by IP prefix, since
                 # _peers keys are "IP:port" but `sender` is a bare IP string).
@@ -2853,6 +2947,7 @@ class UnifiedNode:
             "tip_hash": tip.hash if tip else "",
             "tip_index": tip.header.index if tip else -1,
             "finalized_height": self.finality.finalized_height,
+            "component_versions": self._component_versions,
         })
 
     async def _http_chain_blocks(self, request) -> Any:
@@ -2908,7 +3003,7 @@ class UnifiedNode:
                     "port": peer.port,
                 })
         return web.json_response({
-            "self": {"peer_id": self.peer_id},
+            "self": {"peer_id": self.peer_id, "component_versions": self._component_versions},
             "peers": peers,
         })
 
