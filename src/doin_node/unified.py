@@ -2082,6 +2082,12 @@ class UnifiedNode:
         # Stage-end broadcast: called when a stage completes so all nodes advance together
         def on_stage_end_broadcast(stage, total_stages, champion_params, champion_fitness, metrics):
             """Called from optimizer thread when a stage completes → broadcast to peers."""
+            # Update plugin's _current_stage so stale-guard rejects late arrivals
+            # for this stage (the optimizer has now moved past it).
+            if hasattr(plugin, "_current_stage"):
+                plugin._current_stage = stage
+            # Reset dashboard patience for the new stage
+            node._domain_patience[domain_id] = (0, 0)
             import asyncio as _aio
             fut = _aio.run_coroutine_threadsafe(
                 node._broadcast_stage_complete(domain_id, stage, total_stages,
@@ -2301,9 +2307,9 @@ class UnifiedNode:
         # STAGE_COMPLETE for an already-passed stage from triggering an extra advance.
         if plugin and hasattr(plugin, "force_stage_advance"):
             optimizer_stage = getattr(plugin, "_current_stage", None)
-            if optimizer_stage is not None and stage < optimizer_stage:
+            if optimizer_stage is not None and stage <= optimizer_stage:
                 logger.info(
-                    "⏭️  Ignoring stale STAGE_COMPLETE (peer stage=%d < our stage=%d) for %s",
+                    "⏭️  Ignoring stale STAGE_COMPLETE (peer stage=%d <= our stage=%d) for %s",
                     stage, optimizer_stage, domain_id,
                 )
             else:
