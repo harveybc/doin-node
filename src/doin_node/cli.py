@@ -170,6 +170,7 @@ def setup_plugins(node: UnifiedNode) -> None:
 
     Uses setuptools entry points to discover plugins by name.
     """
+    _log = logging.getLogger(__name__)
     for domain_id, role in node._domain_roles.items():
         # Optimization plugin
         if role.optimize and role.optimization_plugin:
@@ -178,9 +179,9 @@ def setup_plugins(node: UnifiedNode) -> None:
                 plugin = cls()
                 plugin.configure(role.optimization_config)
                 node.register_optimizer_plugin(domain_id, plugin)
-                print(f"  Optimizer plugin '{role.optimization_plugin}' loaded for {domain_id}")
+                _log.info("Optimizer plugin '%s' loaded for %s", role.optimization_plugin, domain_id)
             except Exception as e:
-                print(f"  WARNING: Could not load optimizer plugin '{role.optimization_plugin}': {e}")
+                _log.error("Could not load optimizer plugin '%s': %s", role.optimization_plugin, e, exc_info=True)
 
         # Inference plugin
         if role.evaluate and role.inference_plugin:
@@ -189,9 +190,9 @@ def setup_plugins(node: UnifiedNode) -> None:
                 plugin = cls()
                 plugin.configure(role.optimization_config)  # Same config
                 node.register_evaluator_plugin(domain_id, plugin)
-                print(f"  Evaluator plugin '{role.inference_plugin}' loaded for {domain_id}")
+                _log.info("Evaluator plugin '%s' loaded for %s", role.inference_plugin, domain_id)
             except Exception as e:
-                print(f"  WARNING: Could not load evaluator plugin '{role.inference_plugin}': {e}")
+                _log.error("Could not load evaluator plugin '%s': %s", role.inference_plugin, e, exc_info=True)
 
         # Synthetic data plugin (MANDATORY for verification trust)
         if role.evaluate and role.synthetic_data_plugin:

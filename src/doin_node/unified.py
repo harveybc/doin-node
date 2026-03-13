@@ -1808,11 +1808,19 @@ class UnifiedNode:
         else:
             logger.info("No peers found — starting optimization from scratch")
 
+        logger.info(
+            "Optimizer loop: domains=%s registered_plugins=%s converged=%s",
+            self.optimizer_domains,
+            list(self._optimizer_plugins.keys()),
+            list(self._domain_converged),
+        )
         for domain_id in self.optimizer_domains:
             if domain_id in self._domain_converged:
+                logger.warning("Skipping %s — already converged", domain_id)
                 continue
             plugin = self._optimizer_plugins.get(domain_id)
             if plugin is None:
+                logger.error("No optimizer plugin registered for %s — skipping!", domain_id)
                 continue
 
             # Wire up DOIN callbacks on the plugin
