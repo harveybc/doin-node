@@ -208,6 +208,27 @@
                       <span id="csAvgFitness" class="text-light">--</span>
                     </div>
                   </div>
+                  <!-- NEAT-specific info (hidden when not using NEAT) -->
+                  <div id="neatInfoPanel" style="display:none">
+                    <hr style="margin:6px 0; border-color:#444">
+                    <div class="mb-1">
+                      <span class="metric-label">🧬 NEAT Optimizer</span>
+                    </div>
+                    <div class="row mb-1">
+                      <div class="col-4">
+                        <span class="metric-label">Species</span><br>
+                        <span id="csNeatSpecies" class="text-info">--</span>
+                      </div>
+                      <div class="col-4">
+                        <span class="metric-label">Avg Params</span><br>
+                        <span id="csNeatAvgComplexity" class="text-info">--</span>
+                      </div>
+                      <div class="col-4">
+                        <span class="metric-label">Candidate</span><br>
+                        <span id="csNeatCandComplexity" class="text-info">--</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -303,6 +324,8 @@
                               <tr><td><strong>Val Naive MAE</strong></td><td id="candValNaive">--</td></tr>
                               <tr><td><strong>Train Naive MAE</strong></td><td id="candTrainNaive">--</td></tr>
                               <tr><td><strong>Patience</strong></td><td id="candPatience">--</td></tr>
+                              <tr><td><strong>NEAT Species</strong></td><td id="candNeatSpecies">--</td></tr>
+                              <tr><td><strong>Active Params</strong></td><td id="candNeatComplexity">--</td></tr>
                               <tr><td><strong>Updated</strong></td><td id="candTimestamp">--</td></tr>
                             </tbody>
                           </table>
@@ -542,6 +565,13 @@ async function refreshAll() {
       if (latestGenEnd) {
         document.getElementById('csPatience').textContent = latestGenEnd.patience || '--';
         document.getElementById('csAvgFitness').textContent = latestGenEnd.avg_fitness != null ? fmt(latestGenEnd.avg_fitness, 6) : '--';
+        // NEAT-specific fields
+        if (latestGenEnd.neat_species_count != null || (latestEval && latestEval.neat_species_count != null)) {
+          document.getElementById('neatInfoPanel').style.display = 'block';
+          document.getElementById('csNeatSpecies').textContent = latestGenEnd.neat_species_count || (latestEval ? latestEval.neat_species_count : '--');
+          document.getElementById('csNeatAvgComplexity').textContent = latestGenEnd.neat_avg_complexity != null ? parseFloat(latestGenEnd.neat_avg_complexity).toFixed(1) : '--';
+          document.getElementById('csNeatCandComplexity').textContent = latestEval && latestEval.neat_complexity != null ? latestEval.neat_complexity : '--';
+        }
       }
     }
   }
@@ -555,9 +585,10 @@ async function refreshAll() {
       if (e.type === 'candidate_eval') {
         const isBetter = e.fitness != null && e.champion_fitness != null && parseFloat(e.fitness) < parseFloat(e.champion_fitness);
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
+        const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
         return `<tr style="${bg}">
           <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen} S${e.stage}/${e.total_stages}</td>
-          <td>fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${isBetter ? ' ⬆️' : ''}</td>
+          <td>fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}</td>
           <td>${t}</td></tr>`;
       } else {
         return `<tr style="background:rgba(108,117,125,0.15)">
@@ -689,9 +720,10 @@ async function refreshAll() {
             <td>NDA=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'generation_end':
+          var neatGenInfo = e.neat_species_count != null ? ` | 🧬 species=${e.neat_species_count} avg_params=${e.neat_avg_complexity != null ? parseFloat(e.neat_avg_complexity).toFixed(1) : '?'}` : '';
           return `<tr>
             <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
-            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}</td>
+            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}${neatGenInfo}</td>
             <td>${t}</td></tr>`;
         case 'stage_end':
           return `<tr style="background:rgba(255,193,7,0.15)">
@@ -773,6 +805,8 @@ async function refreshAll() {
     document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, 6) : '--';
     document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, 6) : '--';
     document.getElementById('candPatience').textContent = (candidate.no_improve_counter || 0) + '/' + (candidate.optimization_patience || '?');
+    document.getElementById('candNeatSpecies').textContent = candidate.neat_species_count != null ? candidate.neat_species_count : '--';
+    document.getElementById('candNeatComplexity').textContent = candidate.neat_complexity != null ? candidate.neat_complexity : '--';
     document.getElementById('candTimestamp').textContent = fmtTime(candidate.timestamp);
     // Parameters table
     const params = candidate.candidate_params;

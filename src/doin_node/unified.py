@@ -1962,6 +1962,8 @@ class UnifiedNode:
                 "n_generations": opt_cfg.get("n_generations", 15),
                 "no_improve_counter": pat[0],
                 "optimization_patience": pat[1],
+                "neat_species_count": stage_info.get("neat_species_count"),
+                "neat_complexity": stage_info.get("neat_complexity"),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
 
@@ -1977,7 +1979,9 @@ class UnifiedNode:
                 train_naive_mae=stage_info.get("train_naive_mae"),
                 champion_fitness=stage_info.get("champion_fitness"),
                 n_generations=opt_cfg.get("n_generations", 15),
-                no_improve_counter=pat[0], optimization_patience=pat[1])
+                no_improve_counter=pat[0], optimization_patience=pat[1],
+                neat_species_count=stage_info.get("neat_species_count"),
+                neat_complexity=stage_info.get("neat_complexity"))
 
             # Fire-and-forget champion request: keeps network champion fresh
             # so by the next generation-start injection the node has the latest optimum.
@@ -2017,7 +2021,10 @@ class UnifiedNode:
                 champion_train_naive_mae=champ_train_naive,
                 avg_fitness=avg_fit, patience=patience_str,
                 n_generations=n_gens,
-                no_improve_counter=no_improve, optimization_patience=pat_max)
+                no_improve_counter=no_improve, optimization_patience=pat_max,
+                neat_species_count=stage_info.get("neat_species_count"),
+                neat_avg_complexity=stage_info.get("neat_avg_complexity"),
+                neat_species_details=stage_info.get("neat_species_details"))
 
             logger.info(
                 "[%s] gen=%d stage=%d/%d evals=%d  champ_fitness=%.6f  champ_val_mae=%s  avg_fitness=%.6f  patience=%s",
