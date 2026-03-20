@@ -1795,18 +1795,23 @@ class UnifiedNode:
         """
         # Wait for LAN discovery + peer connections before starting optimization
         logger.info("Optimizer waiting for peer discovery...")
-        for _ in range(30):  # Up to 30s
-            await asyncio.sleep(1)
-            if self._peers:
-                # Give a moment for gossip mesh to form
-                await asyncio.sleep(3)
-                break
+        try:
+            for i in range(30):  # Up to 30s
+                await asyncio.sleep(1)
+                if self._peers:
+                    logger.info("Optimizer: peers found (%d) after %ds, waiting for mesh...", len(self._peers), i + 1)
+                    # Give a moment for gossip mesh to form
+                    await asyncio.sleep(3)
+                    break
 
-        # Request current best champion from peers (island model sync)
-        if self._peers:
-            await self._request_champions_from_peers()
-        else:
-            logger.info("No peers found — starting optimization from scratch")
+            # Request current best champion from peers (island model sync)
+            if self._peers:
+                logger.info("Optimizer: requesting champions from %d peers...", len(self._peers))
+                await self._request_champions_from_peers()
+            else:
+                logger.info("No peers found — starting optimization from scratch")
+        except Exception:
+            logger.exception("Optimizer loop error during peer discovery/champion request")
 
         logger.info(
             "Optimizer loop: domains=%s registered_plugins=%s converged=%s",
@@ -1827,7 +1832,7 @@ class UnifiedNode:
             self._setup_optimizer_callbacks(domain_id, plugin)
 
             try:
-                logger.info("🧬 Starting DEAP GA optimization for %s", domain_id)
+                logger.info("🧬 Starting optimization for %s", domain_id)
                 await self._run_full_optimization(domain_id, plugin)
                 logger.info("✅ Optimization complete for %s", domain_id)
                 self._log_event("optimization_complete", domain_id=domain_id)
