@@ -1,11 +1,11 @@
 {
-  "$doc": "Dragon node config for NEAT TCN predictor timeseries domain.",
+  "$doc": "Gamma node config for NEAT TCN predictor timeseries domain.",
   "host": "0.0.0.0",
   "port": 8470,
   "data_dir": "./doin-data-predictor",
   "bootstrap_peers": [
     "192.168.1.119:8470",
-    "192.168.0.106:8470"
+    "192.168.1.235:8470"
   ],
   "target_block_time": 600,
   "quorum_min_evaluators": 1,
@@ -46,7 +46,7 @@
         "early_patience": 80,
         "optimization_patience": 6,
         "optimization_pause_on_resume": false,
-        "node_seed_offset": 1
+        "node_seed_offset": 2
       },
       "inference_config": {
         "predictor_root": "/home/harveybc/predictor",
@@ -84,7 +84,7 @@
       },
       "resource_limits": {
         "max_training_seconds": 3600,
-        "max_memory_mb": 14000,
+        "max_memory_mb": 11000,
         "max_epochs": 2000,
         "max_batch_size": 128
       },
