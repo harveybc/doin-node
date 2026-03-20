@@ -4,8 +4,8 @@
   "port": 8470,
   "data_dir": "./doin-data-predictor",
   "bootstrap_peers": [
-    "192.168.1.119:8470",
-    "192.168.1.235:8470"
+    "192.168.0.105:8470",
+    "192.168.0.107:8470"
   ],
   "target_block_time": 600,
   "quorum_min_evaluators": 1,
