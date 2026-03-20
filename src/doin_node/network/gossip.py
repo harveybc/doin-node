@@ -239,9 +239,9 @@ class GossipSub:
             state.fanout = targets
             state.fanout_last_pub = time.time()
 
-        # Send to all targets
+        # Send to all targets (copy to avoid RuntimeError if set changes during iteration)
         sent = 0
-        for peer_id in targets:
+        for peer_id in list(targets):
             if peer_id == self.peer_id:
                 continue
             if await self._send_message(peer_id, message):
