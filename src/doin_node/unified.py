@@ -186,6 +186,9 @@ class UnifiedNodeConfig:
     # OLAP SQLite database (auto-saves every round — no manual ETL)
     olap_db_path: str = ""  # Auto-derived from data_dir if empty
 
+    # Reset chain on startup (auto-clean blockchain and OLAP data)
+    reset_chain: bool = False
+
     # Fee market
     fee_market_enabled: bool = True
     fee_config: FeeConfig = field(default_factory=FeeConfig)

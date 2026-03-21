@@ -148,6 +148,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         optimizer_loop_interval=raw.get("optimizer_loop_interval", 30.0),
         experiment_stats_file=raw.get("experiment_stats_file", ""),
         olap_db_path=raw.get("olap_db_path", ""),
+        reset_chain=raw.get("reset_chain", False),
     )
 
 
@@ -265,18 +266,19 @@ def main() -> None:
     # Load identity
     identity = load_identity(args.identity, config.data_dir)
 
-    # Reset chain if requested
-    if args.reset_chain:
-        import glob
+    # Reset chain if requested (via CLI flag or config option)
+    if args.reset_chain or config.reset_chain:
         data_path = Path(config.data_dir)
-        chain_files = list(data_path.glob("chain.db*")) + list(data_path.glob("chain.json"))
+        chain_files = (list(data_path.glob("chain.db*"))
+                       + list(data_path.glob("chain.json"))
+                       + list(data_path.glob("olap.db*")))
         if chain_files:
             for cf in chain_files:
                 cf.unlink()
                 print(f"  Deleted: {cf}")
             print(f"  Chain reset complete — {len(chain_files)} file(s) removed")
         else:
-            print("  No chain files found to reset")
+            print("  No chain/olap files found to reset")
 
     # Create node
     node = UnifiedNode(config, identity)

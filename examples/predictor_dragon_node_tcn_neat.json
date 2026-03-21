@@ -19,6 +19,7 @@
   "acceptance_tolerance": 1e-5,
   "discovery_enabled": true,
   "fee_market_enabled": false,
+  "reset_chain": true,
   "require_deterministic_seed": true,
   "domains": [
     {
@@ -31,7 +32,7 @@
       "has_synthetic_data": false,
       "target_performance": 999.0,
       "optimization_config": {
-        "predictor_root": "/home/harveybc/predictor",
+        "predictor_root": "/home/harveybc/Documents/GitHub/predictor",
         "load_config": "examples/config/phase_1_daily/optimization/phase_1_tcn_neat_1d_optimization_config.json",
         "predictor_plugin": "tcn",
         "optimizer_plugin": "neat_optimizer",
@@ -49,7 +50,7 @@
         "node_seed_offset": 1
       },
       "inference_config": {
-        "predictor_root": "/home/harveybc/predictor",
+        "predictor_root": "/home/harveybc/Documents/GitHub/predictor",
         "load_config": "examples/config/phase_1_daily/optimization/phase_1_tcn_neat_1d_optimization_config.json",
         "predictor_plugin": "tcn",
         "preprocessor_plugin": "stl_preprocessor",

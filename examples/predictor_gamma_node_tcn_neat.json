@@ -19,6 +19,7 @@
   "acceptance_tolerance": 1e-5,
   "discovery_enabled": true,
   "fee_market_enabled": false,
+  "reset_chain": true,
   "require_deterministic_seed": true,
   "domains": [
     {
