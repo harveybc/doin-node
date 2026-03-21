@@ -56,6 +56,11 @@
         </span>
       </li>
       <li class="nav-item">
+        <span class="nav-link text-warning" id="pluginLabel">
+          <i class="fas fa-brain"></i> <span id="predictorPlugin">--</span> | <i class="fas fa-cogs"></i> <span id="optimizerPlugin">--</span>
+        </span>
+      </li>
+      <li class="nav-item">
         <span class="nav-link" id="uptimeLabel"><i class="fas fa-clock"></i> <span id="uptime">--</span></span>
       </li>
       <li class="nav-item">
@@ -448,6 +453,12 @@ async function refreshAll() {
     document.getElementById('nodePort').textContent = node.port;
     document.getElementById('uptime').textContent = fmtUptime(node.uptime_s);
     document.getElementById('chainHeight').textContent = node.chain_height;
+    // Show plugin names from first domain
+    if (node.domains && node.domains.length > 0) {
+      var d = node.domains[0];
+      document.getElementById('predictorPlugin').textContent = d.predictor_plugin || '--';
+      document.getElementById('optimizerPlugin').textContent = d.optimizer_plugin || '--';
+    }
     // Show package versions in footer
     if (node.versions) {
       var v = node.versions;

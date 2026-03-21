@@ -180,11 +180,16 @@ async def _api_node(request: web.Request) -> web.Response:
     uptime = time.time() - node._start_time
     domains = []
     for did, dr in node._domain_roles.items():
+        oc = dr.optimization_config or {}
         domains.append({
             "domain_id": dr.domain_id,
             "optimize": dr.optimize,
             "evaluate": dr.evaluate,
             "synthetic": did in node._synthetic_plugins,
+            "predictor_plugin": oc.get("predictor_plugin", ""),
+            "optimizer_plugin": oc.get("optimizer_plugin", ""),
+            "pipeline_plugin": oc.get("pipeline_plugin", ""),
+            "preprocessor_plugin": oc.get("preprocessor_plugin", ""),
         })
     return web.json_response({
         "peer_id": node.identity.peer_id if node.identity else "unknown",

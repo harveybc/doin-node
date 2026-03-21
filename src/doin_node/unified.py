@@ -242,6 +242,9 @@ class UnifiedNode:
         self._component_versions: dict[str, str] = self._compute_component_versions()
         logger.info("Component versions: %s", self._component_versions)
 
+        # ── Plugin configs (computed after domain registration, used for peer plugin handshake) ──
+        self._plugin_configs: dict[str, str] = {}
+
         # Peer discovery
         self.discovery: PeerDiscovery | None = None
         if config.discovery_enabled:
@@ -358,6 +361,15 @@ class UnifiedNode:
         # ── Register domains ──
         for domain_role in config.domains:
             self._register_domain(domain_role)
+
+        # ── Populate plugin configs for handshake verification ──
+        for did, dr in self._domain_roles.items():
+            oc = dr.optimization_config or {}
+            for key in ("predictor_plugin", "optimizer_plugin"):
+                if oc.get(key):
+                    self._plugin_configs[f"{did}:{key}"] = oc[key]
+        if self._plugin_configs:
+            logger.info("Plugin configs: %s", self._plugin_configs)
 
     # ================================================================
     # Properties
@@ -826,8 +838,9 @@ class UnifiedNode:
         if message.payload and isinstance(message.payload, dict):
             message.payload["_sender_port"] = self.config.port
             message.payload["_component_versions"] = self._component_versions
+            message.payload["_plugin_configs"] = self._plugin_configs
         elif message.payload is None:
-            message.payload = {"_sender_port": self.config.port, "_component_versions": self._component_versions}
+            message.payload = {"_sender_port": self.config.port, "_component_versions": self._component_versions, "_plugin_configs": self._plugin_configs}
         if self.gossip:
             sent = await self.gossip.publish(message)
             logger.info("📤 Broadcast %s → %d peers (gossip mesh)", message.msg_type.value, sent)
@@ -880,6 +893,22 @@ class UnifiedNode:
                 )
                 return
 
+        # Plugin config handshake: reject messages from peers with different predictor/optimizer plugins.
+        peer_plugins = (message.payload or {}).get("_plugin_configs")
+        if peer_plugins and self._plugin_configs:
+            plugin_mismatches = {
+                k: (v, peer_plugins.get(k, "?"))
+                for k, v in self._plugin_configs.items()
+                if peer_plugins.get(k) != v
+            }
+            if plugin_mismatches:
+                logger.warning(
+                    "🚫 Dropping message %s from %s — plugin mismatch: %s",
+                    message.msg_type.value, sender_endpoint,
+                    ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in plugin_mismatches.items()),
+                )
+                return
+
         # _forwarder_id is stamped by the node that physically relayed this message.
         # When present, the HTTP connection came from the forwarder, not the original author.
         # Rule:
@@ -922,7 +951,8 @@ class UnifiedNode:
                     update={"payload": {**(forward_msg.payload or {}),
                                         "_forwarder_id": self.peer_id,
                                         "_sender_port": self.config.port,
-                                        "_component_versions": self._component_versions}}
+                                        "_component_versions": self._component_versions,
+                                        "_plugin_configs": self._plugin_configs}}
                 )
                 # Exclude the actual sender endpoint (compare by IP prefix, since
                 # _peers keys are "IP:port" but `sender` is a bare IP string).
