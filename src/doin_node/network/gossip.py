@@ -197,6 +197,27 @@ class GossipSub:
             state.mesh.discard(peer_id)
             state.fanout.discard(peer_id)
 
+    def rename_peer(self, old_id: str, new_id: str) -> None:
+        """Replace old_id with new_id across all gossip data structures."""
+        if old_id not in self._known_peers:
+            return
+        self._known_peers.discard(old_id)
+        self._known_peers.add(new_id)
+        score = self._peer_scores.pop(old_id, None)
+        if score:
+            score.peer_id = new_id
+            self._peer_scores[new_id] = score
+        topics = self._peer_topics.pop(old_id, None)
+        if topics:
+            self._peer_topics[new_id] = topics
+        for state in self._topics.values():
+            if old_id in state.mesh:
+                state.mesh.discard(old_id)
+                state.mesh.add(new_id)
+            if old_id in state.fanout:
+                state.fanout.discard(old_id)
+                state.fanout.add(new_id)
+
     # ── Publishing ───────────────────────────────────────────────
 
     async def publish(self, message: Message) -> int:

@@ -539,7 +539,10 @@ class UnifiedNode:
             existing = self._peers[endpoint]
             # Update placeholder with real peer_id if we now know it.
             if peer_id and existing.peer_id != peer_id and existing.peer_id == endpoint:
+                old_id = existing.peer_id
                 existing.peer_id = peer_id
+                if self.gossip:
+                    self.gossip.rename_peer(old_id, peer_id)
             return existing
         peer = Peer(
             peer_id=pid,
@@ -898,6 +901,8 @@ class UnifiedNode:
                     old_id = existing.peer_id
                     existing.peer_id = routing_peer_id
                     logger.info("🔍 Resolved peer %s → %s", old_id, routing_peer_id[:12])
+                    if self.gossip:
+                        self.gossip.rename_peer(old_id, routing_peer_id)
             else:
                 self.add_peer(sender, sender_port, peer_id=routing_peer_id)
                 logger.info("🔍 Auto-discovered peer %s:%s (id=%s)",
