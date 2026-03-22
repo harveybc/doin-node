@@ -17,14 +17,28 @@ import time
 from datetime import datetime
 
 
+import math
+
+
 def _json_default(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+def _sanitize_for_json(obj):
+    """Recursively replace Infinity/NaN floats with None for valid JSON."""
+    if isinstance(obj, float) and (math.isinf(obj) or math.isnan(obj)):
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
 def _dumps(obj):
-    return json.dumps(obj, default=_json_default)
+    return json.dumps(_sanitize_for_json(obj), default=_json_default)
 from pathlib import Path
 from typing import Any
 
