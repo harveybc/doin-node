@@ -404,6 +404,47 @@ Every node syncing the chain gets the full experiment history of ALL participant
 - **L2**: Genetic algorithms / optimization plugins — what DOIN decentralizes
 - **L3**: Deep learning meta-optimizer trained on OLAP data from all network participants
 
+### Importing Blockchain Data to Metabase
+
+The `chain.db` SQLite database produced by each node can be imported directly into [Metabase](https://www.metabase.com/) for visualization and analysis. An example database from a Phase 1 TCN+NEAT optimization run is included in `examples/results/phase_1_daily/blockchain/`.
+
+**Quick Start:**
+
+1. **Install Metabase** (Docker is simplest):
+   ```bash
+   docker run -d -p 3000:3000 --name metabase metabase/metabase
+   ```
+
+2. **Copy the blockchain database** to a known path:
+   ```bash
+   cp examples/results/phase_1_daily/blockchain/chain.db /tmp/chain.db
+   ```
+
+3. **Add SQLite database in Metabase**:
+   - Open `http://localhost:3000` → Admin → Databases → Add database
+   - Type: **SQLite**
+   - Filename: `/tmp/chain.db`
+
+4. **Create questions/dashboards** using these tables:
+   - `blocks` — One row per accepted block (block_index, timestamp, weighted_performance_sum, generator_id)
+   - `transactions` — Two rows per block: summary (tx_index=0) and verified result (tx_index=1). The payload JSON at tx_index=1 contains `verified_performance`, `val_mae`, `test_mae`, `train_mae`, and all naive baselines
+   - `peers` — Network peer registry
+
+5. **Example queries**:
+   ```sql
+   -- Performance progression across blocks
+   SELECT b.block_index, b.timestamp, b.weighted_performance_sum,
+          json_extract(t.payload, '$.val_mae') as val_mae,
+          json_extract(t.payload, '$.test_mae') as test_mae,
+          json_extract(t.payload, '$.val_naive_mae') as val_naive_mae
+   FROM blocks b
+   JOIN transactions t ON t.block_index = b.block_index AND t.tx_index = 1
+   WHERE b.block_index > 0
+   ORDER BY b.block_index;
+   ```
+
+A pre-exported flat CSV (`optimization_metrics.csv`) is also included for tools that don't support SQLite directly.
+
 ## Benchmarks
 
 ### 3-Node Island Model Benchmark
