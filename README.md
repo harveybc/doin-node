@@ -185,104 +185,165 @@ See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.
 }
 ```
 
-## Multi-Node Predictor Deployment (Real Example)
+## Running a TCN NEAT Experiment
 
-This deploys the [harveybc/predictor](https://github.com/harveybc/predictor) timeseries system across multiple machines with DOIN handling island-model migration.
+This section covers the actual deployment of a DOIN network for distributed NEAT optimization of TCN time series models using the [harveybc/predictor](https://github.com/harveybc/predictor).
 
 ### Prerequisites (each machine)
 
-Follow the [Install](#install) section above on **every machine** (conda or venv — same environment everywhere). Then verify:
+1. **Install conda environment** with TensorFlow and GPU support:
 
 ```bash
-# Activate your environment first
-conda activate doin   # or: source ~/doin-env/bin/activate
+conda create -n tensorflow python=3.12 -y
+conda activate tensorflow
+pip install tensorflow[and-cuda]
+```
 
-# Verify
-doin-node --help
+2. **Clone and install all 4 repositories** (order matters — core first):
+
+```bash
+cd ~/Documents/GitHub   # or any preferred directory
+
+git clone https://github.com/harveybc/doin-core.git
+cd doin-core && pip install -e . && cd ..
+
+git clone https://github.com/harveybc/doin-node.git
+cd doin-node && pip install -e . && cd ..
+
+git clone https://github.com/harveybc/doin-plugins.git
+cd doin-plugins && pip install -e . && cd ..
+
+git clone https://github.com/harveybc/predictor.git
+cd predictor && pip install -r requirements.txt && pip install -e . && cd ..
+```
+
+3. **Verify installation**:
+
+```bash
 python -c "from doin_plugins.predictor.optimizer import PredictorOptimizer; print('OK')"
+python -c "import tensorflow as tf; print('GPUs:', tf.config.list_physical_devices('GPU'))"
 ```
 
-> **Note**: Each machine needs its own copy of the predictor repo (or a shared
-> NFS mount). The `predictor_root` field in your config must point to it.
+### Starting a New Experiment from Scratch
 
-### Node 1 — First Node (seed)
+This starts a fresh optimization with an empty blockchain. All nodes begin with random NEAT populations and collaborate by sharing champions.
 
-Create `config_node1.json`:
+#### Step 1: Start the Seed Node
 
-```json
-{
-  "host": "0.0.0.0",
-  "port": 8470,
-  "data_dir": "./doin-data-predictor",
-  "bootstrap_peers": [],
-  "network_protocol": "gossipsub",
-  "discovery_enabled": true,
-  "initial_threshold": 1e-6,
-  "quorum_min_evaluators": 1,
-  "storage_backend": "sqlite",
-  "fee_market_enabled": false,
-  "domains": [{
-    "domain_id": "predictor-timeseries",
-    "optimize": true,
-    "evaluate": true,
-    "optimization_plugin": "predictor",
-    "inference_plugin": "predictor",
-    "has_synthetic_data": true,
-    "synthetic_data_validation": false,
-    "target_performance": 999.0,
-    "optimization_config": {
-      "predictor_root": "/path/to/predictor",
-      "load_config": "examples/config/phase_1_daily/optimization/phase_1_mimo_1d_optimization_config.json",
-      "predictor_plugin": "mimo",
-      "preprocessor_plugin": "stl_preprocessor",
-      "target_plugin": "default_target",
-      "pipeline_plugin": "stl_pipeline",
-      "step_size_fraction": 0.15,
-      "epochs": 50,
-      "batch_size": 32,
-      "population_size": 10,
-      "n_generations": 5,
-      "early_patience": 15,
-      "early_stopping_patience": 2
-    },
-    "param_bounds": {
-      "encoder_conv_layers": [1, 3],
-      "encoder_base_filters": [16, 64],
-      "encoder_lstm_units": [8, 32],
-      "learning_rate": [1e-5, 0.01],
-      "batch_size": [16, 64],
-      "l2_reg": [1e-7, 0.001],
-      "decoder_dropout": [0.0, 0.5]
-    },
-    "resource_limits": {
-      "max_training_seconds": 3600,
-      "max_memory_mb": 14000,
-      "max_epochs": 2000
-    }
-  }],
-  "experiment_stats_file": "./predictor_stats.csv"
-}
-```
-
-Start:
+On the first machine, start with an empty `bootstrap_peers` list. The seed node creates the genesis block.
 
 ```bash
-cd /path/to/predictor
-doin-node --config /path/to/config_node1.json --log-level INFO --olap-db predictor_olap.db
+conda activate tensorflow
+export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
+cd ~/Documents/GitHub/doin-node
+nohup python -m doin_node.cli --config examples/predictor_omega_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
 ```
 
-### Node 2+ — Additional Nodes
+> **Important GPU note**: The `TF_FORCE_GPU_ALLOW_GROWTH=1` and `TF_GPU_ALLOCATOR=cuda_malloc_async` environment variables are **required** on GPU machines. Without them, the parent process pre-allocates all GPU memory, leaving none for training subprocesses (OOM errors).
 
-Same config, but add `bootstrap_peers` pointing to Node 1:
+Verify it started:
 
-```json
-{
-  "bootstrap_peers": ["192.168.1.100:8470"],
-  ...
-}
+```bash
+# Check model input shape (expect 7 features: 1 price + 6 temporal sincos)
+grep "input_layer" /tmp/doin_launch.log
+
+# Check for errors
+grep -c "ERROR during training" /tmp/doin_launch.log
+
+# Open dashboard in browser
+# http://<seed-ip>:8470/dashboard
 ```
 
-Nodes discover each other via LAN scan + bootstrap. Each runs the **full DEAP genetic algorithm** independently. When a node finds a champion, it broadcasts parameters on-chain; other nodes auto-accept if better and inject into their population (island model migration).
+#### Step 2: Join Additional Nodes
+
+On each additional machine, ensure `bootstrap_peers` in the config points to the seed node and any other existing nodes. The example configs (`predictor_gamma_node_tcn_neat.json`, `predictor_dragon_node_tcn_neat.json`) are pre-configured for the 3-node LAN setup.
+
+Each node config must have a unique `node_seed_offset` (0, 1, 2, ...) to ensure different random seeds across the network.
+
+```bash
+conda activate tensorflow
+export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
+cd ~/Documents/GitHub/doin-node
+nohup python -m doin_node.cli --config examples/predictor_gamma_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
+```
+
+Verify peer connectivity:
+
+```bash
+curl -s http://localhost:8470/api/peers | python3 -m json.tool
+# Should show connected_count matching the number of running nodes
+```
+
+#### Step 3: Monitor Progress
+
+- **Dashboard**: `http://<any-node-ip>:8470/dashboard` — live optimization progress, training status, peer connections
+- **Logs**: `tail -f /tmp/doin_launch.log`
+- **GPU utilization**: `nvidia-smi` — expect 50-90% during training
+- **Peer check**: `curl -s http://localhost:8470/api/peers`
+
+### Joining a Running Optimization
+
+To add a new node to an existing experiment (nodes already running, blockchain has blocks):
+
+1. **Ensure `reset_chain: true`** in your config — the new node starts with a fresh local chain and syncs from peers automatically.
+
+2. **Set `bootstrap_peers`** to at least one running node's address.
+
+3. **Launch normally**:
+
+```bash
+conda activate tensorflow
+export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
+cd ~/Documents/GitHub/doin-node
+nohup python -m doin_node.cli --config examples/predictor_dragon_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
+```
+
+The new node will:
+- Connect to peers and sync the blockchain
+- Import the current best champion from the chain into its population
+- Start its own NEAT optimization, contributing candidates to the network
+- Receive future champion broadcasts from other nodes
+
+### Updating a Running Node
+
+To apply code changes to a node that's part of a running experiment:
+
+```bash
+# 1. Pull latest code on the target machine
+cd ~/Documents/GitHub/predictor && git pull && pip install -e .
+cd ~/Documents/GitHub/doin-plugins && git pull && pip install -e .
+cd ~/Documents/GitHub/doin-core && git pull && pip install -e .
+cd ~/Documents/GitHub/doin-node && git pull && pip install -e .
+
+# 2. Find and kill the running node
+pgrep -f doin_node
+python3 -c "import os, signal; os.kill(<PID>, signal.SIGKILL)"
+
+# 3. Relaunch (with reset_chain: true to sync fresh from peers)
+conda activate tensorflow
+export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+cd ~/Documents/GitHub/doin-node
+nohup python -m doin_node.cli --config examples/<node_config>.json > /tmp/doin_launch.log 2>&1 &
+```
+
+### 3-Node LAN Config Files
+
+Ready-to-use configurations for a 3-node setup:
+
+| Config | Machine | IP | GPU | `node_seed_offset` |
+|--------|---------|-----|-----|-------------------|
+| `predictor_omega_node_tcn_neat.json` | Omega | 192.168.0.105 | RTX 4070 Laptop | 0 |
+| `predictor_dragon_node_tcn_neat.json` | Dragon | 192.168.0.107 | RTX 5070 Ti | 1 |
+| `predictor_gamma_node_tcn_neat.json` | Gamma | 192.168.0.106 | RTX 5070 Ti Laptop | 2 |
+
+Each config references the predictor optimization config at `examples/config/phase_1_daily/optimization/phase_1_tcn_neat_1d_optimization_config.json` within the predictor repo. The `predictor_root` field must point to the local predictor repository path on each machine.
 
 ### Three-Level Patience System
 
@@ -319,10 +380,10 @@ DOIN's optimization pipeline uses three distinct patience/stopping levels. Under
 
 ### Example: 3-Node LAN Deployment
 
-See ready-to-use config files in `examples/`:
-- `predictor_single_node.json` — seed node (Dragon, RTX 4090)
-- `predictor_omega_node.json` — GPU node (Omega, RTX 4070)
-- `predictor_delta_node.json` — CPU-only node (Delta)
+See the [Running a TCN NEAT Experiment](#running-a-tcn-neat-experiment) section above for ready-to-use configs:
+- `predictor_omega_node_tcn_neat.json` — Omega (RTX 4070 Laptop)
+- `predictor_gamma_node_tcn_neat.json` — Gamma (RTX 5070 Ti Laptop)
+- `predictor_dragon_node_tcn_neat.json` — Dragon (RTX 5070 Ti)
 
 ## Dashboard
 
