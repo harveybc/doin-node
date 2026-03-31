@@ -81,7 +81,12 @@
         "tcn_use_batch_norm": [0, 1],
         "tcn_use_layer_norm": [0, 1],
         "l2_reg": [1e-07, 0.001],
-        "min_delta": [1e-10, 1e-06]
+        "min_delta": [1e-10, 1e-06],
+        "use_temporal_features": [0, 1],
+        "hod_encoding": [0, 2],
+        "dow_encoding": [0, 2],
+        "moy_encoding": [0, 2],
+        "loss_type": [0, 4]
       },
       "resource_limits": {
         "max_training_seconds": 3600,
