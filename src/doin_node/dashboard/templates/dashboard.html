@@ -153,15 +153,9 @@
                   <!-- Progress -->
                   <div class="row mb-2">
                     <div class="col-6">
-                      <span class="metric-label">Stage</span><br>
-                      <span id="csStage" class="metric-value">-</span><small id="csTotalStages">/0</small>
-                    </div>
-                    <div class="col-6">
                       <span class="metric-label">Generation</span><br>
                       <span id="csGen" class="metric-value">-</span>
                     </div>
-                  </div>
-                  <div class="row mb-2">
                     <div class="col-6">
                       <span class="metric-label">Candidate</span><br>
                       <span id="csCandidate" class="metric-value">-</span><small id="csTotalCandidates">/0</small>
@@ -318,7 +312,6 @@
                           <table class="table table-sm table-bordered" style="font-size:12px; margin-bottom:8px;">
                             <tbody>
                               <tr><td style="width:40%"><strong>Domain</strong></td><td id="candDomain">--</td></tr>
-                              <tr><td><strong>Stage</strong></td><td id="candStage">--</td></tr>
                               <tr><td><strong>Generation</strong></td><td id="candGen">--</td></tr>
                               <tr><td><strong>Candidate</strong></td><td id="candNum">--</td></tr>
                               <tr><td><strong>Total Evals</strong></td><td id="candTotalEvals">--</td></tr>
@@ -545,8 +538,6 @@ async function refreshAll() {
 
       // Progress from latest candidate_eval (most granular) or generation_end
       const prog = latestEval || latestGenEnd || {};
-      document.getElementById('csStage').textContent = prog.stage || '-';
-      document.getElementById('csTotalStages').textContent = '/' + (prog.total_stages || '?');
       document.getElementById('csGen').textContent = prog.gen != null ? prog.gen : '-';
       document.getElementById('csCandidate').textContent = prog.candidate_num != null ? prog.candidate_num : '-';
       document.getElementById('csTotalCandidates').textContent = '/' + (prog.total_candidates || '?');
@@ -598,12 +589,12 @@ async function refreshAll() {
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
         return `<tr style="${bg}">
-          <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen} S${e.stage}/${e.total_stages}</td>
+          <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen}</td>
           <td>fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}</td>
           <td>${t}</td></tr>`;
       } else {
         return `<tr style="background:rgba(108,117,125,0.15)">
-          <td><span class="badge badge-secondary">Gen ${e.gen}</span> S${e.stage}/${e.total_stages}</td>
+          <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
           <td>champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} | avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''} | evals=${e.total_evals||0}</td>
           <td>${t}</td></tr>`;
       }
@@ -618,8 +609,6 @@ async function refreshAll() {
     const latGen = evList.find(e => e.type === 'generation_end');
     const prog = latEval || latGen || {};
     const totalEvals = parseInt(prog.total_evals || 0);
-    const curStage = parseInt(prog.stage || 1);
-    const totStages = parseInt(prog.total_stages || 1);
     const curGen = parseInt(prog.gen != null ? prog.gen : 0);
     const curCand = parseInt(latEval ? (latEval.candidate_num || 0) : 0);
     const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : 20));
@@ -634,21 +623,19 @@ async function refreshAll() {
     if (optComplete) {
       // Optimization finished — show completion state
       document.getElementById('remainingCard').innerHTML =
-        `S${totStages}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}<br><small>Complete</small>`;
+        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}<br><small>Complete</small>`;
       document.getElementById('progressCard').innerHTML = `100%`;
     } else {
-      // Remaining: candidates in current gen + remaining gens in stage + remaining stages
+      // Remaining: candidates in current gen + remaining gens
       const candsLeftThisGen = Math.max(0, totCand - curCand);
-      const gensLeftThisStage = Math.max(0, nGens - curGen - 1);
-      const stagesLeft = Math.max(0, totStages - curStage);
+      const gensLeft = Math.max(0, nGens - curGen);
       document.getElementById('remainingCard').innerHTML =
-        `S${curStage}/${totStages} G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
+        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
 
-      // Progress: compute overall % (stage-weighted)
-      const stageProgress = (curStage - 1) / totStages;  // completed stages
-      const genProgressInStage = (curGen / nGens);  // within current stage
+      // Progress: generation + candidate progress
+      const genProgress = nGens > 0 ? curGen / nGens : 0;
       const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
-      const overallPct = ((stageProgress + (genProgressInStage + candProgressInGen / nGens) / totStages) * 100).toFixed(1);
+      const overallPct = ((genProgress + candProgressInGen / Math.max(nGens, 1)) * 100).toFixed(1);
       document.getElementById('progressCard').innerHTML = `${overallPct}%`;
     }
   }
@@ -713,7 +700,7 @@ async function refreshAll() {
           var breakdown = `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
           return `<tr style="background:rgba(40,167,69,0.15)">
             <td><span class="badge badge-success">🏆 Champion</span></td>
-            <td>Gen ${e.gen} Stage ${e.stage} | <strong>NDA=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
+            <td>Gen ${e.gen} | <strong>NDA=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
             <td>${t}</td></tr>`;
         case 'broadcast':
           return `<tr style="background:rgba(23,162,184,0.1)">
@@ -734,7 +721,7 @@ async function refreshAll() {
           var neatGenInfo = e.neat_species_count != null ? ` | 🧬 species=${e.neat_species_count} avg_params=${e.neat_avg_complexity != null ? parseFloat(e.neat_avg_complexity).toFixed(1) : '?'}` : '';
           return `<tr>
             <td><span class="badge badge-secondary">Gen ${e.gen}</span></td>
-            <td>Stage ${e.stage}/${e.total_stages} | evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}${neatGenInfo}</td>
+            <td>evals=${e.total_evals||0} champ_fit=${f(e.champion_fitness,6)} champ_val=${f(e.champion_val_mae)} champ_train=${f(e.champion_train_mae)} avg_fit=${f(e.avg_fitness,4)} patience=${e.patience||''}${neatGenInfo}</td>
             <td>${t}</td></tr>`;
         case 'stage_end':
           return `<tr style="background:rgba(255,193,7,0.15)">
@@ -805,7 +792,6 @@ async function refreshAll() {
     document.getElementById('candidateEmpty').style.display = 'none';
     document.getElementById('candidateContent').style.display = 'block';
     document.getElementById('candDomain').textContent = candidate.domain_id || '--';
-    document.getElementById('candStage').textContent = (candidate.stage || '-') + '/' + (candidate.total_stages || '?');
     document.getElementById('candGen').textContent = candidate.gen != null ? candidate.gen : '--';
     document.getElementById('candNum').textContent = (candidate.candidate_num || '-') + '/' + (candidate.total_candidates || '?');
     document.getElementById('candTotalEvals').textContent = candidate.total_evals || '--';
