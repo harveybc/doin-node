@@ -187,11 +187,11 @@ See [INSTALL.md](https://github.com/harveybc/doin-node/blob/master/docs/INSTALL.
 
 ## Running a TCN NEAT Experiment
 
-This section covers the actual deployment of a DOIN network for distributed NEAT optimization of TCN time series models using the [harveybc/predictor](https://github.com/harveybc/predictor).
+This section covers the deployment of a DOIN network for distributed NEAT optimization of TCN time series models using the [harveybc/predictor](https://github.com/harveybc/predictor).
 
 ### Prerequisites (each machine)
 
-1. **Install conda environment** with TensorFlow and GPU support:
+#### 1. Install conda environment
 
 ```bash
 conda create -n tensorflow python=3.12 -y
@@ -199,7 +199,7 @@ conda activate tensorflow
 pip install tensorflow[and-cuda]
 ```
 
-2. **Clone and install all 4 repositories** (order matters — core first):
+#### 2. Clone and install all 4 repositories (order matters)
 
 ```bash
 cd ~/Documents/GitHub   # or any preferred directory
@@ -217,91 +217,184 @@ git clone https://github.com/harveybc/predictor.git
 cd predictor && pip install -r requirements.txt && pip install -e . && cd ..
 ```
 
-3. **Verify installation**:
+#### 3. Configure GPU (CRITICAL — read carefully)
+
+TensorFlow requires three environment variables. Without them, training runs on CPU or crashes with OOM.
+
+**Variable 1 — `TF_FORCE_GPU_ALLOW_GROWTH`**: Prevents the parent process from pre-allocating all GPU memory (which starves training subprocesses). **Must be `true`, not `1`** — TensorFlow rejects the value `"1"` with a parsing error and silently falls back to pre-allocation.
+
+```bash
+export TF_FORCE_GPU_ALLOW_GROWTH=true    # CORRECT
+# export TF_FORCE_GPU_ALLOW_GROWTH=1     # WRONG — TF rejects this silently
+```
+
+**Variable 2 — `TF_GPU_ALLOCATOR`**: Enables the async CUDA memory allocator for better multi-process GPU sharing.
+
+```bash
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+```
+
+**Variable 3 — `LD_LIBRARY_PATH` (machines without system CUDA)**: If CUDA was installed via `pip install tensorflow[and-cuda]` (NOT via system `/usr/local/cuda`), the CUDA libraries live inside the conda environment's `site-packages/nvidia/` directory. TensorFlow cannot find them without this:
+
+```bash
+NB=$CONDA_PREFIX/lib/python3.12/site-packages/nvidia
+export LD_LIBRARY_PATH="${NB}/cudnn/lib:${NB}/cublas/lib:${NB}/cuda_runtime/lib:${NB}/cufft/lib:${NB}/curand/lib:${NB}/cusolver/lib:${NB}/cusparse/lib:${NB}/cuda_cupti/lib:${NB}/nvjitlink/lib:${NB}/cuda_nvrtc/lib:${NB}/nccl/lib"
+```
+
+> **How to tell if you need this**: If `/usr/local/cuda/lib64/libcudart.so` exists, you have system CUDA and do NOT need `LD_LIBRARY_PATH`. If it doesn't exist, you need the export above. When in doubt, set it — it does no harm on machines with system CUDA.
+
+> **Blackwell GPUs (RTX 50xx)**: TensorFlow 2.21 does not ship pre-compiled CUDA kernels for compute capability 12.x. On first launch, all kernels are JIT-compiled from PTX, which adds ~30 minutes of startup delay. This only happens once per kernel shape.
+
+#### 4. Verify GPU setup
+
+```bash
+conda activate tensorflow
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+# Set LD_LIBRARY_PATH if needed (see step 3)
+
+python3 -c "import tensorflow as tf; gpus = tf.config.list_physical_devices('GPU'); print('GPUs:', gpus); assert len(gpus) > 0, 'NO GPU DETECTED'"
+```
+
+If this prints `GPUs: []`, fix the `LD_LIBRARY_PATH` before proceeding.
+
+#### 5. Verify DOIN installation
 
 ```bash
 python -c "from doin_plugins.predictor.optimizer import PredictorOptimizer; print('OK')"
-python -c "import tensorflow as tf; print('GPUs:', tf.config.list_physical_devices('GPU'))"
 ```
+
+#### 6. Edit the node config
+
+Open one of the example configs in `doin-node/examples/` and set `predictor_root` to the **absolute path** of the predictor repository on this machine. This path appears in both `optimization_config` and `inference_config`:
+
+```json
+"predictor_root": "/home/harveybc/Documents/GitHub/predictor"
+```
+
+Each node config must also have a **unique `node_seed_offset`** (0, 1, 2, ...) for different random seeds.
 
 ### Starting a New Experiment from Scratch
 
 This starts a fresh optimization with an empty blockchain. All nodes begin with random NEAT populations and collaborate by sharing champions.
 
-#### Step 1: Start the Seed Node
-
-On the first machine, start with an empty `bootstrap_peers` list. The seed node creates the genesis block.
+The complete launch sequence for every node is:
 
 ```bash
+# 1. Activate environment
 conda activate tensorflow
-export TF_FORCE_GPU_ALLOW_GROWTH=1
-export TF_GPU_ALLOCATOR=cuda_malloc_async
 
+# 2. Set GPU environment variables (ALL THREE — see Prerequisites step 3)
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+# If no system CUDA (see step 3):
+NB=$CONDA_PREFIX/lib/python3.12/site-packages/nvidia
+export LD_LIBRARY_PATH="${NB}/cudnn/lib:${NB}/cublas/lib:${NB}/cuda_runtime/lib:${NB}/cufft/lib:${NB}/curand/lib:${NB}/cusolver/lib:${NB}/cusparse/lib:${NB}/cuda_cupti/lib:${NB}/nvjitlink/lib:${NB}/cuda_nvrtc/lib:${NB}/nccl/lib"
+
+# 3. Navigate to doin-node
 cd ~/Documents/GitHub/doin-node
-nohup python -m doin_node.cli --config examples/predictor_omega_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
+
+# 4. Launch (replace <config> with your node's config file)
+nohup python -m doin_node.cli \
+  --config examples/<config>.json \
+  > /tmp/doin_launch.log 2>&1 &
+echo "PID: $!"
 ```
 
-> **Important GPU note**: The `TF_FORCE_GPU_ALLOW_GROWTH=1` and `TF_GPU_ALLOCATOR=cuda_malloc_async` environment variables are **required** on GPU machines. Without them, the parent process pre-allocates all GPU memory, leaving none for training subprocesses (OOM errors).
+#### Step 1: Start the Seed Node
 
-Verify it started:
+Launch the first node. It creates the genesis block. The seed node's `bootstrap_peers` should list the other nodes' IPs (they don't need to be running yet — discovery will find them once they start).
 
 ```bash
-# Check model input shape (expect 7 features: 1 price + 6 temporal sincos)
-grep "input_layer" /tmp/doin_launch.log
+# On Omega (seed node)
+nohup python -m doin_node.cli \
+  --config examples/predictor_omega_node_tcn_neat.json \
+  > /tmp/doin_omega.log 2>&1 &
+```
 
-# Check for errors
-grep -c "ERROR during training" /tmp/doin_launch.log
+Verify it started correctly:
 
-# Open dashboard in browser
-# http://<seed-ip>:8470/dashboard
+```bash
+# Wait ~20 seconds for first candidate to start, then:
+grep "Created device" /tmp/doin_omega.log
+# Expected: "Created device /job:localhost/.../GPU:0 with XXXX MB memory"
+# If you see "Skipping registering GPU devices" → GPU NOT working (fix LD_LIBRARY_PATH)
+
+grep "input_layer" /tmp/doin_omega.log
+# Expected: "(None, 51, 7)" — 7 features = 1 price + 6 temporal sincos
+
+grep "could not be parsed" /tmp/doin_omega.log
+# Should return nothing. If it shows TF_FORCE_GPU_ALLOW_GROWTH error → you used "1" instead of "true"
 ```
 
 #### Step 2: Join Additional Nodes
 
-On each additional machine, ensure `bootstrap_peers` in the config points to the seed node and any other existing nodes. The example configs (`predictor_gamma_node_tcn_neat.json`, `predictor_dragon_node_tcn_neat.json`) are pre-configured for the 3-node LAN setup.
-
-Each node config must have a unique `node_seed_offset` (0, 1, 2, ...) to ensure different random seeds across the network.
+On each additional machine, ensure `bootstrap_peers` in the config points to running nodes. The example configs are pre-configured for the 3-node LAN setup.
 
 ```bash
-conda activate tensorflow
-export TF_FORCE_GPU_ALLOW_GROWTH=1
-export TF_GPU_ALLOCATOR=cuda_malloc_async
-
-cd ~/Documents/GitHub/doin-node
-nohup python -m doin_node.cli --config examples/predictor_gamma_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
+# On Gamma
+nohup python -m doin_node.cli \
+  --config examples/predictor_gamma_node_tcn_neat.json \
+  > /tmp/doin_gamma.log 2>&1 &
 ```
-
-Verify peer connectivity:
 
 ```bash
-curl -s http://localhost:8470/api/peers | python3 -m json.tool
-# Should show connected_count matching the number of running nodes
+# On Dragon
+nohup python -m doin_node.cli \
+  --config examples/predictor_dragon_node_tcn_neat.json \
+  > /tmp/doin_dragon.log 2>&1 &
 ```
 
-#### Step 3: Monitor Progress
+#### Step 3: Verify the Network
 
-- **Dashboard**: `http://<any-node-ip>:8470/dashboard` — live optimization progress, training status, peer connections
-- **Logs**: `tail -f /tmp/doin_launch.log`
-- **GPU utilization**: `nvidia-smi` — expect 50-90% during training
-- **Peer check**: `curl -s http://localhost:8470/api/peers`
+Run these checks on each node immediately after launch:
+
+```bash
+# 1. GPU is being used (NOT CPU)
+grep "Created device" /tmp/doin_<node>.log
+# Must show GPU name and memory. If missing → training is on CPU.
+
+# 2. No version mismatch (ALL nodes must run identical code)
+grep "version mismatch" /tmp/doin_<node>.log
+# Must return nothing. If it shows rejections → pull & reinstall on ALL machines.
+
+# 3. Peer connectivity
+curl -s http://localhost:8470/chain/status | python3 -m json.tool
+# Check chain_height and tip_hash match across nodes
+
+# 4. GPU utilization
+nvidia-smi
+# Expect 50-95% GPU utilization during training
+```
+
+> **Critical**: If `nvidia-smi` shows 0% GPU but the node is running, training is happening on CPU. This means `LD_LIBRARY_PATH` is not set correctly. Kill the node, fix the environment, and relaunch.
+
+#### Step 4: Monitor Progress
+
+- **Dashboard**: `http://<any-node-ip>:8470/dashboard`
+- **Logs**: `tail -f /tmp/doin_<node>.log`
+- **GPU**: `nvidia-smi` — 50-95% during training, drops briefly between candidates
+- **Peers**: `curl -s http://localhost:8470/api/peers`
 
 ### Joining a Running Optimization
 
 To add a new node to an existing experiment (nodes already running, blockchain has blocks):
 
-1. **Ensure `reset_chain: true`** in your config — the new node starts with a fresh local chain and syncs from peers automatically.
-
+1. **Ensure `reset_chain: true`** in your config — the new node starts with a fresh local chain and syncs from peers.
 2. **Set `bootstrap_peers`** to at least one running node's address.
-
-3. **Launch normally**:
+3. **Set environment variables** (all three — see Prerequisites step 3).
+4. **Launch normally**:
 
 ```bash
 conda activate tensorflow
-export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TF_GPU_ALLOCATOR=cuda_malloc_async
+# Set LD_LIBRARY_PATH if needed (see Prerequisites step 3)
 
 cd ~/Documents/GitHub/doin-node
-nohup python -m doin_node.cli --config examples/predictor_dragon_node_tcn_neat.json > /tmp/doin_launch.log 2>&1 &
+nohup python -m doin_node.cli \
+  --config examples/predictor_dragon_node_tcn_neat.json \
+  > /tmp/doin_dragon.log 2>&1 &
 ```
 
 The new node will:
@@ -312,38 +405,73 @@ The new node will:
 
 ### Updating a Running Node
 
-To apply code changes to a node that's part of a running experiment:
+> **Warning — version mismatch**: DOIN nodes enforce strict version checking. If ANY of the 4 repositories (doin-core, doin-node, doin-plugins, predictor) differ by even one commit between nodes, ALL inter-node messages are rejected with `🚫 Rejecting ... version mismatch`. After pulling code, you **must update and restart ALL running nodes** — not just the one you changed.
 
 ```bash
-# 1. Pull latest code on the target machine
+# 1. Pull latest code on EVERY machine (not just one)
 cd ~/Documents/GitHub/predictor && git pull && pip install -e .
 cd ~/Documents/GitHub/doin-plugins && git pull && pip install -e .
 cd ~/Documents/GitHub/doin-core && git pull && pip install -e .
 cd ~/Documents/GitHub/doin-node && git pull && pip install -e .
 
-# 2. Find and kill the running node
-pgrep -f doin_node
-python3 -c "import os, signal; os.kill(<PID>, signal.SIGKILL)"
+# 2. Kill the running node
+pgrep -f doin_node.cli
+kill <PID>   # or: python3 -c "import os,signal; os.kill(<PID>, signal.SIGKILL)"
 
-# 3. Relaunch (with reset_chain: true to sync fresh from peers)
+# 3. Relaunch with ALL environment variables
 conda activate tensorflow
-export TF_FORCE_GPU_ALLOW_GROWTH=1
+export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TF_GPU_ALLOCATOR=cuda_malloc_async
+# Set LD_LIBRARY_PATH if needed (see Prerequisites step 3)
+
 cd ~/Documents/GitHub/doin-node
-nohup python -m doin_node.cli --config examples/<node_config>.json > /tmp/doin_launch.log 2>&1 &
+nohup python -m doin_node.cli \
+  --config examples/<node_config>.json \
+  > /tmp/doin_<node>.log 2>&1 &
+```
+
+Repeat on **every machine** before any node will communicate with the others.
+
+### SSH Launch (Remote Machines)
+
+For machines accessible only via SSH, use this one-liner pattern. It activates conda, sets all GPU environment variables, and launches in the background:
+
+```bash
+ssh -p 62024 harveybc@<IP> 'source /home/harveybc/anaconda3/etc/profile.d/conda.sh && \
+  conda activate tensorflow && \
+  NB=/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/site-packages/nvidia && \
+  export LD_LIBRARY_PATH="${NB}/cudnn/lib:${NB}/cublas/lib:${NB}/cuda_runtime/lib:${NB}/cufft/lib:${NB}/curand/lib:${NB}/cusolver/lib:${NB}/cusparse/lib:${NB}/cuda_cupti/lib:${NB}/nvjitlink/lib:${NB}/cuda_nvrtc/lib:${NB}/nccl/lib" && \
+  export TF_FORCE_GPU_ALLOW_GROWTH=true && \
+  export TF_GPU_ALLOCATOR=cuda_malloc_async && \
+  cd /home/harveybc/Documents/GitHub/doin-node && \
+  nohup python -m doin_node.cli --config examples/<config>.json \
+  > /tmp/doin_<node>.log 2>&1 & echo "PID: $!"'
 ```
 
 ### 3-Node LAN Config Files
 
 Ready-to-use configurations for a 3-node setup:
 
-| Config | Machine | IP | GPU | `node_seed_offset` |
-|--------|---------|-----|-----|-------------------|
-| `predictor_omega_node_tcn_neat.json` | Omega | 192.168.0.105 | RTX 4070 Laptop | 0 |
-| `predictor_dragon_node_tcn_neat.json` | Dragon | 192.168.0.107 | RTX 5070 Ti | 1 |
-| `predictor_gamma_node_tcn_neat.json` | Gamma | 192.168.0.106 | RTX 5070 Ti Laptop | 2 |
+| Config | Machine | IP | GPU | VRAM | `node_seed_offset` |
+|--------|---------|-----|-----|------|-------------------|
+| `predictor_omega_node_tcn_neat.json` | Omega | 192.168.0.105 | RTX 4070 Laptop | 8 GB | 0 |
+| `predictor_dragon_node_tcn_neat.json` | Dragon | 192.168.0.107 | RTX 4090 Laptop | 16 GB | 1 |
+| `predictor_gamma_node_tcn_neat.json` | Gamma | 192.168.0.106 | RTX 5070 Ti Laptop | 12 GB | 2 |
 
 Each config references the predictor optimization config at `examples/config/phase_1_daily/optimization/phase_1_tcn_neat_1d_optimization_config.json` within the predictor repo. The `predictor_root` field must point to the local predictor repository path on each machine.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `nvidia-smi` shows 0% GPU | `LD_LIBRARY_PATH` not set, CUDA libs not found | Set `LD_LIBRARY_PATH` to nvidia pip package dirs (see Prerequisites step 3) |
+| `Skipping registering GPU devices` in log | Same — TF can't load CUDA shared objects | Same fix — set `LD_LIBRARY_PATH` |
+| `TF_FORCE_GPU_ALLOW_GROWTH ... could not be parsed: "1"` | Used `=1` instead of `=true` | Change to `export TF_FORCE_GPU_ALLOW_GROWTH=true` |
+| `🚫 Rejecting ... version mismatch` | Nodes running different code versions | Pull + reinstall + restart ALL nodes (every repo, every machine) |
+| `OOM when allocating tensor` | GPU memory exhausted by parent process | Set `TF_FORCE_GPU_ALLOW_GROWTH=true` BEFORE launching |
+| `Cannot connect to host X:8470` at startup | Other nodes not running yet | Normal during startup — discovery retries automatically |
+| `GPUs: []` from `tf.config.list_physical_devices` | CUDA not installed or `LD_LIBRARY_PATH` missing | Run the GPU verification from Prerequisites step 4 |
+| JIT compilation takes 30 min on first launch | Blackwell GPU (RTX 50xx, compute 12.x) | Normal — PTX → native compilation. Only on first run per kernel shape |
 
 ### Three-Level Patience System
 
