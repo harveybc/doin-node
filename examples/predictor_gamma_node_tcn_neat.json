@@ -45,7 +45,7 @@
         "population_size": 20,
         "n_generations": 30,
         "early_patience": 80,
-        "optimization_patience": 6,
+        "optimization_patience": 10,
         "optimization_pause_on_resume": false,
         "node_seed_offset": 2
       },
