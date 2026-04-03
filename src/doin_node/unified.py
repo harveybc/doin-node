@@ -1982,6 +1982,11 @@ class UnifiedNode:
             role = node._domain_roles.get(domain_id)
             opt_cfg = role.optimization_config if role else {}
             pat = node._domain_patience.get(domain_id, (0, 0))
+            # Use patience from stage_info (optimizer sends it per-candidate)
+            si_patience = stage_info.get("patience", 0)
+            si_no_improve = stage_info.get("no_improve_counter", 0)
+            eff_no_improve = si_no_improve if si_no_improve else pat[0]
+            eff_patience = si_patience if si_patience else (pat[1] or opt_cfg.get("optimization_patience", 0))
 
             # Store current candidate state for /api/candidate (local, per-machine)
             _cand_params = stage_info.get("candidate_params")
@@ -2004,8 +2009,8 @@ class UnifiedNode:
                 "candidate_params": _cand_params,
                 "model_summary": _model_summary,
                 "n_generations": stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
-                "no_improve_counter": pat[0],
-                "optimization_patience": pat[1],
+                "no_improve_counter": eff_no_improve,
+                "optimization_patience": eff_patience,
                 "neat_species_count": stage_info.get("neat_species_count"),
                 "neat_complexity": stage_info.get("neat_complexity"),
                 "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -2024,7 +2029,7 @@ class UnifiedNode:
                 train_naive_mae=stage_info.get("train_naive_mae"),
                 champion_fitness=stage_info.get("champion_fitness"),
                 n_generations=stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
-                no_improve_counter=pat[0], optimization_patience=pat[1],
+                no_improve_counter=eff_no_improve, optimization_patience=eff_patience,
                 neat_species_count=stage_info.get("neat_species_count"),
                 neat_complexity=stage_info.get("neat_complexity"))
 

@@ -630,8 +630,8 @@ async function refreshAll() {
     if (optComplete) {
       // Optimization finished — show completion state
       document.getElementById('remainingCard').innerHTML =
+        (stageStr ? `${stageStr} ` : '') +
         `G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}` +
-        (stageStr ? ` ${stageStr}` : '') +
         `<br><small>Complete</small>`;
       document.getElementById('progressCard').innerHTML = `100%`;
     } else {
@@ -639,8 +639,9 @@ async function refreshAll() {
       const candsLeftThisGen = Math.max(0, totCand - curCand);
       const gensLeft = Math.max(0, nGens - curGen);
       document.getElementById('remainingCard').innerHTML =
+        (stageStr ? `${stageStr} ` : '') +
         `G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}` +
-        (stageStr ? ` ${stageStr}` : '') + stageNameStr;
+        stageNameStr;
 
       // Progress: generation + candidate progress
       const genProgress = nGens > 0 ? curGen / nGens : 0;
