@@ -349,7 +349,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
 
         # Expose optimization config fields for dashboard defaults
         opt_cfg = dr.optimization_config if dr else {}
-        stages = opt_cfg.get("staged_stages", [])
+        stages = opt_cfg.get("optimization_stages", opt_cfg.get("staged_stages", []))
         info["n_generations"] = opt_cfg.get("n_generations", 15)
         info["optimization_patience"] = opt_cfg.get("optimization_patience", 0)
         info["population_size"] = opt_cfg.get("population_size", 20)

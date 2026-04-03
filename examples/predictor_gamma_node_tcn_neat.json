@@ -43,9 +43,15 @@
         "epochs": 200,
         "batch_size": 32,
         "population_size": 20,
-        "n_generations": 30,
+        "n_generations": 40,
         "early_patience": 80,
-        "optimization_patience": 10,
+        "optimization_patience": 5,
+        "optimization_stages": [
+          {"name": "features", "params": ["window_size", "use_log1p_features", "positional_encoding", "use_temporal_features", "add_window_stats", "add_multi_scale_returns"], "generations": 10},
+          {"name": "architecture", "params": ["tcn_filters", "tcn_kernel_size", "tcn_stack_layers", "tcn_dilations_per_stack", "tcn_head_layers", "tcn_head_units", "tcn_use_batch_norm", "tcn_use_layer_norm"], "generations": 10},
+          {"name": "training", "params": ["learning_rate", "batch_size", "tcn_dropout", "l2_reg", "min_delta", "loss_type", "hod_encoding", "dow_encoding", "moy_encoding"], "generations": 10},
+          {"name": "refinement", "params": "all", "generations": 10}
+        ],
         "optimization_pause_on_resume": false,
         "node_seed_offset": 2
       },
