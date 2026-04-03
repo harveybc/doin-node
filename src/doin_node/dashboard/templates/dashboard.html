@@ -617,20 +617,30 @@ async function refreshAll() {
     // Read patience counter (from latest event that carries it)
     const noImprove = parseInt(prog.no_improve_counter || (latGen ? (latGen.no_improve_counter || 0) : 0));
     const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : 0));
+    // Stage info
+    const curStage = parseInt(prog.stage || 1);
+    const totStages = parseInt(prog.total_stages || 1);
+    const stageName = prog.stage_name || '';
 
     document.getElementById('totalEvalsCard').textContent = totalEvals;
+
+    const stageStr = totStages > 1 ? `S${curStage}/${totStages}` : '';
+    const stageNameStr = stageName ? `<br><small>${stageName}</small>` : '';
 
     if (optComplete) {
       // Optimization finished — show completion state
       document.getElementById('remainingCard').innerHTML =
-        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}<br><small>Complete</small>`;
+        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}` +
+        (stageStr ? ` ${stageStr}` : '') +
+        `<br><small>Complete</small>`;
       document.getElementById('progressCard').innerHTML = `100%`;
     } else {
       // Remaining: candidates in current gen + remaining gens
       const candsLeftThisGen = Math.max(0, totCand - curCand);
       const gensLeft = Math.max(0, nGens - curGen);
       document.getElementById('remainingCard').innerHTML =
-        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}`;
+        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}` +
+        (stageStr ? ` ${stageStr}` : '') + stageNameStr;
 
       // Progress: generation + candidate progress
       const genProgress = nGens > 0 ? curGen / nGens : 0;

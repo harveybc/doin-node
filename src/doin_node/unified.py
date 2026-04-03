@@ -1993,6 +1993,7 @@ class UnifiedNode:
                 "total_candidates": stage_info.get("total_candidates"),
                 "stage": stage_info.get("stage"),
                 "total_stages": stage_info.get("total_stages"),
+                "stage_name": stage_info.get("stage_name"),
                 "total_evals": stage_info.get("total_candidates_evaluated"),
                 "fitness": stage_info.get("fitness"),
                 "val_mae": stage_info.get("val_mae"),
@@ -2002,7 +2003,7 @@ class UnifiedNode:
                 "champion_fitness": stage_info.get("champion_fitness"),
                 "candidate_params": _cand_params,
                 "model_summary": _model_summary,
-                "n_generations": opt_cfg.get("n_generations", 15),
+                "n_generations": stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
                 "no_improve_counter": pat[0],
                 "optimization_patience": pat[1],
                 "neat_species_count": stage_info.get("neat_species_count"),
@@ -2015,13 +2016,14 @@ class UnifiedNode:
                 candidate_num=stage_info.get("candidate_num"),
                 total_candidates=stage_info.get("total_candidates"),
                 stage=stage_info.get("stage"), total_stages=stage_info.get("total_stages"),
+                stage_name=stage_info.get("stage_name"),
                 total_evals=stage_info.get("total_candidates_evaluated"),
                 fitness=stage_info.get("fitness"),
                 val_mae=stage_info.get("val_mae"), train_mae=stage_info.get("train_mae"),
                 val_naive_mae=stage_info.get("val_naive_mae"),
                 train_naive_mae=stage_info.get("train_naive_mae"),
                 champion_fitness=stage_info.get("champion_fitness"),
-                n_generations=opt_cfg.get("n_generations", 15),
+                n_generations=stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
                 no_improve_counter=pat[0], optimization_patience=pat[1],
                 neat_species_count=stage_info.get("neat_species_count"),
                 neat_complexity=stage_info.get("neat_complexity"))
@@ -2053,10 +2055,12 @@ class UnifiedNode:
             patience_str = f"{no_improve}/{pat_max}"
             role = node._domain_roles.get(domain_id)
             opt_cfg = role.optimization_config if role else {}
-            n_gens = opt_cfg.get("n_generations", 15)
+            n_gens = stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15)
+            stage_name = stage_info.get("stage_name")
 
             node._log_event("generation_end",
                 domain_id=domain_id, gen=gen, stage=stage, total_stages=total_stages,
+                stage_name=stage_name,
                 total_evals=n_evals,
                 champion_fitness=champ_fit, champion_val_mae=champ_val,
                 champion_train_mae=champ_train,
