@@ -613,11 +613,12 @@ async function refreshAll() {
     const optDom = (opt && opt.domains && opt.domains.length > 0) ? opt.domains[0] : {};
     const prog = latEval || latGen || cand || {};
     const totalEvals = parseInt(prog.total_evals || cand.total_evals || 0);
-    const curGen = parseInt(prog.gen != null ? prog.gen : (cand.gen != null ? cand.gen : 0));
     const curCand = parseInt(latEval ? (latEval.candidate_num || 0) : (cand.candidate_num || 0));
     const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : (cand.total_candidates || optDom.population_size || 20)));
-    // Read n_generations: events → candidate → optimization config
-    const nGens = parseInt(prog.n_generations || cand.n_generations || optDom.n_generations || 15);
+    // Per-stage generation count (preferred) with fallback to total
+    const nGensStage = parseInt(prog.n_generations_stage || cand.n_generations_stage || optDom.n_generations_stage || prog.n_generations || cand.n_generations || optDom.n_generations || 10);
+    // Generation within current stage (0-based)
+    const genInStage = parseInt(prog.gen_in_stage != null ? prog.gen_in_stage : (cand.gen_in_stage != null ? cand.gen_in_stage : 0));
     // Read patience counter
     const noImprove = parseInt(prog.no_improve_counter || (latGen ? (latGen.no_improve_counter || 0) : (cand.no_improve_counter || 0)));
     const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : (cand.optimization_patience || optDom.optimization_patience || 0)));
@@ -635,22 +636,20 @@ async function refreshAll() {
       // Optimization finished — show completion state
       document.getElementById('remainingCard').innerHTML =
         (stageStr ? `${stageStr} ` : '') +
-        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${totCand}/${totCand}` +
+        `G${nGensStage}/${nGensStage} P${noImprove}/${optPatience} C${totCand}/${totCand}` +
         `<br><small>Complete</small>`;
       document.getElementById('progressCard').innerHTML = `100%`;
     } else {
       // Remaining: candidates in current gen + remaining gens
-      const candsLeftThisGen = Math.max(0, totCand - curCand);
-      const gensLeft = Math.max(0, nGens - curGen);
       document.getElementById('remainingCard').innerHTML =
         (stageStr ? `${stageStr} ` : '') +
-        `G${curGen}/${nGens} P${noImprove}/${optPatience} C${curCand}/${totCand}` +
+        `G${genInStage}/${nGensStage} P${noImprove}/${optPatience} C${curCand}/${totCand}` +
         stageNameStr;
 
-      // Progress: generation + candidate progress
-      const genProgress = nGens > 0 ? curGen / nGens : 0;
+      // Progress: generation + candidate progress within current stage
+      const genProgress = nGensStage > 0 ? genInStage / nGensStage : 0;
       const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
-      const overallPct = ((genProgress + candProgressInGen / Math.max(nGens, 1)) * 100).toFixed(1);
+      const overallPct = ((genProgress + candProgressInGen / Math.max(nGensStage, 1)) * 100).toFixed(1);
       document.getElementById('progressCard').innerHTML = `${overallPct}%`;
     }
   }

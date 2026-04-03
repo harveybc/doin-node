@@ -354,6 +354,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["optimization_patience"] = opt_cfg.get("optimization_patience", 0)
         info["population_size"] = opt_cfg.get("population_size", 20)
         info["total_stages"] = len(stages) if stages else 1
+        info["n_generations_stage"] = info["n_generations"]  # default: same as total
         if stages:
             # Current stage from round count (clamped)
             cur_round = node._domain_round_count.get(domain_id, 0)
@@ -371,6 +372,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
                 cur_stage_name = stages[-1].get("name", "") if stages else ""
             info["current_stage"] = cur_stage_idx + 1
             info["current_stage_name"] = cur_stage_name
+            info["n_generations_stage"] = stages[cur_stage_idx].get("generations", info["n_generations"])
 
         domains.append(info)
 
