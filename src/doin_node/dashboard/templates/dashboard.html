@@ -602,27 +602,29 @@ async function refreshAll() {
   }
 
   // Top summary cards: Candidates Evaluated, Remaining, Progress
-  // Use events when available, fall back to /api/candidate live data
+  // Use events when available, fall back to /api/candidate, then /api/optimization config
   {
     const evList = (events && events.events) ? events.events : [];
     const optComplete = evList.find(e => e.type === 'optimization_complete');
     const latEval = evList.find(e => e.type === 'candidate_eval');
     const latGen = evList.find(e => e.type === 'generation_end');
     const cand = (candidate && candidate.timestamp) ? candidate : {};
+    // Optimization config defaults from /api/optimization (first domain)
+    const optDom = (opt && opt.domains && opt.domains.length > 0) ? opt.domains[0] : {};
     const prog = latEval || latGen || cand || {};
     const totalEvals = parseInt(prog.total_evals || cand.total_evals || 0);
     const curGen = parseInt(prog.gen != null ? prog.gen : (cand.gen != null ? cand.gen : 0));
     const curCand = parseInt(latEval ? (latEval.candidate_num || 0) : (cand.candidate_num || 0));
-    const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : (cand.total_candidates || 20)));
-    // Read n_generations from optimization config if available
-    const nGens = parseInt(prog.n_generations || cand.n_generations || 15);  // fallback 15
-    // Read patience counter (from latest event that carries it)
+    const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : (cand.total_candidates || optDom.population_size || 20)));
+    // Read n_generations: events → candidate → optimization config
+    const nGens = parseInt(prog.n_generations || cand.n_generations || optDom.n_generations || 15);
+    // Read patience counter
     const noImprove = parseInt(prog.no_improve_counter || (latGen ? (latGen.no_improve_counter || 0) : (cand.no_improve_counter || 0)));
-    const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : (cand.optimization_patience || 0)));
-    // Stage info
-    const curStage = parseInt(prog.stage || cand.stage || 1);
-    const totStages = parseInt(prog.total_stages || cand.total_stages || 1);
-    const stageName = prog.stage_name || cand.stage_name || '';
+    const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : (cand.optimization_patience || optDom.optimization_patience || 0)));
+    // Stage info: events → candidate → optimization config
+    const curStage = parseInt(prog.stage || cand.stage || optDom.current_stage || 1);
+    const totStages = parseInt(prog.total_stages || cand.total_stages || optDom.total_stages || 1);
+    const stageName = prog.stage_name || cand.stage_name || optDom.current_stage_name || '';
 
     document.getElementById('totalEvalsCard').textContent = totalEvals;
 

@@ -347,6 +347,31 @@ async def _api_optimization(request: web.Request) -> web.Response:
                 info["target_performance"] = getattr(dcfg, "target_performance", None)
                 break
 
+        # Expose optimization config fields for dashboard defaults
+        opt_cfg = dr.optimization_config if dr else {}
+        stages = opt_cfg.get("staged_stages", [])
+        info["n_generations"] = opt_cfg.get("n_generations", 15)
+        info["optimization_patience"] = opt_cfg.get("optimization_patience", 0)
+        info["population_size"] = opt_cfg.get("population_size", 20)
+        info["total_stages"] = len(stages) if stages else 1
+        if stages:
+            # Current stage from round count (clamped)
+            cur_round = node._domain_round_count.get(domain_id, 0)
+            cumulative = 0
+            cur_stage_idx = 0
+            cur_stage_name = stages[0].get("name", "") if stages else ""
+            for si, sd in enumerate(stages):
+                cumulative += sd.get("generations", 0)
+                if cur_round < cumulative:
+                    cur_stage_idx = si
+                    cur_stage_name = sd.get("name", "")
+                    break
+            else:
+                cur_stage_idx = len(stages) - 1
+                cur_stage_name = stages[-1].get("name", "") if stages else ""
+            info["current_stage"] = cur_stage_idx + 1
+            info["current_stage_name"] = cur_stage_name
+
         domains.append(info)
 
     # Tolerance config
