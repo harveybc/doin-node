@@ -316,6 +316,7 @@ class UnifiedNode:
         self._domain_stage_start_fitness: dict[str, float] = {}  # domain_id → fitness at start of current stage
         self._domain_patience: dict[str, tuple[int, int]] = {}  # domain_id → (no_improve_counter, patience_max)
         self._current_candidate: dict[str, Any] = {}  # current candidate being evaluated (local, per-machine)
+        self._seen_candidate_tx_ids: set[str] = set()  # dedup candidate evaluation transactions
         self._start_time: float = time.time()
 
         # ── Live event log (for dashboard) ──
@@ -350,6 +351,7 @@ class UnifiedNode:
             (MessageType.CHAMPION_REQUEST, self._handle_champion_request),
             (MessageType.CHAMPION_RESPONSE, self._handle_champion_response),
             (MessageType.STAGE_COMPLETE, self._handle_stage_complete),
+            (MessageType.CANDIDATE_EVALUATION, self._handle_candidate_evaluation),
         ]
         for msg_type, handler in all_handlers:
             self.flooding.on_message(msg_type, handler)
@@ -1362,6 +1364,67 @@ class UnifiedNode:
                 # Trigger async sync
                 asyncio.create_task(self._sync_with_peer(peer_endpoint))
 
+    # ── Candidate evaluation handling (research mode) ────────────
+
+    async def _handle_candidate_evaluation(self, message: Message, from_peer: str) -> None:
+        """Handle incoming candidate evaluation from a peer.
+
+        Research mode: accept without verification, dedup by tx_id.
+        """
+        payload = message.payload or {}
+        tx_id = payload.get("tx_id", "")
+        if not tx_id:
+            return
+
+        # Dedup — skip if we've already seen this candidate evaluation
+        if tx_id in self._seen_candidate_tx_ids:
+            return
+        self._seen_candidate_tx_ids.add(tx_id)
+
+        # Skip our own broadcasts that come back via gossip
+        if message.sender_id == self.peer_id:
+            return
+
+        # Reconstruct the transaction and record it as pending
+        from doin_core.models.transaction import Transaction, TransactionType
+        from datetime import datetime, timezone
+        ts_str = payload.get("timestamp")
+        ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
+        tx = Transaction(
+            id=tx_id,
+            tx_type=TransactionType.CANDIDATE_EVALUATED,
+            domain_id=payload.get("domain_id", ""),
+            peer_id=payload.get("peer_id", message.sender_id),
+            payload=payload.get("candidate_data", {}),
+            timestamp=ts,
+        )
+        self.consensus.record_transaction(tx)
+        logger.info(
+            "📊 Accepted candidate eval from peer %s (gen=%s stage=%s fitness=%.6f)",
+            message.sender_id[:12],
+            payload.get("candidate_data", {}).get("generation", "?"),
+            payload.get("candidate_data", {}).get("stage_name", "?"),
+            payload.get("candidate_data", {}).get("fitness", 0.0),
+        )
+
+    async def _broadcast_candidate_evaluation(
+        self, domain_id: str, tx_id: str, peer_id: str,
+        candidate_data: dict, timestamp_iso: str,
+    ) -> None:
+        """Broadcast a candidate evaluation result to the network."""
+        msg = Message(
+            msg_type=MessageType.CANDIDATE_EVALUATION,
+            sender_id=self.peer_id,
+            payload={
+                "tx_id": tx_id,
+                "domain_id": domain_id,
+                "peer_id": peer_id,
+                "candidate_data": candidate_data,
+                "timestamp": timestamp_iso,
+            },
+        )
+        await self._broadcast(msg)
+
     # ── Task lifecycle (flooding) ────────────────────────────────
 
     async def _handle_task_created(self, message: Message, from_peer: str) -> None:
@@ -2191,9 +2254,14 @@ class UnifiedNode:
         if hasattr(plugin, "set_stage_end_callback"):
             plugin.set_stage_end_callback(on_stage_end_broadcast)
 
-        # Per-candidate evaluation tracking: record every candidate to experiment tracker
+        # Per-candidate evaluation tracking: record every candidate to experiment tracker + blockchain
         def on_candidate_evaluated(candidate_info):
-            """Called from optimizer thread after each candidate finishes training."""
+            """Called from optimizer thread after each candidate finishes training.
+
+            1. Records to local experiment_tracker (OLAP)
+            2. Creates a CANDIDATE_EVALUATED transaction for the blockchain
+            3. Broadcasts to peers so all nodes accumulate all results
+            """
             try:
                 detail_metrics = {
                     "generation": candidate_info.get("generation", ""),
@@ -2229,6 +2297,66 @@ class UnifiedNode:
                 )
             except Exception as e:
                 logger.debug("Candidate tracking error: %s", e)
+
+            # --- Blockchain: create transaction + broadcast to peers ---
+            try:
+                from doin_core.models.transaction import Transaction, TransactionType
+                import asyncio as _aio
+
+                candidate_data = {
+                    "generation": candidate_info.get("generation"),
+                    "candidate_in_gen": candidate_info.get("candidate_in_gen"),
+                    "total_eval": candidate_info.get("total_eval"),
+                    "stage": candidate_info.get("stage"),
+                    "total_stages": candidate_info.get("total_stages"),
+                    "stage_name": candidate_info.get("stage_name"),
+                    "gen_in_stage": candidate_info.get("gen_in_stage"),
+                    "n_generations_stage": candidate_info.get("n_generations_stage"),
+                    "n_generations_total": candidate_info.get("n_generations_total"),
+                    "population_size": candidate_info.get("population_size"),
+                    "species_id": candidate_info.get("species_id"),
+                    "complexity": candidate_info.get("complexity"),
+                    "is_champion": candidate_info.get("is_champion"),
+                    "fitness": candidate_info.get("fitness"),
+                    "champion_fitness": candidate_info.get("champion_fitness"),
+                    "parameters": candidate_info.get("parameters", {}),
+                    "champion_parameters": candidate_info.get("champion_parameters", {}),
+                    "train_mae": candidate_info.get("train_mae"),
+                    "train_naive_mae": candidate_info.get("train_naive_mae"),
+                    "val_mae": candidate_info.get("val_mae"),
+                    "val_naive_mae": candidate_info.get("val_naive_mae"),
+                    "test_mae": candidate_info.get("test_mae"),
+                    "test_naive_mae": candidate_info.get("test_naive_mae"),
+                    "no_improve_counter": candidate_info.get("no_improve_counter"),
+                    "optimization_patience": candidate_info.get("optimization_patience"),
+                    "neat_species_count": candidate_info.get("neat_species_count"),
+                    "neat_avg_complexity": candidate_info.get("neat_avg_complexity"),
+                }
+
+                tx = Transaction(
+                    tx_type=TransactionType.CANDIDATE_EVALUATED,
+                    domain_id=domain_id,
+                    peer_id=node.peer_id,
+                    payload=candidate_data,
+                )
+                # Dedup locally
+                if tx.id not in node._seen_candidate_tx_ids:
+                    node._seen_candidate_tx_ids.add(tx.id)
+                    node.consensus.record_transaction(tx)
+                    # Broadcast to peers (async from sync thread)
+                    fut = _aio.run_coroutine_threadsafe(
+                        node._broadcast_candidate_evaluation(
+                            domain_id, tx.id, node.peer_id,
+                            candidate_data, tx.timestamp.isoformat(),
+                        ),
+                        loop,
+                    )
+                    try:
+                        fut.result(timeout=10)
+                    except Exception as e:
+                        logger.debug("Candidate eval broadcast error: %s", e)
+            except Exception as e:
+                logger.debug("Candidate blockchain error: %s", e)
 
         if hasattr(plugin, "set_candidate_evaluated_callback"):
             plugin.set_candidate_evaluated_callback(on_candidate_evaluated)
