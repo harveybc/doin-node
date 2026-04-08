@@ -46,7 +46,7 @@
                 "batch_size": 32,
                 "population_size": 20,
                 "n_generations": 40,
-                "early_patience": 40,
+                "early_patience": 80,
                 "optimization_patience": 5,
                 "optimization_stages": [
                     {
@@ -109,7 +109,8 @@
                     "buy_exit_label",
                     "sell_exit_label",
                     "bars_to_friday"
-                ]
+                ],
+                "early_patience": 80
             },
             "synthetic_data_config": {
                 "sdg_root": "synthetic-datagen",
