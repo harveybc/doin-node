@@ -2094,21 +2094,37 @@ class UnifiedNode:
             )
 
             # Record to experiment tracker
+            champ_test = stage_info.get("champion_test_mae")
+            champ_test_naive = stage_info.get("champion_test_naive_mae")
+            champ_params = stage_info.get("champion_parameters", {})
             detail_metrics = {
                 "generation": gen,
                 "stage": stage,
                 "total_stages": total_stages,
+                "stage_name": stage_name or "",
+                "gen_in_stage": stage_info.get("gen_in_stage", ""),
+                "n_generations_stage": stage_info.get("n_generations_stage", ""),
+                "n_generations_total": stage_info.get("n_generations_total", ""),
                 "total_candidates_evaluated": n_evals,
+                "population_size": stage_info.get("population_size", ""),
+                "no_improve_counter": no_improve,
+                "optimization_patience": pat_max,
+                "avg_fitness": avg_fit,
+                "best_fitness_gen": stage_info.get("best_fitness_gen", ""),
+                "neat_species_count": stage_info.get("neat_species_count", ""),
+                "neat_avg_complexity": stage_info.get("neat_avg_complexity", ""),
                 "train_mae": champ_train,
                 "train_naive_mae": champ_train_naive,
                 "val_mae": champ_val,
                 "val_naive_mae": champ_val_naive,
+                "test_mae": champ_test,
+                "test_naive_mae": champ_test_naive,
             }
             try:
                 node.experiment_tracker.record_round(
                     domain_id,
                     performance=champ_fit if champ_fit is not None else 0.0,
-                    parameters={},
+                    parameters=champ_params,
                     wall_clock_seconds=0,
                     chain_height=node._get_height(),
                     peers_count=len(node._peers),
@@ -2174,6 +2190,48 @@ class UnifiedNode:
 
         if hasattr(plugin, "set_stage_end_callback"):
             plugin.set_stage_end_callback(on_stage_end_broadcast)
+
+        # Per-candidate evaluation tracking: record every candidate to experiment tracker
+        def on_candidate_evaluated(candidate_info):
+            """Called from optimizer thread after each candidate finishes training."""
+            try:
+                detail_metrics = {
+                    "generation": candidate_info.get("generation", ""),
+                    "stage": candidate_info.get("stage", ""),
+                    "total_stages": candidate_info.get("total_stages", ""),
+                    "stage_name": candidate_info.get("stage_name", ""),
+                    "gen_in_stage": candidate_info.get("gen_in_stage", ""),
+                    "n_generations_stage": candidate_info.get("n_generations_stage", ""),
+                    "n_generations_total": candidate_info.get("n_generations_total", ""),
+                    "total_candidates_evaluated": candidate_info.get("total_eval", ""),
+                    "population_size": candidate_info.get("population_size", ""),
+                    "no_improve_counter": candidate_info.get("no_improve_counter", ""),
+                    "optimization_patience": candidate_info.get("optimization_patience", ""),
+                    "avg_fitness": "",
+                    "best_fitness_gen": candidate_info.get("champion_fitness", ""),
+                    "neat_species_count": candidate_info.get("neat_species_count", ""),
+                    "neat_avg_complexity": candidate_info.get("neat_avg_complexity", ""),
+                    "train_mae": candidate_info.get("train_mae"),
+                    "train_naive_mae": candidate_info.get("train_naive_mae"),
+                    "val_mae": candidate_info.get("val_mae"),
+                    "val_naive_mae": candidate_info.get("val_naive_mae"),
+                    "test_mae": candidate_info.get("test_mae"),
+                    "test_naive_mae": candidate_info.get("test_naive_mae"),
+                }
+                node.experiment_tracker.record_round(
+                    domain_id,
+                    performance=candidate_info.get("fitness", 0.0),
+                    parameters=candidate_info.get("parameters", {}),
+                    wall_clock_seconds=0,
+                    chain_height=node._get_height(),
+                    peers_count=len(node._peers),
+                    detail_metrics=detail_metrics,
+                )
+            except Exception as e:
+                logger.debug("Candidate tracking error: %s", e)
+
+        if hasattr(plugin, "set_candidate_evaluated_callback"):
+            plugin.set_candidate_evaluated_callback(on_candidate_evaluated)
 
     async def _run_full_optimization(self, domain_id: str, plugin: Any) -> None:
         """Run the full DEAP GA optimization in an executor thread."""

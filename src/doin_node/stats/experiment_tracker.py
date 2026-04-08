@@ -64,6 +64,22 @@ COLUMNS = [
     "val_naive_mae",
     "test_mae",
     "test_naive_mae",
+    # NEAT optimization tracking
+    "generation",
+    "stage",
+    "total_stages",
+    "stage_name",
+    "gen_in_stage",
+    "n_generations_stage",
+    "n_generations_total",
+    "total_candidates_evaluated",
+    "population_size",
+    "no_improve_counter",
+    "optimization_patience",
+    "avg_fitness",
+    "best_fitness_gen",
+    "neat_species_count",
+    "neat_avg_complexity",
 ]
 
 
@@ -263,10 +279,16 @@ class ExperimentTracker:
                 "block_reward_earned": block_reward_earned,
             }
 
-            # Add detailed metrics (MAE breakdowns) if provided
+            # Add detailed metrics (MAE breakdowns + NEAT tracking) if provided
             dm = detail_metrics or {}
             for key in ("train_mae", "train_naive_mae", "val_mae", "val_naive_mae",
-                        "test_mae", "test_naive_mae"):
+                        "test_mae", "test_naive_mae",
+                        "generation", "stage", "total_stages", "stage_name",
+                        "gen_in_stage", "n_generations_stage", "n_generations_total",
+                        "total_candidates_evaluated", "population_size",
+                        "no_improve_counter", "optimization_patience",
+                        "avg_fitness", "best_fitness_gen",
+                        "neat_species_count", "neat_avg_complexity"):
                 row[key] = dm.get(key, "")
 
             self._append_row(row)
