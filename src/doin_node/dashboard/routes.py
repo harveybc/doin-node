@@ -355,6 +355,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["population_size"] = opt_cfg.get("population_size", 20)
         info["total_stages"] = len(stages) if stages else 1
         info["n_generations_stage"] = info["n_generations"]  # default: same as total
+        info["metric_type"] = opt_cfg.get("metric_type", "regression")
         if stages:
             # Current stage from round count (clamped)
             cur_round = node._domain_round_count.get(domain_id, 0)

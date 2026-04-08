@@ -168,26 +168,26 @@
                   <hr style="margin:6px 0; border-color:#444">
                   <!-- Champion Performance -->
                   <div class="mb-2">
-                    <span class="metric-label">🏆 Champion NDA (lower=better)</span><br>
+                    <span class="metric-label" id="csPerformanceLabel">🏆 Champion Performance (lower=better)</span><br>
                     <span id="csPerformance" class="metric-value text-success">--</span>
                   </div>
                   <div class="row mb-1">
                     <div class="col-6">
-                      <span class="metric-label">Train MAE</span><br>
+                      <span class="metric-label" id="csTrainMAELabel">Train MAE</span><br>
                       <span id="csTrainMAE" class="text-warning">--</span>
                     </div>
                     <div class="col-6">
-                      <span class="metric-label">Val MAE</span><br>
+                      <span class="metric-label" id="csValMAELabel">Val MAE</span><br>
                       <span id="csValMAE" class="text-info">--</span>
                     </div>
                   </div>
                   <div class="row mb-1">
                     <div class="col-6">
-                      <span class="metric-label" style="color:#8b6914">Train Naive</span><br>
+                      <span class="metric-label" id="csTrainNaiveLabel" style="color:#8b6914">Train Naive</span><br>
                       <span id="csTrainNaive" style="color:#8b6914">--</span>
                     </div>
                     <div class="col-6">
-                      <span class="metric-label" style="color:#0b5e6e">Val Naive</span><br>
+                      <span class="metric-label" id="csValNaiveLabel" style="color:#0b5e6e">Val Naive</span><br>
                       <span id="csValNaive" style="color:#0b5e6e">--</span>
                     </div>
                   </div>
@@ -317,10 +317,10 @@
                               <tr><td><strong>Total Evals</strong></td><td id="candTotalEvals">--</td></tr>
                               <tr><td><strong>Fitness</strong></td><td id="candFitness">--</td></tr>
                               <tr><td><strong>Champion Fitness</strong></td><td id="candChampFitness">--</td></tr>
-                              <tr><td><strong>Val MAE</strong></td><td id="candValMAE">--</td></tr>
-                              <tr><td><strong>Train MAE</strong></td><td id="candTrainMAE">--</td></tr>
-                              <tr><td><strong>Val Naive MAE</strong></td><td id="candValNaive">--</td></tr>
-                              <tr><td><strong>Train Naive MAE</strong></td><td id="candTrainNaive">--</td></tr>
+                              <tr><td><strong id="candValMAELabel">Val MAE</strong></td><td id="candValMAE">--</td></tr>
+              <tr><td><strong id="candTrainMAELabel">Train MAE</strong></td><td id="candTrainMAE">--</td></tr>
+              <tr><td><strong id="candValNaiveLabel">Val Naive MAE</strong></td><td id="candValNaive">--</td></tr>
+              <tr><td><strong id="candTrainNaiveLabel">Train Naive MAE</strong></td><td id="candTrainNaive">--</td></tr>
                               <tr><td><strong>Patience</strong></td><td id="candPatience">--</td></tr>
                               <tr><td><strong>NEAT Species</strong></td><td id="candNeatSpecies">--</td></tr>
                               <tr><td><strong>Active Params</strong></td><td id="candNeatComplexity">--</td></tr>
@@ -370,6 +370,7 @@
 let refreshMs = 5000;
 let countdownVal = 5;
 let countdownTimer = null;
+let isBinaryDomain = false;  // Auto-detected from domain config
 
 // ── Charts ──
 const perfCtx = document.getElementById('perfChart').getContext('2d');
@@ -378,7 +379,7 @@ const bestCtx = document.getElementById('bestChart').getContext('2d');
 const perfChart = new Chart(perfCtx, {
   type: 'line',
   data: { labels: [], datasets: [{
-    label: 'Champion NDA (lower=better)',
+    label: 'Champion Performance (lower=better)',
     data: [],
     borderColor: '#28a745',
     backgroundColor: 'rgba(40,167,69,0.15)',
@@ -390,7 +391,7 @@ const perfChart = new Chart(perfCtx, {
     animation: { duration: 200 },
     scales: {
       x: { title: { display: true, text: 'Time' }, ticks: { maxTicksLimit: 12, font: { size: 10 }}},
-      y: { title: { display: true, text: 'NDA Performance (lower=better)' }}
+      y: { title: { display: true, text: 'Performance (lower=better)' }}
     },
     plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
   }
@@ -399,21 +400,50 @@ const perfChart = new Chart(perfCtx, {
 const bestChart = new Chart(bestCtx, {
   type: 'line',
   data: { labels: [], datasets: [
-    { label: 'Val MAE', data: [], borderColor: '#17a2b8', backgroundColor: 'rgba(23,162,184,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
-    { label: 'Train MAE', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
-    { label: 'Val Naive MAE', data: [], borderColor: '#0b5e6e', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
-    { label: 'Train Naive MAE', data: [], borderColor: '#8b6914', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
+    { label: 'Val Metric', data: [], borderColor: '#17a2b8', backgroundColor: 'rgba(23,162,184,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Train Metric', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
+    { label: 'Val Secondary', data: [], borderColor: '#0b5e6e', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
+    { label: 'Train Secondary', data: [], borderColor: '#8b6914', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
+    { label: 'MCC=0 (random)', data: [], borderColor: 'rgba(255,0,0,0.5)', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 1, borderDash: [4, 4], hidden: false },
   ]},
   options: {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 200 },
     scales: {
       x: { title: { display: true, text: 'Generation' }, ticks: { maxTicksLimit: 20, font: { size: 10 }}},
-      y: { title: { display: true, text: 'MAE' }}
+      y: { title: { display: true, text: 'Metric' }}
     },
     plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
   }
 });
+
+// Helper: update chart labels based on domain type
+function updateChartLabels() {
+  if (isBinaryDomain) {
+    perfChart.data.datasets[0].label = 'Champion Binary Fitness (lower=better)';
+    perfChart.options.scales.y.title.text = 'Binary Fitness (CBF, lower=better)';
+    bestChart.data.datasets[0].label = 'Val MCC';
+    bestChart.data.datasets[1].label = 'Train MCC';
+    bestChart.data.datasets[2].label = 'Val F1';
+    bestChart.data.datasets[3].label = 'Train F1';
+    bestChart.options.scales.y.title.text = 'MCC / F1 (higher=better)';
+    // Update chart titles
+    document.querySelector('#perfChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-line"></i> Binary Fitness History';
+    document.querySelector('#bestChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-area"></i> Binary Metrics (Champion)';
+  } else {
+    perfChart.data.datasets[0].label = 'Champion NDA (lower=better)';
+    perfChart.options.scales.y.title.text = 'NDA Performance (lower=better)';
+    bestChart.data.datasets[0].label = 'Val MAE';
+    bestChart.data.datasets[1].label = 'Train MAE';
+    bestChart.data.datasets[2].label = 'Val Naive MAE';
+    bestChart.data.datasets[3].label = 'Train Naive MAE';
+    bestChart.options.scales.y.title.text = 'MAE';
+    document.querySelector('#perfChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-line"></i> NDA Performance History';
+    document.querySelector('#bestChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-area"></i> MAE History (Champion)';
+  }
+  perfChart.update();
+  bestChart.update();
+}
 
 // ── Helpers ──
 function fmt(v, d=6) { return v !== null && v !== undefined && v !== '' ? parseFloat(v).toFixed(d) : '--'; }
@@ -487,6 +517,38 @@ async function refreshAll() {
   if (opt && opt.domains) {
     let rounds = 0, best = null;
     const hib = opt.higher_is_better || false;
+
+    // Detect binary domain from metric_type or domain_id
+    const prevBinary = isBinaryDomain;
+    isBinaryDomain = opt.domains.some(d => d.metric_type === 'binary' || (d.domain_id && d.domain_id.includes('binary')));
+    if (isBinaryDomain !== prevBinary) {
+      updateChartLabels();
+      // Update champion panel labels
+      if (isBinaryDomain) {
+        document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (lower=better)';
+        document.getElementById('csTrainMAELabel').textContent = 'Train MCC';
+        document.getElementById('csValMAELabel').textContent = 'Val MCC';
+        document.getElementById('csTrainNaiveLabel').textContent = 'Train F1';
+        document.getElementById('csValNaiveLabel').textContent = 'Val F1';
+        // Candidate tab
+        document.getElementById('candValMAELabel').textContent = 'Val MCC';
+        document.getElementById('candTrainMAELabel').textContent = 'Train MCC';
+        document.getElementById('candValNaiveLabel').textContent = 'Val F1';
+        document.getElementById('candTrainNaiveLabel').textContent = 'Train F1';
+      } else {
+        document.getElementById('csPerformanceLabel').textContent = '🏆 Champion NDA (lower=better)';
+        document.getElementById('csTrainMAELabel').textContent = 'Train MAE';
+        document.getElementById('csValMAELabel').textContent = 'Val MAE';
+        document.getElementById('csTrainNaiveLabel').textContent = 'Train Naive';
+        document.getElementById('csValNaiveLabel').textContent = 'Val Naive';
+        // Candidate tab
+        document.getElementById('candValMAELabel').textContent = 'Val MAE';
+        document.getElementById('candTrainMAELabel').textContent = 'Train MAE';
+        document.getElementById('candValNaiveLabel').textContent = 'Val Naive MAE';
+        document.getElementById('candTrainNaiveLabel').textContent = 'Train Naive MAE';
+      }
+    }
+
     const tb = document.getElementById('domainBody');
     tb.innerHTML = opt.domains.map(d => {
       rounds += d.round || 0;
@@ -499,10 +561,13 @@ async function refreshAll() {
       const champRow = c.val_mae !== undefined ? `
         <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
           <td colspan="2"><strong>🏆 Champion ${srcBadge} ${c.block_index != null ? '(block #'+c.block_index+')' : (c.round != null ? '(round '+c.round+')' : '')}</strong></td>
-          <td colspan="5">
-            Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
+          <td colspan="5">${isBinaryDomain ? `
+            Train MCC: <strong>${fmt(c.train_mae,4)}</strong> / F1 ${fmt(c.train_naive_mae,4)} &nbsp;|&nbsp;
+            Val MCC: <strong>${fmt(c.val_mae,4)}</strong> / F1 ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
+            Test MCC: <strong>${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}</strong> / F1 ${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}`
+          : `Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
             Val MAE: <strong>${fmt(c.val_mae,6)}</strong> / naive ${fmt(c.val_naive_mae,6)} &nbsp;|&nbsp;
-            Test MAE: <strong>${c.test_mae != null ? fmt(c.test_mae,6) : 'N/A'}</strong> / naive ${c.test_naive_mae != null ? fmt(c.test_naive_mae,6) : 'N/A'}
+            Test MAE: <strong>${c.test_mae != null ? fmt(c.test_mae,6) : 'N/A'}</strong> / naive ${c.test_naive_mae != null ? fmt(c.test_naive_mae,6) : 'N/A'}`}
           </td>
         </tr>` : '';
       return `<tr>
@@ -588,9 +653,12 @@ async function refreshAll() {
         const isBetter = e.fitness != null && e.champion_fitness != null && parseFloat(e.fitness) < parseFloat(e.champion_fitness);
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
+        const metricsStr = isBinaryDomain
+          ? `fit=<strong>${f(e.fitness,6)}</strong> | mcc_v=${f(e.val_mae,4)} mcc_t=${f(e.train_mae,4)} | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
+          : `fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`;
         return `<tr style="${bg}">
           <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen}</td>
-          <td>fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}</td>
+          <td>${metricsStr}</td>
           <td>${t}</td></tr>`;
       } else {
         return `<tr style="background:rgba(108,117,125,0.15)">
@@ -699,6 +767,14 @@ async function refreshAll() {
     bestChart.data.datasets[1].data = trainMaeData;
     bestChart.data.datasets[2].data = valNaiveData;
     bestChart.data.datasets[3].data = trainNaiveData;
+    // Dataset 4: MCC=0 baseline (only visible in binary mode)
+    if (isBinaryDomain) {
+      bestChart.data.datasets[4].data = maeLabels.map(() => 0);
+      bestChart.data.datasets[4].hidden = false;
+    } else {
+      bestChart.data.datasets[4].data = [];
+      bestChart.data.datasets[4].hidden = true;
+    }
     bestChart.update();
   }
 
@@ -711,10 +787,13 @@ async function refreshAll() {
       switch (e.type) {
         case 'champion':
           var nda = e.performance != null ? f(e.performance,6) : '--';
-          var breakdown = `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
+          var breakdown = isBinaryDomain
+            ? `mcc_v: ${f(e.val_mae,4)} | f1_v: ${f(e.val_naive_mae,4)} | mcc_t: ${f(e.train_mae,4)} | f1_t: ${f(e.train_naive_mae,4)}`
+            : `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
+          var perfLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.15)">
             <td><span class="badge badge-success">🏆 Champion</span></td>
-            <td>Gen ${e.gen} | <strong>NDA=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
+            <td>Gen ${e.gen} | <strong>${perfLabel}=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
             <td>${t}</td></tr>`;
         case 'broadcast':
           return `<tr style="background:rgba(23,162,184,0.1)">
@@ -722,14 +801,16 @@ async function refreshAll() {
             <td>Gen ${e.gen} perf=${f(e.performance,4)} optimae=${e.optimae_id||''}</td>
             <td>${t}</td></tr>`;
         case 'auto_accept':
+          var acceptLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.2)">
             <td><span class="badge badge-success">✅ Accept</span></td>
-            <td>NDA=${f(e.performance,6)} beats prev=${f(e.previous_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${acceptLabel}=${f(e.performance,6)} beats prev=${f(e.previous_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'auto_reject':
+          var rejectLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(220,53,69,0.1)">
             <td><span class="badge badge-danger">❌ Reject</span></td>
-            <td>NDA=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${rejectLabel}=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'generation_end':
           var neatGenInfo = e.neat_species_count != null ? ` | 🧬 species=${e.neat_species_count} avg_params=${e.neat_avg_complexity != null ? parseFloat(e.neat_avg_complexity).toFixed(1) : '?'}` : '';
@@ -783,9 +864,15 @@ async function refreshAll() {
             const keys = ['verified_performance','effective_increment','reward_fraction',
                           'val_mae','train_mae','val_naive_mae','train_naive_mae',
                           'test_mae','test_naive_mae','incentive_reason'];
+            const binaryLabels = {
+              'val_mae': 'val_MCC', 'train_mae': 'train_MCC',
+              'val_naive_mae': 'val_F1', 'train_naive_mae': 'train_F1',
+              'test_mae': 'test_MCC', 'test_naive_mae': 'test_F1'
+            };
             const parts = keys.filter(k => p[k] != null).map(k => {
               const v = typeof p[k] === 'number' ? p[k].toFixed(6) : p[k];
-              return `<span class="text-muted">${k}:</span> ${v}`;
+              const label = isBinaryDomain && binaryLabels[k] ? binaryLabels[k] : k;
+              return `<span class="text-muted">${label}:</span> ${v}`;
             });
             payloadHtml = parts.join(' &middot; ');
           }
@@ -811,10 +898,10 @@ async function refreshAll() {
     document.getElementById('candTotalEvals').textContent = candidate.total_evals || '--';
     document.getElementById('candFitness').textContent = candidate.fitness != null ? fmt(candidate.fitness, 6) : '--';
     document.getElementById('candChampFitness').textContent = candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--';
-    document.getElementById('candValMAE').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, 6) : '--';
-    document.getElementById('candTrainMAE').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, 6) : '--';
-    document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, 6) : '--';
-    document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, 6) : '--';
+    document.getElementById('candValMAE').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, isBinaryDomain ? 4 : 6) : '--';
+    document.getElementById('candTrainMAE').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, isBinaryDomain ? 4 : 6) : '--';
+    document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, isBinaryDomain ? 4 : 6) : '--';
+    document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, isBinaryDomain ? 4 : 6) : '--';
     document.getElementById('candPatience').textContent = (candidate.no_improve_counter || 0) + '/' + (candidate.optimization_patience || '?');
     document.getElementById('candNeatSpecies').textContent = candidate.neat_species_count != null ? candidate.neat_species_count : '--';
     document.getElementById('candNeatComplexity').textContent = candidate.neat_complexity != null ? candidate.neat_complexity : '--';

@@ -1,0 +1,184 @@
+{
+    "$doc": "Gamma node config for NEAT binary TFT predictor domain.",
+    "host": "0.0.0.0",
+    "port": 8470,
+    "data_dir": "./doin-data-predictor",
+    "bootstrap_peers": [
+        "192.168.0.105:8470",
+        "192.168.0.107:8470"
+    ],
+    "target_block_time": 600,
+    "quorum_min_evaluators": 1,
+    "quorum_fraction": 0.67,
+    "quorum_tolerance": 0.5,
+    "optimizer_loop_interval": 30,
+    "eval_poll_interval": 10,
+    "storage_backend": "sqlite",
+    "network_protocol": "flooding",
+    "initial_threshold": 1e-06,
+    "acceptance_tolerance": 1e-05,
+    "discovery_enabled": true,
+    "fee_market_enabled": false,
+    "reset_chain": true,
+    "require_deterministic_seed": true,
+    "domains": [
+        {
+            "domain_id": "predictor-binary-tft-neat-1d",
+            "optimize": true,
+            "evaluate": true,
+            "optimization_plugin": "binary_predictor",
+            "inference_plugin": "binary_predictor",
+            "synthetic_data_plugin": "predictor",
+            "has_synthetic_data": false,
+            "target_performance": 999.0,
+            "metric_type": "binary",
+            "optimization_config": {
+                "predictor_root": "/home/harveybc/Documents/GitHub/predictor",
+                "load_config": "examples/config/phase_1b_binary/optimization/phase_1b_binary_tft_buy_entry_1d_optimization_config.json",
+                "predictor_plugin": "binary_tft",
+                "optimizer_plugin": "neat_optimizer",
+                "preprocessor_plugin": "stl_preprocessor",
+                "target_plugin": "binary_target",
+                "pipeline_plugin": "binary_pipeline",
+                "metric_type": "binary",
+                "step_size_fraction": 0.15,
+                "epochs": 2000,
+                "batch_size": 32,
+                "population_size": 20,
+                "n_generations": 40,
+                "early_patience": 40,
+                "optimization_patience": 5,
+                "optimization_stages": [
+                    {
+                        "name": "features",
+                        "params": [
+                            "window_size",
+                            "use_log1p_features",
+                            "positional_encoding"
+                        ],
+                        "generations": 10
+                    },
+                    {
+                        "name": "architecture",
+                        "params": [
+                            "tft_hidden_units",
+                            "tft_lstm_layers",
+                            "tft_num_heads",
+                            "tft_dropout"
+                        ],
+                        "generations": 10
+                    },
+                    {
+                        "name": "training",
+                        "params": [
+                            "learning_rate",
+                            "batch_size",
+                            "l2_reg",
+                            "min_delta"
+                        ],
+                        "generations": 10
+                    },
+                    {
+                        "name": "refinement",
+                        "params": "all",
+                        "generations": 10
+                    }
+                ],
+                "optimization_pause_on_resume": false,
+                "node_seed_offset": 2,
+                "excluded_columns": [
+                    "buy_entry_label",
+                    "sell_entry_label",
+                    "buy_exit_label",
+                    "sell_exit_label",
+                    "bars_to_friday"
+                ]
+            },
+            "inference_config": {
+                "predictor_root": "/home/harveybc/Documents/GitHub/predictor",
+                "load_config": "examples/config/phase_1b_binary/optimization/phase_1b_binary_tft_buy_entry_1d_optimization_config.json",
+                "predictor_plugin": "binary_tft",
+                "preprocessor_plugin": "stl_preprocessor",
+                "target_plugin": "binary_target",
+                "pipeline_plugin": "binary_pipeline",
+                "epochs": 2000,
+                "batch_size": 32,
+                "excluded_columns": [
+                    "buy_entry_label",
+                    "sell_entry_label",
+                    "buy_exit_label",
+                    "sell_exit_label",
+                    "bars_to_friday"
+                ]
+            },
+            "synthetic_data_config": {
+                "sdg_root": "synthetic-datagen",
+                "model_file": "synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib",
+                "n_samples": 1855,
+                "initial_price": 1.2
+            },
+            "param_bounds": {
+                "window_size": [
+                    48,
+                    160
+                ],
+                "tft_hidden_units": [
+                    16,
+                    64
+                ],
+                "tft_lstm_layers": [
+                    1,
+                    3
+                ],
+                "tft_num_heads": [
+                    1,
+                    8
+                ],
+                "tft_dropout": [
+                    0.0,
+                    0.3
+                ],
+                "use_log1p_features": [
+                    0,
+                    1
+                ],
+                "positional_encoding": [
+                    0,
+                    1
+                ],
+                "learning_rate": [
+                    1e-05,
+                    0.01
+                ],
+                "batch_size": [
+                    16,
+                    64
+                ],
+                "l2_reg": [
+                    1e-07,
+                    0.001
+                ],
+                "min_delta": [
+                    1e-10,
+                    1e-06
+                ]
+            },
+            "resource_limits": {
+                "max_training_seconds": 3600,
+                "max_memory_mb": 14000,
+                "max_epochs": 2000,
+                "max_batch_size": 128
+            },
+            "incentive_config": {
+                "higher_is_better": true,
+                "tolerance_margin": 0.28,
+                "bonus_threshold": 0.05,
+                "min_reward_fraction": 0.3,
+                "max_bonus_multiplier": 1.2
+            },
+            "synthetic_data_validation": false,
+            "higher_is_better": false
+        }
+    ],
+    "experiment_stats_file": "./predictor_experiment_stats.csv"
+}

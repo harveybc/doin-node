@@ -2217,11 +2217,13 @@ class UnifiedNode:
         if model_b64:
             params = {**params, "_model_b64": model_b64}
 
-        # Update domain best
+        # Check if this is an improvement (for logging); do NOT update
+        # _domain_best here — the reveal handler (_auto_accept_optimae) will
+        # update it after proper validation. Updating prematurely causes the
+        # reveal handler's _is_better() check to compare perf against itself
+        # and always return False, preventing block creation.
         current_best = self._domain_best.get(domain_id, (None, None))
         is_improvement = self._is_better(domain_id, performance, current_best[1])
-        if is_improvement:
-            self._domain_best[domain_id] = (params, performance)
 
         # Store champion metrics
         self._domain_champion_metrics[domain_id] = {
@@ -2261,6 +2263,9 @@ class UnifiedNode:
                 domain_id=domain_id,
             ).model_dump_json()),
         )
+        # Register the commit locally FIRST so the self-reveal can be validated.
+        # Broadcast AFTER to prevent a peer-relay race from consuming the commitment.
+        await self._handle_optimae_commit(commit_msg, "self")
         await self._broadcast(commit_msg)
         await asyncio.sleep(2.0)
 
@@ -2291,6 +2296,12 @@ class UnifiedNode:
                 },
             ).model_dump_json()),
         )
+
+        # Process the reveal locally FIRST — critical so the auto-accept path
+        # (block creation, domain_best update) runs before any peer relay can
+        # consume the commitment.  The commit-reveal manager marks the commitment
+        # as revealed, so any peer relay of the same reveal is safely ignored.
+        await self._handle_optimae_reveal(reveal_msg, "self")
         await self._broadcast(reveal_msg)
 
         self._log_event("broadcast",
