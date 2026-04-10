@@ -324,6 +324,9 @@ class UnifiedNode:
         self._shared_pop_results: dict[str, dict[int, dict]] = {}  # domain_id → {candidate_idx → result}
         self._shared_pop_claims: dict[str, set[int]] = {}  # domain_id → set of claimed candidate indices
         self._shared_pop_generation: dict[str, int] = {}  # domain_id → current generation
+        self._shared_pop_claim_times: dict[str, dict[int, float]] = {}  # domain_id → {candidate_idx → timestamp}
+        self._shared_claim_timeout: float = 600.0  # 10 min timeout for pending claims
+        self._shared_poll_idx: int = 0  # Round-robin index for peer polling
 
         # ── Live event log (for dashboard) ──
         self._live_events: list[dict[str, Any]] = []  # Most recent events (capped at 500)
@@ -1415,6 +1418,9 @@ class UnifiedNode:
                 claims = self._shared_pop_claims.get(domain_id, set())
                 claims.add(idx)
                 self._shared_pop_claims[domain_id] = claims
+                claim_times = self._shared_pop_claim_times.get(domain_id, {})
+                claim_times[idx] = time.time()
+                self._shared_pop_claim_times[domain_id] = claim_times
                 logger.debug("[SHARED] Peer %s claimed candidate %d gen=%d %s",
                              message.sender_id[:12], idx, gen, domain_id)
             return
@@ -2103,6 +2109,15 @@ class UnifiedNode:
             gen_results = self._shared_pop_results.get(domain_id, {})
             claims = self._shared_pop_claims.get(domain_id, set())
 
+            # Expire stale claims that timed out
+            self._expire_stale_claims(domain_id)
+            claims = self._shared_pop_claims.get(domain_id, set())
+
+            # Poll peer APIs for claims/results we may have missed
+            await self._poll_peer_shared_state(domain_id, generation)
+            gen_results = self._shared_pop_results.get(domain_id, {})
+            claims = self._shared_pop_claims.get(domain_id, set())
+
             # Find next unevaluated, unclaimed candidate
             candidate_idx = None
             for i in range(pop_size):
@@ -2111,11 +2126,17 @@ class UnifiedNode:
                     break
 
             if candidate_idx is not None:
-                # Claim this candidate
+                # Claim locally
                 claims.add(candidate_idx)
                 self._shared_pop_claims[domain_id] = claims
+                claim_times = self._shared_pop_claim_times.get(domain_id, {})
+                claim_times[candidate_idx] = time.time()
+                self._shared_pop_claim_times[domain_id] = claim_times
 
-                # Broadcast claim to peers
+                # Claim via peer APIs (best-effort)
+                await self._claim_on_peers(domain_id, generation, candidate_idx)
+
+                # Broadcast claim to peers (P2P fallback)
                 await self._broadcast_shared_claim(domain_id, generation, candidate_idx)
 
                 genome_data = population[candidate_idx]
@@ -2144,10 +2165,13 @@ class UnifiedNode:
                 if "fitness" not in population[candidate_idx]:
                     population[candidate_idx]["fitness"] = fitness
 
-                # Broadcast result to peers
+                # Broadcast result to peers (P2P)
                 await self._broadcast_shared_result(
                     domain_id, generation, candidate_idx, result,
                 )
+
+                # Push result via peer APIs (best-effort)
+                await self._push_result_to_peers(domain_id, generation, candidate_idx, result)
 
                 # Update champion tracking
                 if fitness < best_fitness_ever:
@@ -2259,6 +2283,7 @@ class UnifiedNode:
                 # Reset per-generation tracking
                 self._shared_pop_results[domain_id] = {}
                 self._shared_pop_claims[domain_id] = set()
+                self._shared_pop_claim_times[domain_id] = {}
                 self._shared_pop_generation[domain_id] = generation
                 gen_results = {}
                 claims = set()
@@ -2370,6 +2395,118 @@ class UnifiedNode:
             },
         )
         await self._broadcast(msg)
+
+    def _get_peer_api_urls(self) -> list[str]:
+        """Get HTTP base URLs for all connected peers."""
+        urls = []
+        for ep, peer in self._peers.items():
+            urls.append(f"http://{peer.address}:{peer.port}")
+        return urls
+
+    async def _claim_on_peers(
+        self, domain_id: str, generation: int, candidate_idx: int,
+    ) -> None:
+        """Try to register our claim on all peers via their HTTP API."""
+        import aiohttp as _ah
+
+        payload = {
+            "domain_id": domain_id,
+            "candidate_idx": candidate_idx,
+            "generation": generation,
+            "peer_id": self.peer_id,
+        }
+        for url in self._get_peer_api_urls():
+            try:
+                async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
+                    async with sess.post(f"{url}/api/shared/claim", json=payload) as resp:
+                        if resp.status == 409:
+                            body = await resp.json()
+                            logger.debug("[SHARED-API] Claim %d rejected by %s: %s",
+                                         candidate_idx, url, body.get("status"))
+                        elif resp.status == 200:
+                            logger.debug("[SHARED-API] Claim %d accepted by %s", candidate_idx, url)
+            except Exception:
+                pass  # Best effort — P2P broadcast is the fallback
+
+    async def _push_result_to_peers(
+        self, domain_id: str, generation: int, candidate_idx: int, result: dict,
+    ) -> None:
+        """Push evaluation result to all peers via their HTTP API."""
+        import aiohttp as _ah
+
+        payload = {
+            "domain_id": domain_id,
+            "candidate_idx": candidate_idx,
+            "generation": generation,
+            "fitness": result.get("fitness", float("inf")),
+            "val_mae": result.get("val_mae"),
+            "train_mae": result.get("train_mae"),
+            "val_naive_mae": result.get("val_naive_mae"),
+            "train_naive_mae": result.get("train_naive_mae"),
+            "test_mae": result.get("test_mae"),
+            "test_naive_mae": result.get("test_naive_mae"),
+        }
+        for url in self._get_peer_api_urls():
+            try:
+                async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
+                    async with sess.post(f"{url}/api/shared/result", json=payload) as resp:
+                        if resp.status == 200:
+                            logger.debug("[SHARED-API] Result %d pushed to %s", candidate_idx, url)
+            except Exception:
+                pass  # Best effort
+
+    async def _poll_peer_shared_state(self, domain_id: str, generation: int) -> None:
+        """Poll one peer's /api/shared/candidates to discover claims/results we missed."""
+        import aiohttp as _ah
+
+        urls = self._get_peer_api_urls()
+        if not urls:
+            return
+
+        # Round-robin: pick one peer per poll cycle to avoid flooding
+        poll_idx = getattr(self, "_shared_poll_idx", 0)
+        url = urls[poll_idx % len(urls)]
+        self._shared_poll_idx = poll_idx + 1
+
+        try:
+            async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
+                async with sess.get(f"{url}/api/shared/candidates",
+                                    params={"domain_id": domain_id}) as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+
+            if data.get("generation") != generation:
+                return
+
+            claims = self._shared_pop_claims.get(domain_id, set())
+            results = self._shared_pop_results.get(domain_id, {})
+            claim_times = self._shared_pop_claim_times.get(domain_id, {})
+            updated = False
+
+            for c in data.get("candidates", []):
+                idx = c["index"]
+                state = c["state"]
+                if state == "claimed" and idx not in claims and idx not in results:
+                    claims.add(idx)
+                    claim_times[idx] = time.time()
+                    updated = True
+                elif state == "evaluated" and idx not in results:
+                    fitness = c.get("fitness")
+                    if fitness is not None:
+                        results[idx] = {"fitness": fitness}
+                        pop_state = self._shared_pop_state.get(domain_id)
+                        if pop_state and idx < len(pop_state.get("population", [])):
+                            pop_state["population"][idx]["fitness"] = fitness
+                        updated = True
+
+            if updated:
+                self._shared_pop_claims[domain_id] = claims
+                self._shared_pop_claim_times[domain_id] = claim_times
+                self._shared_pop_results[domain_id] = results
+
+        except Exception:
+            pass  # Network issues are expected
 
     def _setup_optimizer_callbacks(self, domain_id: str, plugin: Any) -> None:
         """Wire DOIN callbacks onto the optimizer plugin."""
@@ -3563,6 +3700,11 @@ class UnifiedNode:
         app.router.add_get("/stats/export", self._http_stats_export)
         app.router.add_get("/stats/chain-metrics", self._http_stats_chain_metrics)
 
+        # Shared-population coordination API
+        app.router.add_get("/api/shared/candidates", self._http_shared_candidates)
+        app.router.add_post("/api/shared/claim", self._http_shared_claim)
+        app.router.add_post("/api/shared/result", self._http_shared_result)
+
         # Web dashboard
         if self.config.dashboard_enabled:
             try:
@@ -3773,6 +3915,206 @@ class UnifiedNode:
         blocks = self.consensus.chain.blocks
         metrics = collect_chain_metrics(blocks, domain_id=domain_id)
         return web.json_response({"metrics": metrics, "count": len(metrics)})
+
+    # ── Shared-population coordination API ─────────────────────
+
+    def _expire_stale_claims(self, domain_id: str) -> None:
+        """Remove claims that have timed out without a result."""
+        now = time.time()
+        claim_times = self._shared_pop_claim_times.get(domain_id, {})
+        claims = self._shared_pop_claims.get(domain_id, set())
+        results = self._shared_pop_results.get(domain_id, {})
+        expired = [
+            idx for idx, ts in list(claim_times.items())
+            if now - ts > self._shared_claim_timeout and idx not in results
+        ]
+        for idx in expired:
+            claims.discard(idx)
+            claim_times.pop(idx, None)
+            logger.info("[SHARED] Claim expired for candidate %d in %s", idx, domain_id)
+        if expired:
+            self._shared_pop_claims[domain_id] = claims
+            self._shared_pop_claim_times[domain_id] = claim_times
+
+    async def _http_shared_candidates(self, request) -> Any:
+        """GET /api/shared/candidates?domain_id=X
+        Returns all candidates with their state: free / claimed / evaluated.
+        """
+        from aiohttp import web
+        domain_id = request.query.get("domain_id", "")
+        if not domain_id:
+            # Auto-detect first shared domain
+            for did in self._shared_pop_state:
+                domain_id = did
+                break
+        if not domain_id or domain_id not in self._shared_pop_state:
+            return web.json_response({"error": "no active shared population"}, status=404)
+
+        self._expire_stale_claims(domain_id)
+
+        pop_state = self._shared_pop_state[domain_id]
+        population = pop_state.get("population", [])
+        gen = self._shared_pop_generation.get(domain_id, 0)
+        claims = self._shared_pop_claims.get(domain_id, set())
+        results = self._shared_pop_results.get(domain_id, {})
+        claim_times = self._shared_pop_claim_times.get(domain_id, {})
+
+        candidates = []
+        for i in range(len(population)):
+            if i in results:
+                state = "evaluated"
+            elif i in claims:
+                state = "claimed"
+            else:
+                state = "free"
+            entry = {
+                "index": i,
+                "state": state,
+                "generation": gen,
+            }
+            if state == "claimed" and i in claim_times:
+                entry["claimed_at"] = claim_times[i]
+                entry["timeout_remaining"] = max(0, self._shared_claim_timeout - (time.time() - claim_times[i]))
+            if state == "evaluated":
+                entry["fitness"] = results[i].get("fitness")
+            candidates.append(entry)
+
+        return web.json_response({
+            "domain_id": domain_id,
+            "generation": gen,
+            "pop_size": len(population),
+            "evaluated": len(results),
+            "claimed": len(claims - set(results.keys())),
+            "free": len(population) - len(claims) - len(set(results.keys()) - claims),
+            "candidates": candidates,
+        })
+
+    async def _http_shared_claim(self, request) -> Any:
+        """POST /api/shared/claim  {domain_id, candidate_idx, generation, peer_id}
+        Claims a candidate. Returns 409 if already claimed or evaluated.
+        """
+        from aiohttp import web
+        try:
+            data = await request.json()
+            domain_id = data["domain_id"]
+            candidate_idx = int(data["candidate_idx"])
+            gen = int(data["generation"])
+            requester = data.get("peer_id", "api")
+        except (KeyError, json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"status": "error", "detail": "domain_id, candidate_idx, generation required"},
+                status=400,
+            )
+
+        cur_gen = self._shared_pop_generation.get(domain_id)
+        if cur_gen is None or domain_id not in self._shared_pop_state:
+            return web.json_response({"status": "error", "detail": "no active shared population"}, status=404)
+        if gen != cur_gen:
+            return web.json_response(
+                {"status": "error", "detail": f"generation mismatch: current={cur_gen}, requested={gen}"},
+                status=409,
+            )
+
+        self._expire_stale_claims(domain_id)
+
+        results = self._shared_pop_results.get(domain_id, {})
+        claims = self._shared_pop_claims.get(domain_id, set())
+
+        if candidate_idx in results:
+            return web.json_response(
+                {"status": "already_evaluated", "fitness": results[candidate_idx].get("fitness")},
+                status=409,
+            )
+        if candidate_idx in claims:
+            return web.json_response(
+                {"status": "already_claimed", "detail": f"candidate {candidate_idx} is already claimed"},
+                status=409,
+            )
+
+        pop_state = self._shared_pop_state[domain_id]
+        pop_size = len(pop_state.get("population", []))
+        if candidate_idx < 0 or candidate_idx >= pop_size:
+            return web.json_response({"status": "error", "detail": "candidate_idx out of range"}, status=400)
+
+        # Accept the claim
+        claims.add(candidate_idx)
+        self._shared_pop_claims[domain_id] = claims
+        claim_times = self._shared_pop_claim_times.get(domain_id, {})
+        claim_times[candidate_idx] = time.time()
+        self._shared_pop_claim_times[domain_id] = claim_times
+
+        logger.info("[SHARED-API] Candidate %d claimed by %s gen=%d %s",
+                     candidate_idx, requester[:12], gen, domain_id)
+
+        return web.json_response({
+            "status": "claimed",
+            "candidate_idx": candidate_idx,
+            "generation": gen,
+            "timeout_s": self._shared_claim_timeout,
+        })
+
+    async def _http_shared_result(self, request) -> Any:
+        """POST /api/shared/result  {domain_id, candidate_idx, generation, fitness, ...}
+        Submits an evaluation result. First result wins (returns 409 on duplicate).
+        """
+        from aiohttp import web
+        try:
+            data = await request.json()
+            domain_id = data["domain_id"]
+            candidate_idx = int(data["candidate_idx"])
+            gen = int(data["generation"])
+            fitness = float(data["fitness"])
+        except (KeyError, json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"status": "error", "detail": "domain_id, candidate_idx, generation, fitness required"},
+                status=400,
+            )
+
+        cur_gen = self._shared_pop_generation.get(domain_id)
+        if cur_gen is None or domain_id not in self._shared_pop_state:
+            return web.json_response({"status": "error", "detail": "no active shared population"}, status=404)
+        if gen != cur_gen:
+            return web.json_response(
+                {"status": "error", "detail": f"generation mismatch: current={cur_gen}, requested={gen}"},
+                status=409,
+            )
+
+        results = self._shared_pop_results.get(domain_id, {})
+        if candidate_idx in results:
+            return web.json_response(
+                {"status": "already_evaluated", "existing_fitness": results[candidate_idx].get("fitness")},
+                status=409,
+            )
+
+        # Accept the result
+        result_dict = {
+            "fitness": fitness,
+            "val_mae": data.get("val_mae"),
+            "train_mae": data.get("train_mae"),
+            "val_naive_mae": data.get("val_naive_mae"),
+            "train_naive_mae": data.get("train_naive_mae"),
+            "test_mae": data.get("test_mae"),
+            "test_naive_mae": data.get("test_naive_mae"),
+        }
+        results[candidate_idx] = result_dict
+        self._shared_pop_results[domain_id] = results
+
+        # Update population fitness
+        pop_state = self._shared_pop_state.get(domain_id)
+        if pop_state and candidate_idx < len(pop_state.get("population", [])):
+            pop_state["population"][candidate_idx]["fitness"] = fitness
+
+        logger.info("[SHARED-API] Result for candidate %d gen=%d fitness=%.6f %s",
+                     candidate_idx, gen, fitness, domain_id)
+
+        return web.json_response({
+            "status": "accepted",
+            "candidate_idx": candidate_idx,
+            "generation": gen,
+            "fitness": fitness,
+            "total_evaluated": len(results),
+            "pop_size": len(pop_state["population"]) if pop_state else 0,
+        })
 
     async def _http_status(self, request) -> Any:
         from aiohttp import web
