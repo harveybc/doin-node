@@ -404,7 +404,7 @@ const bestChart = new Chart(bestCtx, {
     { label: 'Train Metric', data: [], borderColor: '#ffc107', backgroundColor: 'rgba(255,193,7,0.08)', fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2 },
     { label: 'Val Secondary', data: [], borderColor: '#0b5e6e', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
     { label: 'Train Secondary', data: [], borderColor: '#8b6914', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 2, borderDash: [8, 4], stepped: true, spanGaps: true },
-    { label: 'MCC=0 (random)', data: [], borderColor: 'rgba(255,0,0,0.5)', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 1, borderDash: [4, 4], hidden: false },
+    { label: 'Acc=0.5 (random)', data: [], borderColor: 'rgba(255,0,0,0.5)', backgroundColor: 'transparent', fill: false, tension: 0, pointRadius: 0, borderWidth: 1, borderDash: [4, 4], hidden: false },
   ]},
   options: {
     responsive: true, maintainAspectRatio: false,
@@ -422,11 +422,11 @@ function updateChartLabels() {
   if (isBinaryDomain) {
     perfChart.data.datasets[0].label = 'Champion Binary Fitness (lower=better)';
     perfChart.options.scales.y.title.text = 'Binary Fitness (CBF, lower=better)';
-    bestChart.data.datasets[0].label = 'Val MCC';
-    bestChart.data.datasets[1].label = 'Train MCC';
+    bestChart.data.datasets[0].label = 'Val Accuracy';
+    bestChart.data.datasets[1].label = 'Train Accuracy';
     bestChart.data.datasets[2].label = 'Val F1';
     bestChart.data.datasets[3].label = 'Train F1';
-    bestChart.options.scales.y.title.text = 'MCC / F1 (higher=better)';
+    bestChart.options.scales.y.title.text = 'Accuracy / F1 (higher=better)';
     // Update chart titles
     document.querySelector('#perfChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-line"></i> Binary Fitness History';
     document.querySelector('#bestChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-area"></i> Binary Metrics (Champion)';
@@ -526,13 +526,13 @@ async function refreshAll() {
       // Update champion panel labels
       if (isBinaryDomain) {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (lower=better)';
-        document.getElementById('csTrainMAELabel').textContent = 'Train MCC';
-        document.getElementById('csValMAELabel').textContent = 'Val MCC';
+        document.getElementById('csTrainMAELabel').textContent = 'Train Accuracy';
+        document.getElementById('csValMAELabel').textContent = 'Val Accuracy';
         document.getElementById('csTrainNaiveLabel').textContent = 'Train F1';
         document.getElementById('csValNaiveLabel').textContent = 'Val F1';
         // Candidate tab
-        document.getElementById('candValMAELabel').textContent = 'Val MCC';
-        document.getElementById('candTrainMAELabel').textContent = 'Train MCC';
+        document.getElementById('candValMAELabel').textContent = 'Val Accuracy';
+        document.getElementById('candTrainMAELabel').textContent = 'Train Accuracy';
         document.getElementById('candValNaiveLabel').textContent = 'Val F1';
         document.getElementById('candTrainNaiveLabel').textContent = 'Train F1';
       } else {
@@ -562,9 +562,9 @@ async function refreshAll() {
         <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
           <td colspan="2"><strong>🏆 Champion ${srcBadge} ${c.block_index != null ? '(block #'+c.block_index+')' : (c.round != null ? '(round '+c.round+')' : '')}</strong></td>
           <td colspan="5">${isBinaryDomain ? `
-            Train MCC: <strong>${fmt(c.train_mae,4)}</strong> / F1 ${fmt(c.train_naive_mae,4)} &nbsp;|&nbsp;
-            Val MCC: <strong>${fmt(c.val_mae,4)}</strong> / F1 ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
-            Test MCC: <strong>${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}</strong> / F1 ${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}`
+            Train Acc: <strong>${fmt(c.train_mae,4)}</strong> / F1 ${fmt(c.train_naive_mae,4)} &nbsp;|&nbsp;
+            Val Acc: <strong>${fmt(c.val_mae,4)}</strong> / F1 ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
+            Test Acc: <strong>${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}</strong> / F1 ${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}`
           : `Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
             Val MAE: <strong>${fmt(c.val_mae,6)}</strong> / naive ${fmt(c.val_naive_mae,6)} &nbsp;|&nbsp;
             Test MAE: <strong>${c.test_mae != null ? fmt(c.test_mae,6) : 'N/A'}</strong> / naive ${c.test_naive_mae != null ? fmt(c.test_naive_mae,6) : 'N/A'}`}
@@ -654,7 +654,7 @@ async function refreshAll() {
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
         const metricsStr = isBinaryDomain
-          ? `fit=<strong>${f(e.fitness,6)}</strong> | mcc_v=${f(e.val_mae,4)} mcc_t=${f(e.train_mae,4)} | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
+          ? `fit=<strong>${f(e.fitness,6)}</strong> | acc_v=${f(e.val_mae,4)} acc_t=${f(e.train_mae,4)} | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
           : `fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`;
         return `<tr style="${bg}">
           <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen}</td>
@@ -767,9 +767,9 @@ async function refreshAll() {
     bestChart.data.datasets[1].data = trainMaeData;
     bestChart.data.datasets[2].data = valNaiveData;
     bestChart.data.datasets[3].data = trainNaiveData;
-    // Dataset 4: MCC=0 baseline (only visible in binary mode)
+    // Dataset 4: Acc=0.5 baseline (only visible in binary mode)
     if (isBinaryDomain) {
-      bestChart.data.datasets[4].data = maeLabels.map(() => 0);
+      bestChart.data.datasets[4].data = maeLabels.map(() => 0.5);
       bestChart.data.datasets[4].hidden = false;
     } else {
       bestChart.data.datasets[4].data = [];
@@ -788,7 +788,7 @@ async function refreshAll() {
         case 'champion':
           var nda = e.performance != null ? f(e.performance,6) : '--';
           var breakdown = isBinaryDomain
-            ? `mcc_v: ${f(e.val_mae,4)} | f1_v: ${f(e.val_naive_mae,4)} | mcc_t: ${f(e.train_mae,4)} | f1_t: ${f(e.train_naive_mae,4)}`
+            ? `acc_v: ${f(e.val_mae,4)} | f1_v: ${f(e.val_naive_mae,4)} | acc_t: ${f(e.train_mae,4)} | f1_t: ${f(e.train_naive_mae,4)}`
             : `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
           var perfLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.15)">
@@ -865,9 +865,9 @@ async function refreshAll() {
                           'val_mae','train_mae','val_naive_mae','train_naive_mae',
                           'test_mae','test_naive_mae','incentive_reason'];
             const binaryLabels = {
-              'val_mae': 'val_MCC', 'train_mae': 'train_MCC',
+              'val_mae': 'val_Accuracy', 'train_mae': 'train_Accuracy',
               'val_naive_mae': 'val_F1', 'train_naive_mae': 'train_F1',
-              'test_mae': 'test_MCC', 'test_naive_mae': 'test_F1'
+              'test_mae': 'test_Accuracy', 'test_naive_mae': 'test_F1'
             };
             const parts = keys.filter(k => p[k] != null).map(k => {
               const v = typeof p[k] === 'number' ? p[k].toFixed(6) : p[k];
