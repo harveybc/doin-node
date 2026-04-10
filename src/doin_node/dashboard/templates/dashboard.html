@@ -422,11 +422,11 @@ function updateChartLabels() {
   if (isBinaryDomain) {
     perfChart.data.datasets[0].label = 'Champion Binary Fitness (lower=better)';
     perfChart.options.scales.y.title.text = 'Binary Fitness (CBF, lower=better)';
-    bestChart.data.datasets[0].label = 'Val Accuracy';
-    bestChart.data.datasets[1].label = 'Train Accuracy';
-    bestChart.data.datasets[2].label = 'Val F1';
-    bestChart.data.datasets[3].label = 'Train F1';
-    bestChart.options.scales.y.title.text = 'Accuracy / F1 (higher=better)';
+    bestChart.data.datasets[0].label = 'Val F1 (40%)';
+    bestChart.data.datasets[1].label = 'Train F1 (40%)';
+    bestChart.data.datasets[2].label = 'Val Accuracy (20%)';
+    bestChart.data.datasets[3].label = 'Train Accuracy (20%)';
+    bestChart.options.scales.y.title.text = 'F1 / Accuracy (higher=better)';
     // Update chart titles
     document.querySelector('#perfChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-line"></i> Binary Fitness History';
     document.querySelector('#bestChart').closest('.card').querySelector('.card-title').innerHTML = '<i class="fas fa-chart-area"></i> Binary Metrics (Champion)';
@@ -526,15 +526,15 @@ async function refreshAll() {
       // Update champion panel labels
       if (isBinaryDomain) {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (lower=better)';
-        document.getElementById('csTrainMAELabel').textContent = 'Train Accuracy';
-        document.getElementById('csValMAELabel').textContent = 'Val Accuracy';
-        document.getElementById('csTrainNaiveLabel').textContent = 'Train F1';
-        document.getElementById('csValNaiveLabel').textContent = 'Val F1';
+        document.getElementById('csTrainMAELabel').textContent = 'Train F1 (40%)';
+        document.getElementById('csValMAELabel').textContent = 'Val F1 (40%)';
+        document.getElementById('csTrainNaiveLabel').textContent = 'Train Accuracy (20%)';
+        document.getElementById('csValNaiveLabel').textContent = 'Val Accuracy (20%)';
         // Candidate tab
-        document.getElementById('candValMAELabel').textContent = 'Val Accuracy';
-        document.getElementById('candTrainMAELabel').textContent = 'Train Accuracy';
-        document.getElementById('candValNaiveLabel').textContent = 'Val F1';
-        document.getElementById('candTrainNaiveLabel').textContent = 'Train F1';
+        document.getElementById('candValMAELabel').textContent = 'Val F1 (40%)';
+        document.getElementById('candTrainMAELabel').textContent = 'Train F1 (40%)';
+        document.getElementById('candValNaiveLabel').textContent = 'Val Accuracy (20%)';
+        document.getElementById('candTrainNaiveLabel').textContent = 'Train Accuracy (20%)';
       } else {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion NDA (lower=better)';
         document.getElementById('csTrainMAELabel').textContent = 'Train MAE';
@@ -562,9 +562,9 @@ async function refreshAll() {
         <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
           <td colspan="2"><strong>🏆 Champion ${srcBadge} ${c.block_index != null ? '(block #'+c.block_index+')' : (c.round != null ? '(round '+c.round+')' : '')}</strong></td>
           <td colspan="5">${isBinaryDomain ? `
-            Train Acc: <strong>${fmt(c.train_mae,4)}</strong> / F1 ${fmt(c.train_naive_mae,4)} &nbsp;|&nbsp;
-            Val Acc: <strong>${fmt(c.val_mae,4)}</strong> / F1 ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
-            Test Acc: <strong>${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}</strong> / F1 ${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}`
+            F1: <strong>Train ${fmt(c.train_naive_mae,4)}</strong> / Val ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
+            Acc: Train ${fmt(c.train_mae,4)} / Val ${fmt(c.val_mae,4)} &nbsp;|&nbsp;
+            Test F1: <strong>${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}</strong> / Acc ${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}`
           : `Train MAE: <strong>${fmt(c.train_mae,6)}</strong> / naive ${fmt(c.train_naive_mae,6)} &nbsp;|&nbsp;
             Val MAE: <strong>${fmt(c.val_mae,6)}</strong> / naive ${fmt(c.val_naive_mae,6)} &nbsp;|&nbsp;
             Test MAE: <strong>${c.test_mae != null ? fmt(c.test_mae,6) : 'N/A'}</strong> / naive ${c.test_naive_mae != null ? fmt(c.test_naive_mae,6) : 'N/A'}`}
@@ -613,16 +613,31 @@ async function refreshAll() {
         const d = opt.domains[0];
         document.getElementById('csPerformance').textContent = d.best_performance != null ? fmt(d.best_performance, 6) : '--';
         const c = d.champion || {};
-        document.getElementById('csTrainMAE').textContent = c.train_mae != null ? fmt(c.train_mae, 6) : '--';
-        document.getElementById('csValMAE').textContent = c.val_mae != null ? fmt(c.val_mae, 6) : '--';
-        document.getElementById('csTrainNaive').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 6) : '--';
-        document.getElementById('csValNaive').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 6) : '--';
+        if (isBinaryDomain) {
+          // Binary: F1 as primary, Accuracy as secondary
+          document.getElementById('csTrainMAE').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 4) : '--';
+          document.getElementById('csValMAE').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 4) : '--';
+          document.getElementById('csTrainNaive').textContent = c.train_mae != null ? fmt(c.train_mae, 4) : '--';
+          document.getElementById('csValNaive').textContent = c.val_mae != null ? fmt(c.val_mae, 4) : '--';
+        } else {
+          document.getElementById('csTrainMAE').textContent = c.train_mae != null ? fmt(c.train_mae, 6) : '--';
+          document.getElementById('csValMAE').textContent = c.val_mae != null ? fmt(c.val_mae, 6) : '--';
+          document.getElementById('csTrainNaive').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 6) : '--';
+          document.getElementById('csValNaive').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 6) : '--';
+        }
       } else if (latestChamp) {
         document.getElementById('csPerformance').textContent = latestChamp.performance != null ? fmt(latestChamp.performance, 6) : '--';
-        document.getElementById('csTrainMAE').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 6) : '--';
-        document.getElementById('csValMAE').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 6) : '--';
-        document.getElementById('csTrainNaive').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 6) : '--';
-        document.getElementById('csValNaive').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 6) : '--';
+        if (isBinaryDomain) {
+          document.getElementById('csTrainMAE').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 4) : '--';
+          document.getElementById('csValMAE').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 4) : '--';
+          document.getElementById('csTrainNaive').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 4) : '--';
+          document.getElementById('csValNaive').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 4) : '--';
+        } else {
+          document.getElementById('csTrainMAE').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 6) : '--';
+          document.getElementById('csValMAE').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 6) : '--';
+          document.getElementById('csTrainNaive').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 6) : '--';
+          document.getElementById('csValNaive').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 6) : '--';
+        }
       }
 
       // Last candidate fitness + generation stats
@@ -654,7 +669,7 @@ async function refreshAll() {
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
         const metricsStr = isBinaryDomain
-          ? `fit=<strong>${f(e.fitness,6)}</strong> | acc_v=${f(e.val_mae,4)} acc_t=${f(e.train_mae,4)} | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
+          ? `fit=<strong>${f(e.fitness,6)}</strong> | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | acc_v=${f(e.val_mae,4)} acc_t=${f(e.train_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
           : `fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`;
         return `<tr style="${bg}">
           <td><span class="badge badge-light">C${e.candidate_num||'?'}/${e.total_candidates||'?'}</span> G${e.gen}</td>
@@ -763,10 +778,19 @@ async function refreshAll() {
     }
 
     bestChart.data.labels = maeLabels;
-    bestChart.data.datasets[0].data = valMaeData;
-    bestChart.data.datasets[1].data = trainMaeData;
-    bestChart.data.datasets[2].data = valNaiveData;
-    bestChart.data.datasets[3].data = trainNaiveData;
+    if (isBinaryDomain) {
+      // Binary mode: F1 as primary (solid), Accuracy as secondary (dashed)
+      bestChart.data.datasets[0].data = valNaiveData;   // Val F1 (primary)
+      bestChart.data.datasets[1].data = trainNaiveData;  // Train F1 (primary)
+      bestChart.data.datasets[2].data = valMaeData;      // Val Accuracy (secondary)
+      bestChart.data.datasets[3].data = trainMaeData;    // Train Accuracy (secondary)
+    } else {
+      // Regression mode: MAE as primary, Naive as secondary
+      bestChart.data.datasets[0].data = valMaeData;
+      bestChart.data.datasets[1].data = trainMaeData;
+      bestChart.data.datasets[2].data = valNaiveData;
+      bestChart.data.datasets[3].data = trainNaiveData;
+    }
     // Dataset 4: Acc=0.5 baseline (only visible in binary mode)
     if (isBinaryDomain) {
       bestChart.data.datasets[4].data = maeLabels.map(() => 0.5);
@@ -788,7 +812,7 @@ async function refreshAll() {
         case 'champion':
           var nda = e.performance != null ? f(e.performance,6) : '--';
           var breakdown = isBinaryDomain
-            ? `acc_v: ${f(e.val_mae,4)} | f1_v: ${f(e.val_naive_mae,4)} | acc_t: ${f(e.train_mae,4)} | f1_t: ${f(e.train_naive_mae,4)}`
+            ? `f1_v: ${f(e.val_naive_mae,4)} | f1_t: ${f(e.train_naive_mae,4)} | acc_v: ${f(e.val_mae,4)} | acc_t: ${f(e.train_mae,4)}`
             : `val: ${f(e.val_mae)}-${f(e.val_naive_mae)}=${f(e.val_mae&&e.val_naive_mae?(e.val_mae-e.val_naive_mae):null,6)} | train: ${f(e.train_mae)}-${f(e.train_naive_mae)}=${f(e.train_mae&&e.train_naive_mae?(e.train_mae-e.train_naive_mae):null,6)}`;
           var perfLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.15)">
@@ -862,12 +886,12 @@ async function refreshAll() {
           if (tx.payload) {
             const p = tx.payload;
             const keys = ['verified_performance','effective_increment','reward_fraction',
-                          'val_mae','train_mae','val_naive_mae','train_naive_mae',
-                          'test_mae','test_naive_mae','incentive_reason'];
+                          'val_naive_mae','train_naive_mae','val_mae','train_mae',
+                          'test_naive_mae','test_mae','incentive_reason'];
             const binaryLabels = {
-              'val_mae': 'val_Accuracy', 'train_mae': 'train_Accuracy',
-              'val_naive_mae': 'val_F1', 'train_naive_mae': 'train_F1',
-              'test_mae': 'test_Accuracy', 'test_naive_mae': 'test_F1'
+              'val_naive_mae': 'val_F1 (40%)', 'train_naive_mae': 'train_F1 (40%)',
+              'val_mae': 'val_Accuracy (20%)', 'train_mae': 'train_Accuracy (20%)',
+              'test_naive_mae': 'test_F1', 'test_mae': 'test_Accuracy'
             };
             const parts = keys.filter(k => p[k] != null).map(k => {
               const v = typeof p[k] === 'number' ? p[k].toFixed(6) : p[k];
@@ -898,10 +922,18 @@ async function refreshAll() {
     document.getElementById('candTotalEvals').textContent = candidate.total_evals || '--';
     document.getElementById('candFitness').textContent = candidate.fitness != null ? fmt(candidate.fitness, 6) : '--';
     document.getElementById('candChampFitness').textContent = candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--';
-    document.getElementById('candValMAE').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, isBinaryDomain ? 4 : 6) : '--';
-    document.getElementById('candTrainMAE').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, isBinaryDomain ? 4 : 6) : '--';
-    document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, isBinaryDomain ? 4 : 6) : '--';
-    document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, isBinaryDomain ? 4 : 6) : '--';
+    if (isBinaryDomain) {
+      // Binary: F1 as primary slot, Accuracy as secondary
+      document.getElementById('candValMAE').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, 4) : '--';
+      document.getElementById('candTrainMAE').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, 4) : '--';
+      document.getElementById('candValNaive').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, 4) : '--';
+      document.getElementById('candTrainNaive').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, 4) : '--';
+    } else {
+      document.getElementById('candValMAE').textContent = candidate.val_mae != null ? fmt(candidate.val_mae, 6) : '--';
+      document.getElementById('candTrainMAE').textContent = candidate.train_mae != null ? fmt(candidate.train_mae, 6) : '--';
+      document.getElementById('candValNaive').textContent = candidate.val_naive_mae != null ? fmt(candidate.val_naive_mae, 6) : '--';
+      document.getElementById('candTrainNaive').textContent = candidate.train_naive_mae != null ? fmt(candidate.train_naive_mae, 6) : '--';
+    }
     document.getElementById('candPatience').textContent = (candidate.no_improve_counter || 0) + '/' + (candidate.optimization_patience || '?');
     document.getElementById('candNeatSpecies').textContent = candidate.neat_species_count != null ? candidate.neat_species_count : '--';
     document.getElementById('candNeatComplexity').textContent = candidate.neat_complexity != null ? candidate.neat_complexity : '--';

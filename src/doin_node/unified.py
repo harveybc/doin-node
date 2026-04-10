@@ -2103,6 +2103,12 @@ class UnifiedNode:
         innovation_tracker_data = pop_state.get("innovation_tracker", {})
         stage_schedule = pop_state.get("stage_schedule", [])
         param_defaults = pop_state.get("param_defaults", {})
+        total_evals_counter = 0  # Running count of candidates evaluated by this node
+
+        # Optimization config for dashboard fields
+        role = self._domain_roles.get(domain_id)
+        opt_cfg = role.optimization_config if role else {}
+        n_generations = opt_cfg.get("n_generations", 15)
 
         while self._running:
             pop_size = len(population)
@@ -2156,6 +2162,7 @@ class UnifiedNode:
                     "[SHARED] Candidate %d/%d result: fitness=%.6f gen=%d %s",
                     candidate_idx + 1, pop_size, fitness, generation, domain_id,
                 )
+                total_evals_counter += 1
 
                 # Store result locally
                 gen_results[candidate_idx] = result
@@ -2164,6 +2171,58 @@ class UnifiedNode:
                 # Update genome with fitness for later reproduction
                 if "fitness" not in population[candidate_idx]:
                     population[candidate_idx]["fitness"] = fitness
+
+                # Update _current_candidate for dashboard /api/candidate
+                self._current_candidate = {
+                    "domain_id": domain_id,
+                    "gen": generation,
+                    "candidate_num": candidate_idx + 1,
+                    "total_candidates": pop_size,
+                    "stage": stage_idx + 1,
+                    "total_stages": len(stage_schedule) or 1,
+                    "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
+                    "total_evals": total_evals_counter,
+                    "fitness": fitness,
+                    "val_mae": result.get("val_mae"),
+                    "train_mae": result.get("train_mae"),
+                    "val_naive_mae": result.get("val_naive_mae"),
+                    "train_naive_mae": result.get("train_naive_mae"),
+                    "champion_fitness": best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    "candidate_params": result.get("hyper_dict"),
+                    "model_summary": result.get("model_summary"),
+                    "n_generations": n_generations,
+                    "n_generations_stage": n_generations,
+                    "gen_in_stage": generation,
+                    "no_improve_counter": no_improve_count,
+                    "optimization_patience": patience,
+                    "neat_species_count": result.get("neat_species_count"),
+                    "neat_complexity": result.get("neat_complexity"),
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+
+                # Emit candidate_eval event for dashboard
+                self._log_event("candidate_eval",
+                    domain_id=domain_id, gen=generation,
+                    candidate_num=candidate_idx + 1,
+                    total_candidates=pop_size,
+                    stage=stage_idx + 1,
+                    total_stages=len(stage_schedule) or 1,
+                    stage_name=stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
+                    total_evals=total_evals_counter,
+                    fitness=fitness,
+                    val_mae=result.get("val_mae"),
+                    train_mae=result.get("train_mae"),
+                    val_naive_mae=result.get("val_naive_mae"),
+                    train_naive_mae=result.get("train_naive_mae"),
+                    champion_fitness=best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    n_generations=n_generations,
+                    n_generations_stage=n_generations,
+                    gen_in_stage=generation,
+                    no_improve_counter=no_improve_count,
+                    optimization_patience=patience,
+                    neat_species_count=result.get("neat_species_count"),
+                    neat_complexity=result.get("neat_complexity"),
+                )
 
                 # Broadcast result to peers (P2P)
                 await self._broadcast_shared_result(
@@ -2182,8 +2241,6 @@ class UnifiedNode:
                         "performance": fitness,
                         **{k: v for k, v in result.items() if k not in ("fitness", "hyper_dict", "_model_b64")},
                     }
-                    self._log_event("champion", domain_id=domain_id,
-                                    generation=generation, fitness=fitness)
                     logger.info("[SHARED] 🏆 New champion! fitness=%.6f gen=%d", fitness, generation)
 
                     # Broadcast champion via commit-reveal for dashboard/chain
@@ -2220,6 +2277,7 @@ class UnifiedNode:
 
                 # Check improvement for patience
                 gen_best = min(r.get("fitness", float("inf")) for r in gen_results.values())
+                avg_fitness = sum(r.get("fitness", 0) for r in gen_results.values()) / max(len(gen_results), 1)
                 prev_best = best_fitness_ever
                 if gen_best < best_fitness_ever:
                     best_fitness_ever = gen_best
@@ -2227,9 +2285,27 @@ class UnifiedNode:
                 else:
                     no_improve_count += 1
 
+                # Get champion metrics for generation_end event
+                champ_metrics = self._domain_champion_metrics.get(domain_id, {})
+
                 self._log_event("generation_end", domain_id=domain_id,
-                                generation=generation, best_fitness=gen_best,
-                                no_improve_count=no_improve_count, patience=patience)
+                                gen=generation, generation=generation,
+                                best_fitness=gen_best, avg_fitness=avg_fitness,
+                                champion_fitness=best_fitness_ever if best_fitness_ever < float("inf") else None,
+                                champion_val_mae=champ_metrics.get("val_mae"),
+                                champion_train_mae=champ_metrics.get("train_mae"),
+                                no_improve_count=no_improve_count, patience=f"{no_improve_count}/{patience}",
+                                total_evals=total_evals_counter,
+                                population_size=pop_size,
+                                stage=stage_idx + 1,
+                                total_stages=len(stage_schedule) or 1,
+                                n_generations=n_generations,
+                                n_generations_stage=n_generations,
+                                gen_in_stage=generation,
+                                no_improve_counter=no_improve_count,
+                                optimization_patience=patience)
+
+                self._domain_round_count[domain_id] = generation + 1
 
                 # Deterministic seed from generation results hash
                 results_str = json.dumps(
