@@ -319,6 +319,12 @@ class UnifiedNode:
         self._seen_candidate_tx_ids: set[str] = set()  # dedup candidate evaluation transactions
         self._start_time: float = time.time()
 
+        # ── Shared-population state ──
+        self._shared_pop_state: dict[str, dict[str, Any]] = {}  # domain_id → shared pop state
+        self._shared_pop_results: dict[str, dict[int, dict]] = {}  # domain_id → {candidate_idx → result}
+        self._shared_pop_claims: dict[str, set[int]] = {}  # domain_id → set of claimed candidate indices
+        self._shared_pop_generation: dict[str, int] = {}  # domain_id → current generation
+
         # ── Live event log (for dashboard) ──
         self._live_events: list[dict[str, Any]] = []  # Most recent events (capped at 500)
         self._live_events_max = 500
@@ -701,9 +707,20 @@ class UnifiedNode:
 
         # Start background loops for roles
         if self.optimizer_domains:
-            self._background_tasks.append(
-                asyncio.create_task(self._optimizer_loop())
+            # Check if any domain uses shared-population mode
+            _any_shared = any(
+                (self._domain_roles.get(d) and
+                 self._domain_roles[d].optimization_config.get("shared_population", False))
+                for d in self.optimizer_domains
             )
+            if _any_shared:
+                self._background_tasks.append(
+                    asyncio.create_task(self._shared_optimizer_loop())
+                )
+            else:
+                self._background_tasks.append(
+                    asyncio.create_task(self._optimizer_loop())
+                )
         if self.evaluator_domains:
             self._background_tasks.append(
                 asyncio.create_task(self._evaluator_loop())
@@ -1370,6 +1387,7 @@ class UnifiedNode:
         """Handle incoming candidate evaluation from a peer.
 
         Research mode: accept without verification, dedup by tx_id.
+        Also handles shared-population claims and results.
         """
         payload = message.payload or {}
         tx_id = payload.get("tx_id", "")
@@ -1385,7 +1403,53 @@ class UnifiedNode:
         if message.sender_id == self.peer_id:
             return
 
-        # Reconstruct the transaction and record it as pending
+        candidate_data = payload.get("candidate_data", {})
+        domain_id = payload.get("domain_id", "")
+
+        # ── Shared-population claim handling ──
+        if candidate_data.get("_shared_claim"):
+            gen = candidate_data.get("generation")
+            idx = candidate_data.get("candidate_idx")
+            cur_gen = self._shared_pop_generation.get(domain_id)
+            if gen is not None and idx is not None and gen == cur_gen:
+                claims = self._shared_pop_claims.get(domain_id, set())
+                claims.add(idx)
+                self._shared_pop_claims[domain_id] = claims
+                logger.debug("[SHARED] Peer %s claimed candidate %d gen=%d %s",
+                             message.sender_id[:12], idx, gen, domain_id)
+            return
+
+        # ── Shared-population result handling ──
+        if candidate_data.get("_shared_result"):
+            gen = candidate_data.get("generation")
+            idx = candidate_data.get("candidate_idx")
+            cur_gen = self._shared_pop_generation.get(domain_id)
+            if gen is not None and idx is not None and gen == cur_gen:
+                results = self._shared_pop_results.get(domain_id, {})
+                if idx not in results:  # First result wins
+                    results[idx] = {
+                        "fitness": candidate_data.get("fitness", float("inf")),
+                        "val_mae": candidate_data.get("val_mae"),
+                        "train_mae": candidate_data.get("train_mae"),
+                        "val_naive_mae": candidate_data.get("val_naive_mae"),
+                        "train_naive_mae": candidate_data.get("train_naive_mae"),
+                        "test_mae": candidate_data.get("test_mae"),
+                        "test_naive_mae": candidate_data.get("test_naive_mae"),
+                    }
+                    self._shared_pop_results[domain_id] = results
+                    # Also update population fitness for reproduction
+                    pop_state = self._shared_pop_state.get(domain_id)
+                    if pop_state and idx < len(pop_state.get("population", [])):
+                        pop_state["population"][idx]["fitness"] = candidate_data.get("fitness", float("inf"))
+                    logger.info(
+                        "[SHARED] Peer %s result: candidate %d/%s gen=%d fitness=%.6f %s",
+                        message.sender_id[:12], idx,
+                        len(pop_state["population"]) if pop_state else "?",
+                        gen, candidate_data.get("fitness", 0.0), domain_id,
+                    )
+            return
+
+        # ── Standard candidate evaluation (island mode) ──
         from doin_core.models.transaction import Transaction, TransactionType
         from datetime import datetime, timezone
         ts_str = payload.get("timestamp")
@@ -1393,18 +1457,18 @@ class UnifiedNode:
         tx = Transaction(
             id=tx_id,
             tx_type=TransactionType.CANDIDATE_EVALUATED,
-            domain_id=payload.get("domain_id", ""),
+            domain_id=domain_id,
             peer_id=payload.get("peer_id", message.sender_id),
-            payload=payload.get("candidate_data", {}),
+            payload=candidate_data,
             timestamp=ts,
         )
         self.consensus.record_transaction(tx)
         logger.info(
             "📊 Accepted candidate eval from peer %s (gen=%s stage=%s fitness=%.6f)",
             message.sender_id[:12],
-            payload.get("candidate_data", {}).get("generation", "?"),
-            payload.get("candidate_data", {}).get("stage_name", "?"),
-            payload.get("candidate_data", {}).get("fitness", 0.0),
+            candidate_data.get("generation", "?"),
+            candidate_data.get("stage_name", "?"),
+            candidate_data.get("fitness", 0.0),
         )
 
     async def _broadcast_candidate_evaluation(
@@ -1939,6 +2003,379 @@ class UnifiedNode:
                 self._log_event("optimization_complete", domain_id=domain_id)
             except Exception:
                 logger.exception("Optimization error for %s", domain_id)
+
+    # ── Shared-Population Optimizer Loop ─────────────────────────
+
+    async def _shared_optimizer_loop(self) -> None:
+        """Background loop: shared-population optimization across all nodes.
+
+        Instead of each node running an independent NEAT GA, all nodes share
+        one population via the blockchain. The genesis block contains the
+        initial population, nodes pull unevaluated candidates, and when all
+        candidates in a generation are evaluated the first detecting node
+        proposes a block with the next generation (deterministic reproduction).
+        """
+        import hashlib as _hl
+
+        # Wait for peers
+        logger.info("[SHARED] Waiting for peer discovery...")
+        for i in range(30):
+            await asyncio.sleep(1)
+            if self._peers:
+                logger.info("[SHARED] Peers found (%d) after %ds", len(self._peers), i + 1)
+                await asyncio.sleep(3)
+                break
+
+        for domain_id in self.optimizer_domains:
+            if domain_id in self._domain_converged:
+                continue
+            role = self._domain_roles.get(domain_id)
+            if not role or not role.optimization_config.get("shared_population", False):
+                continue
+            plugin = self._optimizer_plugins.get(domain_id)
+            if plugin is None:
+                logger.error("[SHARED] No optimizer plugin for %s", domain_id)
+                continue
+
+            opt_cfg = role.optimization_config
+            shared_pop_size = opt_cfg.get("shared_population_size", 60)
+            shared_patience = opt_cfg.get("optimization_patience", 5)
+
+            # Setup plugin environment
+            if hasattr(plugin, "setup_shared_mode"):
+                plugin.setup_shared_mode()
+
+            # ── Initialize or recover shared state from chain ──
+            pop_state = self._recover_shared_state_from_chain(domain_id)
+            if pop_state is None:
+                # First node to start — create genesis population
+                logger.info("[SHARED] Creating genesis population (%d genomes) for %s",
+                            shared_pop_size, domain_id)
+                seed = int.from_bytes(
+                    _hl.sha256(domain_id.encode()).digest()[:4], "big"
+                )
+                pop_state = plugin.create_shared_population(shared_pop_size, seed=seed)
+                pop_state["generation"] = 0
+                pop_state["stage_idx"] = 0
+                pop_state["no_improve_count"] = 0
+                pop_state["best_fitness_ever"] = float("inf")
+
+                # Store population in genesis via an OPTIMAE_ACCEPTED transaction
+                await self._store_shared_population_in_chain(domain_id, pop_state)
+                logger.info("[SHARED] Genesis population stored in chain for %s", domain_id)
+
+            self._shared_pop_state[domain_id] = pop_state
+            self._shared_pop_results[domain_id] = {}
+            self._shared_pop_claims[domain_id] = set()
+            self._shared_pop_generation[domain_id] = pop_state.get("generation", 0)
+
+            logger.info(
+                "[SHARED] Starting shared optimization for %s: gen=%d pop_size=%d stage=%d",
+                domain_id, pop_state["generation"], len(pop_state["population"]),
+                pop_state.get("stage_idx", 0),
+            )
+
+            # ── Main shared-population loop ──
+            try:
+                await self._run_shared_optimization(domain_id, plugin, pop_state,
+                                                    shared_patience)
+            except Exception:
+                logger.exception("[SHARED] Error in shared optimization for %s", domain_id)
+
+    async def _run_shared_optimization(
+        self, domain_id: str, plugin: Any,
+        pop_state: dict, patience: int,
+    ) -> None:
+        """Run the shared-population optimization loop for a domain."""
+        import hashlib as _hl
+
+        population = pop_state["population"]
+        generation = pop_state.get("generation", 0)
+        stage_idx = pop_state.get("stage_idx", 0)
+        no_improve_count = pop_state.get("no_improve_count", 0)
+        best_fitness_ever = pop_state.get("best_fitness_ever", float("inf"))
+        innovation_tracker_data = pop_state.get("innovation_tracker", {})
+        stage_schedule = pop_state.get("stage_schedule", [])
+        param_defaults = pop_state.get("param_defaults", {})
+
+        while self._running:
+            pop_size = len(population)
+            gen_results = self._shared_pop_results.get(domain_id, {})
+            claims = self._shared_pop_claims.get(domain_id, set())
+
+            # Find next unevaluated, unclaimed candidate
+            candidate_idx = None
+            for i in range(pop_size):
+                if i not in gen_results and i not in claims:
+                    candidate_idx = i
+                    break
+
+            if candidate_idx is not None:
+                # Claim this candidate
+                claims.add(candidate_idx)
+                self._shared_pop_claims[domain_id] = claims
+
+                # Broadcast claim to peers
+                await self._broadcast_shared_claim(domain_id, generation, candidate_idx)
+
+                genome_data = population[candidate_idx]
+                logger.info(
+                    "[SHARED] Evaluating candidate %d/%d gen=%d for %s",
+                    candidate_idx + 1, pop_size, generation, domain_id,
+                )
+
+                # Evaluate in executor thread (blocking GPU work)
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda gi=genome_data, g=generation: plugin.evaluate_candidate(gi, g),
+                )
+
+                fitness = result.get("fitness", float("inf"))
+                logger.info(
+                    "[SHARED] Candidate %d/%d result: fitness=%.6f gen=%d %s",
+                    candidate_idx + 1, pop_size, fitness, generation, domain_id,
+                )
+
+                # Store result locally
+                gen_results[candidate_idx] = result
+                self._shared_pop_results[domain_id] = gen_results
+
+                # Update genome with fitness for later reproduction
+                if "fitness" not in population[candidate_idx]:
+                    population[candidate_idx]["fitness"] = fitness
+
+                # Broadcast result to peers
+                await self._broadcast_shared_result(
+                    domain_id, generation, candidate_idx, result,
+                )
+
+                # Update champion tracking
+                if fitness < best_fitness_ever:
+                    best_fitness_ever = fitness
+                    self._domain_best[domain_id] = (result.get("hyper_dict", {}), fitness)
+                    self._domain_champion_metrics[domain_id] = {
+                        "round": generation,
+                        "performance": fitness,
+                        **{k: v for k, v in result.items() if k not in ("fitness", "hyper_dict", "_model_b64")},
+                    }
+                    self._log_event("champion", domain_id=domain_id,
+                                    generation=generation, fitness=fitness)
+                    logger.info("[SHARED] 🏆 New champion! fitness=%.6f gen=%d", fitness, generation)
+
+                    # Broadcast champion via commit-reveal for dashboard/chain
+                    try:
+                        params = result.get("hyper_dict", {})
+                        metrics = {k: v for k, v in result.items()
+                                   if k not in ("hyper_dict",)}
+                        stage_info = {
+                            "stage": stage_idx + 1,
+                            "total_stages": len(stage_schedule),
+                            "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "unknown",
+                        }
+                        await self._broadcast_champion(domain_id, params, fitness,
+                                                       metrics, generation, stage_info)
+                    except Exception as _bc_err:
+                        logger.warning("[SHARED] Champion broadcast error: %s", _bc_err)
+
+            # Check if all candidates in this generation are evaluated
+            all_evaluated = len(gen_results) >= pop_size
+            all_in_progress = all(
+                i in gen_results or i in claims for i in range(pop_size)
+            )
+
+            if all_evaluated:
+                # ── Generation complete — deterministic reproduction ──
+                logger.info(
+                    "[SHARED] Generation %d complete (%d results). Reproducing...",
+                    generation, len(gen_results),
+                )
+
+                # Update population genomes with fitness results
+                for idx, res in gen_results.items():
+                    population[idx]["fitness"] = res.get("fitness", float("inf"))
+
+                # Check improvement for patience
+                gen_best = min(r.get("fitness", float("inf")) for r in gen_results.values())
+                prev_best = best_fitness_ever
+                if gen_best < best_fitness_ever:
+                    best_fitness_ever = gen_best
+                    no_improve_count = 0
+                else:
+                    no_improve_count += 1
+
+                self._log_event("generation_end", domain_id=domain_id,
+                                generation=generation, best_fitness=gen_best,
+                                no_improve_count=no_improve_count, patience=patience)
+
+                # Deterministic seed from generation results hash
+                results_str = json.dumps(
+                    {str(k): gen_results[k].get("fitness", 0) for k in sorted(gen_results.keys())},
+                    sort_keys=True,
+                )
+                repro_seed = int.from_bytes(
+                    _hl.sha256(f"{domain_id}:{generation}:{results_str}".encode()).digest()[:4],
+                    "big",
+                )
+
+                # Reproduce
+                repro_result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: plugin.reproduce_shared(
+                        population, generation, repro_seed,
+                        innovation_tracker_data, stage_schedule,
+                        param_defaults, stage_idx, no_improve_count,
+                    ),
+                )
+
+                # Check for convergence
+                if repro_result.get("converged"):
+                    logger.info("[SHARED] 🎯 Optimization converged for %s at gen %d",
+                                domain_id, generation)
+                    self._domain_converged.add(domain_id)
+                    break
+
+                # Update state for next generation
+                population = repro_result["population"]
+                generation = repro_result.get("generation", generation + 1)
+                if repro_result.get("stage_advanced"):
+                    stage_idx = repro_result.get("stage_idx", stage_idx)
+                    logger.info("[SHARED] Stage advanced to %d for %s", stage_idx, domain_id)
+                if "innovation_tracker" in repro_result:
+                    innovation_tracker_data = repro_result["innovation_tracker"]
+
+                # Store in chain
+                new_pop_state = {
+                    "population": population,
+                    "generation": generation,
+                    "stage_idx": stage_idx,
+                    "no_improve_count": no_improve_count,
+                    "best_fitness_ever": best_fitness_ever,
+                    "innovation_tracker": innovation_tracker_data,
+                    "stage_schedule": stage_schedule,
+                    "param_defaults": param_defaults,
+                }
+                await self._store_shared_population_in_chain(domain_id, new_pop_state)
+
+                # Reset per-generation tracking
+                self._shared_pop_results[domain_id] = {}
+                self._shared_pop_claims[domain_id] = set()
+                self._shared_pop_generation[domain_id] = generation
+                gen_results = {}
+                claims = set()
+
+                logger.info(
+                    "[SHARED] Generation %d started: %d candidates, stage=%d, patience=%d/%d",
+                    generation, len(population), stage_idx, no_improve_count, patience,
+                )
+            elif candidate_idx is None and not all_evaluated:
+                # All candidates claimed but not all results in yet — wait
+                await asyncio.sleep(5)
+            # If we just evaluated something, loop immediately to pick up next
+
+    def _recover_shared_state_from_chain(self, domain_id: str) -> dict | None:
+        """Try to recover shared population state from existing chain data."""
+        # Look for SHARED_POPULATION transactions in the chain
+        chain = self.chaindb or self.chain
+        if not chain or not hasattr(chain, "height") or chain.height <= 1:
+            return None
+
+        # Scan from tip backwards for latest shared population
+        from doin_core.models.transaction import TransactionType
+        for i in range(chain.height - 1, 0, -1):
+            try:
+                block = chain.get_block(i) if hasattr(chain, "get_block") else None
+                if block is None:
+                    continue
+                for tx in reversed(block.transactions):
+                    if (tx.domain_id == domain_id and
+                        tx.tx_type == TransactionType.OPTIMAE_ACCEPTED and
+                        tx.payload.get("_shared_population")):
+                        logger.info("[SHARED] Recovered state from block %d for %s", i, domain_id)
+                        return tx.payload["_shared_population"]
+            except Exception:
+                continue
+        return None
+
+    async def _store_shared_population_in_chain(
+        self, domain_id: str, pop_state: dict,
+    ) -> None:
+        """Store shared population state as a transaction in the chain."""
+        from doin_core.models.transaction import Transaction, TransactionType
+        from datetime import datetime, timezone
+        import hashlib as _hl
+
+        tx = Transaction(
+            id=_hl.sha256(
+                f"shared_pop:{domain_id}:{pop_state.get('generation', 0)}:{time.time()}".encode()
+            ).hexdigest(),
+            tx_type=TransactionType.OPTIMAE_ACCEPTED,
+            domain_id=domain_id,
+            peer_id=self.peer_id,
+            payload={
+                "_shared_population": pop_state,
+                "performance": pop_state.get("best_fitness_ever", 0.0),
+                "increment": 0.01,  # Small increment to trigger block generation
+            },
+            timestamp=datetime.now(timezone.utc),
+        )
+        self.consensus.record_optimae(
+            domain_id=domain_id,
+            optimae_id=tx.id,
+            verified_performance=pop_state.get("best_fitness_ever", 0.0),
+            increment=0.01,
+            tx=tx,
+        )
+        await self.try_generate_block()
+
+    async def _broadcast_shared_claim(
+        self, domain_id: str, generation: int, candidate_idx: int,
+    ) -> None:
+        """Broadcast that this node has claimed a candidate for evaluation."""
+        msg = Message(
+            msg_type=MessageType.CANDIDATE_EVALUATION,
+            sender_id=self.peer_id,
+            payload={
+                "tx_id": f"claim:{domain_id}:{generation}:{candidate_idx}:{self.peer_id}",
+                "domain_id": domain_id,
+                "peer_id": self.peer_id,
+                "candidate_data": {
+                    "_shared_claim": True,
+                    "generation": generation,
+                    "candidate_idx": candidate_idx,
+                },
+            },
+        )
+        await self._broadcast(msg)
+
+    async def _broadcast_shared_result(
+        self, domain_id: str, generation: int, candidate_idx: int,
+        result: dict,
+    ) -> None:
+        """Broadcast a candidate evaluation result for shared-population mode."""
+        # Strip large model blob from broadcast (keep it local)
+        broadcast_result = {k: v for k, v in result.items() if k != "_model_b64"}
+        msg = Message(
+            msg_type=MessageType.CANDIDATE_EVALUATION,
+            sender_id=self.peer_id,
+            payload={
+                "tx_id": f"result:{domain_id}:{generation}:{candidate_idx}:{self.peer_id}",
+                "domain_id": domain_id,
+                "peer_id": self.peer_id,
+                "candidate_data": {
+                    "_shared_result": True,
+                    "generation": generation,
+                    "candidate_idx": candidate_idx,
+                    "fitness": result.get("fitness", float("inf")),
+                    "val_mae": result.get("val_mae"),
+                    "train_mae": result.get("train_mae"),
+                    "val_naive_mae": result.get("val_naive_mae"),
+                    "train_naive_mae": result.get("train_naive_mae"),
+                    "test_mae": result.get("test_mae"),
+                    "test_naive_mae": result.get("test_naive_mae"),
+                },
+            },
+        )
+        await self._broadcast(msg)
 
     def _setup_optimizer_callbacks(self, domain_id: str, plugin: Any) -> None:
         """Wire DOIN callbacks onto the optimizer plugin."""

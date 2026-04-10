@@ -5,7 +5,7 @@
     "data_dir": "./doin-data-predictor",
     "bootstrap_peers": [
         "192.168.0.105:8470",
-        "192.168.1.235:8470"
+        "192.168.0.107:8470"
     ],
     "target_block_time": 600,
     "quorum_min_evaluators": 1,
@@ -44,7 +44,9 @@
                 "step_size_fraction": 0.15,
                 "epochs": 2000,
                 "batch_size": 32,
-                "population_size": 20,
+                "shared_population": true,
+                "shared_population_size": 60,
+                "population_size": 60,
                 "n_generations": 40,
                 "early_patience": 40,
                 "optimization_patience": 5,
