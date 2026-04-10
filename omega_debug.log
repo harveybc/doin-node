@@ -1,0 +1,107 @@
+============================================================
+  DON Unified Node
+============================================================
+  Config loaded: examples/predictor_omega_node_tft_binary_neat.json
+  Port: 8470
+  Data dir: ./doin-data-predictor
+  Domains: 1
+  Identity: b3cc3bf16c33dc86...
+  Deleted: doin-data-predictor/chain.db
+  Deleted: doin-data-predictor/chain.db-shm
+  Deleted: doin-data-predictor/chain.db-wal
+  Chain reset complete — 3 file(s) removed
+2026-04-10 03:09:48 [doin_node.unified] INFO: Component versions: {'doin-core': '2495651', 'doin-node': '2131045', 'doin-plugins': '44cc06c', 'predictor': '338dd47'}
+2026-04-10 03:09:48 [doin_node.unified] INFO: Domain predictor-binary-tft-neat-1d registered (optimize=True, evaluate=True, synthetic=False)
+2026-04-10 03:09:48 [doin_node.unified] INFO: Plugin configs: {'predictor-binary-tft-neat-1d:predictor_plugin': 'binary_tft', 'predictor-binary-tft-neat-1d:optimizer_plugin': 'neat_optimizer'}
+
+Loading plugins...
+Attempting to load plugin: binary_tft from group: predictor.plugins
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1775808588.471609  123382 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1775808588.475052  123382 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1775808588.485581  123382 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1775808588.485606  123382 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1775808588.485608  123382 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1775808588.485610  123382 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-04-10 03:09:48 [tensorflow] DEBUG: Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2026-04-10 03:09:49 [h5py._conv] DEBUG: Creating converter from 7 to 5
+2026-04-10 03:09:49 [h5py._conv] DEBUG: Creating converter from 5 to 7
+2026-04-10 03:09:49 [h5py._conv] DEBUG: Creating converter from 7 to 5
+2026-04-10 03:09:49 [h5py._conv] DEBUG: Creating converter from 5 to 7
+2026-04-10 03:09:49 [pydot] DEBUG: pydot initializing
+2026-04-10 03:09:49 [pydot] DEBUG: pydot 3.0.4
+2026-04-10 03:09:49 [pydot.dot_parser] DEBUG: pydot dot_parser module initializing
+2026-04-10 03:09:49 [pydot.core] DEBUG: pydot core module initializing
+2026-04-10 03:09:49 [matplotlib] DEBUG: matplotlib data path: /home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/site-packages/matplotlib/mpl-data
+2026-04-10 03:09:49 [matplotlib] DEBUG: CONFIGDIR=/home/harveybc/.config/matplotlib
+2026-04-10 03:09:49 [matplotlib] DEBUG: interactive is False
+2026-04-10 03:09:49 [matplotlib] DEBUG: platform is linux
+2026-04-10 03:09:49 [matplotlib] DEBUG: CACHEDIR=/home/harveybc/.cache/matplotlib
+2026-04-10 03:09:49 [matplotlib.font_manager] DEBUG: Using fontManager instance from /home/harveybc/.cache/matplotlib/fontlist-v390.json
+I0000 00:00:1775808590.563749  123382 gpu_device.cc:2019] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 1591 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4070 Laptop GPU, pci bus id: 0000:01:00.0, compute capability: 8.9
+Successfully loaded plugin: binary_tft with params: {'tft_hidden_units': 64, 'tft_num_heads': 4, 'tft_dropout': 0.1, 'tft_lstm_layers': 2, 'learning_rate': 0.001, 'early_patience': 20, 'batch_size': 64, 'l2_reg': 1e-06, 'activation': 'elu', 'positional_encoding': False, 'signal_type': 'buy_entry'}
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': False, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price'], 'use_temporal_features': True, 'hod_encoding': 'sincos', 'dow_encoding': 'sincos', 'moy_encoding': 'sincos'}
+Attempting to load plugin: binary_target from group: target.plugins
+Successfully loaded plugin: binary_target with params: {'signal_type': 'buy_entry'}
+Attempting to load plugin: neat_optimizer from group: optimizer.plugins
+Successfully loaded plugin: neat_optimizer with params: {'population_size': 20, 'n_generations': 10, 'mutpb': 0.2, 'optimization_patience': 6, 'hyperparameter_bounds': {'learning_rate': (1e-05, 0.01), 'num_layers': (1, 5), 'layer_size': (16, 256)}, 'neat_initial_params': None, 'neat_add_param_prob': 0.35, 'neat_remove_param_prob': 0.05, 'neat_compatibility_threshold': 2.0, 'neat_min_params': 6, 'neat_survival_rate': 0.5, 'neat_interspecies_mate_rate': 0.01, 'neat_elitism': 1}
+2026-04-10 03:09:50 [doin_node.cli] INFO: Optimizer plugin 'binary_predictor' loaded for predictor-binary-tft-neat-1d
+Attempting to load plugin: stl_preprocessor from group: preprocessor.plugins
+Successfully loaded plugin: stl_preprocessor with params: {'window_size': 48, 'predicted_horizons': [1, 2, 3, 4, 5, 6], 'target_column': 'typical_price', 'use_returns': True, 'targets_are_denormalized': True, 'anti_naive_lock_enabled': True, 'feature_preprocessing_strategy': 'selective', 'add_window_stats': False, 'window_stats_periods': [12, 48], 'reverse_time_axis': False, 'add_multi_scale_returns': False, 'multi_scale_return_periods': [6, 24, 72], 'use_log1p_features': ['typical_price'], 'use_temporal_features': True, 'hod_encoding': 'sincos', 'dow_encoding': 'sincos', 'moy_encoding': 'sincos'}
+Attempting to load plugin: binary_target from group: target.plugins
+Successfully loaded plugin: binary_target with params: {'signal_type': 'buy_entry'}
+2026-04-10 03:09:51 [doin_node.cli] INFO: Evaluator plugin 'binary_predictor' loaded for predictor-binary-tft-neat-1d
+2026-04-10 03:09:51 [doin_plugins.predictor.synthetic] INFO: Loaded pre-trained HMM hybrid model from /home/harveybc/synthetic-datagen/examples/models/hmm_hybrid_d1d4_optimized.joblib (K=5, block_size=30, covariance=diag)
+  Synthetic data plugin 'predictor' loaded for predictor-binary-tft-neat-1d
+  ⚠️  Domain predictor-binary-tft-neat-1d has NO synthetic data — optimae will have ZERO consensus weight!
+
+  Optimizer domains: ['predictor-binary-tft-neat-1d']
+  Evaluator domains: ['predictor-binary-tft-neat-1d']
+  Bootstrap peers: ['192.168.0.107:8470', '192.168.0.106:8470']
+
+  Security hardening:
+    Commit-reveal: max_age=600.0s
+    Quorum: 1 evaluators, 67% agreement, 50% tolerance
+    Finality: 6 confirmations
+    External anchoring: every 100 blocks
+    Deterministic seed: True
+
+============================================================
+  Starting node on :8470...
+============================================================
+
+2026-04-10 03:09:51 [asyncio] DEBUG: Using selector: EpollSelector
+2026-04-10 03:09:51 [doin_node.unified] INFO: Own addresses: {'172.19.0.1', 'fe80::c039:3776:7323:e299', 'localhost', 'fe80::7cab:bdff:fe0a:aef7', '192.168.1.119', 'unknown', '172.17.0.1', '192.168.0.105', '2803:9810:5090:3a08:3a05:9634:6418:d025', '172.18.0.1', '127.0.1.1', '::1', 'fdd3:6cd6:9cf1:8:5e87:9d95:eab9:12b6', 'fe80::42c2:baff:fe5c:3534', '2803:9810:5090:3a08:2dfe:fd78:d786:15c5', 'fdd3:6cd6:9cf1:8:b25c:5985:9c42:31c', 'fdd3:6cd6:9cf1:8:202a:4786:aec3:dfc6', 'fe80::483e:54ff:fea2:67e9', 'fe80::1012:a3ff:fee6:1fb6', '127.0.0.1'}
+2026-04-10 03:09:51 [doin_node.storage.chaindb] INFO: ChainDB opened: doin-data-predictor/chain.db
+2026-04-10 03:09:51 [doin_node.unified] INFO: SQLite storage: height=1
+2026-04-10 03:09:51 [doin_node.stats.olap_db] DEBUG: OLAP experiment created: 843e271c57d5 domain=predictor-binary-tft-neat-1d
+2026-04-10 03:09:51 [doin_node.stats.experiment_tracker] INFO: Experiment started: domain=predictor-binary-tft-neat-1d id=843e271c57d5
+2026-04-10 03:09:51 [doin_node.dashboard.routes] INFO: Dashboard enabled at /dashboard
+Traceback (most recent call last):
+  File "<string>", line 5, in <module>
+  File "/home/harveybc/Documents/GitHub/doin-node/src/doin_node/cli.py", line 309, in main
+    asyncio.run(run_node(node))
+  File "/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/harveybc/Documents/GitHub/doin-node/src/doin_node/cli.py", line 216, in run_node
+    await node.start()
+  File "/home/harveybc/Documents/GitHub/doin-node/src/doin_node/unified.py", line 676, in start
+    await self.transport.start()
+  File "/home/harveybc/Documents/GitHub/doin-node/src/doin_node/network/transport.py", line 68, in start
+    await site.start()
+  File "/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/site-packages/aiohttp/web_runner.py", line 121, in start
+    self._server = await loop.create_server(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/harveybc/anaconda3/envs/tensorflow/lib/python3.12/asyncio/base_events.py", line 1571, in create_server
+    raise OSError(err.errno, msg) from None
+OSError: [Errno 98] error while attempting to bind on address ('0.0.0.0', 8470): [errno 98] address already in use
+2026-04-10 03:09:51 [asyncio] ERROR: Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x71ac0127c170>

@@ -2314,17 +2314,11 @@ class UnifiedNode:
             payload={
                 "_shared_population": pop_state,
                 "performance": pop_state.get("best_fitness_ever", 0.0),
-                "increment": 0.01,  # Small increment to trigger block generation
+                "increment": 0.01,
             },
             timestamp=datetime.now(timezone.utc),
         )
-        self.consensus.record_optimae(
-            domain_id=domain_id,
-            optimae_id=tx.id,
-            verified_performance=pop_state.get("best_fitness_ever", 0.0),
-            increment=0.01,
-            tx=tx,
-        )
+        self.consensus.record_transaction(tx)
         await self.try_generate_block()
 
     async def _broadcast_shared_claim(
