@@ -92,7 +92,9 @@
                     "buy_exit_label",
                     "sell_exit_label",
                     "bars_to_friday"
-                ]
+                ],
+                "target_column": "ATR",
+                "anti_naive_lock_enabled": false
             },
             "inference_config": {
                 "predictor_root": "/home/harveybc/Documents/GitHub/predictor",
@@ -110,7 +112,9 @@
                     "sell_exit_label",
                     "bars_to_friday"
                 ],
-                "early_patience": 40
+                "early_patience": 40,
+                "target_column": "ATR",
+                "anti_naive_lock_enabled": false
             },
             "synthetic_data_config": {
                 "sdg_root": "synthetic-datagen",
