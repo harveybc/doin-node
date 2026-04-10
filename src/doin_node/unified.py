@@ -2099,7 +2099,7 @@ class UnifiedNode:
         generation = pop_state.get("generation", 0)
         stage_idx = pop_state.get("stage_idx", 0)
         no_improve_count = pop_state.get("no_improve_count", 0)
-        best_fitness_ever = pop_state.get("best_fitness_ever", float("inf"))
+        best_fitness_ever = pop_state.get("best_fitness_ever") or float("inf")
         innovation_tracker_data = pop_state.get("innovation_tracker", {})
         stage_schedule = pop_state.get("stage_schedule", [])
         param_defaults = pop_state.get("param_defaults", {})
