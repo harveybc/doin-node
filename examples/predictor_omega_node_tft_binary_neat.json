@@ -47,9 +47,9 @@
                 "shared_population": true,
                 "shared_population_size": 60,
                 "population_size": 60,
-                "n_generations": 40,
+                "n_generations": 6,
                 "early_patience": 40,
-                "optimization_patience": 5,
+                "optimization_patience": 3,
                 "optimization_stages": [
                     {
                         "name": "features",
