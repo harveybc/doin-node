@@ -2105,6 +2105,12 @@ class UnifiedNode:
         param_defaults = pop_state.get("param_defaults", {})
         total_evals_counter = 0  # Running count of candidates evaluated by this node
 
+        # Per-stage patience override: if current stage defines its own patience, use it
+        if stage_schedule and stage_idx < len(stage_schedule):
+            stage_patience = stage_schedule[stage_idx].get("patience")
+            if stage_patience is not None:
+                patience = stage_patience
+
         # Optimization config for dashboard fields
         role = self._domain_roles.get(domain_id)
         opt_cfg = role.optimization_config if role else {}
@@ -2339,7 +2345,16 @@ class UnifiedNode:
                 generation = repro_result.get("generation", generation + 1)
                 if repro_result.get("stage_advanced"):
                     stage_idx = repro_result.get("stage_idx", stage_idx)
-                    logger.info("[SHARED] Stage advanced to %d for %s", stage_idx, domain_id)
+                    no_improve_count = 0          # reset patience on stage advance
+                    best_fitness_ever = float("inf")  # reset champion for new stage
+                    logger.info("[SHARED] Stage advanced to %d for %s (patience & champion reset)",
+                                stage_idx, domain_id)
+                # Sync per-stage patience from reproduce result
+                if "patience" in repro_result:
+                    patience = repro_result["patience"]
+                # Also sync no_improve_count from reproduce result (normal repro may adjust it)
+                if "no_improve_count" in repro_result:
+                    no_improve_count = repro_result["no_improve_count"]
                 if "innovation_tracker" in repro_result:
                     innovation_tracker_data = repro_result["innovation_tracker"]
 

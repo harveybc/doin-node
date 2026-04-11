@@ -56,9 +56,16 @@
                         "params": [
                             "window_size",
                             "use_log1p_features",
-                            "positional_encoding"
+                            "positional_encoding",
+                            "use_temporal_features",
+                            "add_window_stats",
+                            "add_multi_scale_returns",
+                            "hod_encoding",
+                            "dow_encoding",
+                            "moy_encoding"
                         ],
-                        "generations": 10
+                        "generations": 10,
+                        "patience": 3
                     },
                     {
                         "name": "architecture",
@@ -68,7 +75,8 @@
                             "tft_num_heads",
                             "tft_dropout"
                         ],
-                        "generations": 10
+                        "generations": 10,
+                        "patience": 3
                     },
                     {
                         "name": "training",
@@ -78,12 +86,14 @@
                             "l2_reg",
                             "min_delta"
                         ],
-                        "generations": 10
+                        "generations": 10,
+                        "patience": 3
                     },
                     {
                         "name": "refinement",
                         "params": "all",
-                        "generations": 10
+                        "generations": 10,
+                        "patience": 4
                     }
                 ],
                 "hyperparameter_bounds": {
@@ -110,6 +120,30 @@
                     "positional_encoding": [
                         0,
                         1
+                    ],
+                    "use_temporal_features": [
+                        0,
+                        1
+                    ],
+                    "add_window_stats": [
+                        0,
+                        1
+                    ],
+                    "add_multi_scale_returns": [
+                        0,
+                        1
+                    ],
+                    "hod_encoding": [
+                        0,
+                        2
+                    ],
+                    "dow_encoding": [
+                        0,
+                        2
+                    ],
+                    "moy_encoding": [
+                        0,
+                        2
                     ],
                     "learning_rate": [
                         1e-05,
@@ -198,6 +232,30 @@
                 "positional_encoding": [
                     0,
                     1
+                ],
+                "use_temporal_features": [
+                    0,
+                    1
+                ],
+                "add_window_stats": [
+                    0,
+                    1
+                ],
+                "add_multi_scale_returns": [
+                    0,
+                    1
+                ],
+                "hod_encoding": [
+                    0,
+                    2
+                ],
+                "dow_encoding": [
+                    0,
+                    2
+                ],
+                "moy_encoding": [
+                    0,
+                    2
                 ],
                 "learning_rate": [
                     1e-05,
