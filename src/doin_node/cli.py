@@ -178,7 +178,11 @@ def setup_plugins(node: UnifiedNode) -> None:
             try:
                 cls = load_optimization_plugin(role.optimization_plugin)
                 plugin = cls()
-                plugin.configure(role.optimization_config)
+                # Merge domain-level param_bounds into config so optimizer can find them
+                _opt_cfg = dict(role.optimization_config)
+                if role.param_bounds and "param_bounds" not in _opt_cfg and "hyperparameter_bounds" not in _opt_cfg:
+                    _opt_cfg["param_bounds"] = {k: list(v) for k, v in role.param_bounds.items()}
+                plugin.configure(_opt_cfg)
                 node.register_optimizer_plugin(domain_id, plugin)
                 _log.info("Optimizer plugin '%s' loaded for %s", role.optimization_plugin, domain_id)
             except Exception as e:
