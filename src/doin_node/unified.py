@@ -2173,6 +2173,26 @@ class UnifiedNode:
                     candidate_idx + 1, pop_size, generation, domain_id,
                 )
 
+                # Pre-set _current_candidate so dashboard shows progress during evaluation
+                self._current_candidate = {
+                    "domain_id": domain_id,
+                    "gen": generation,
+                    "candidate_num": candidate_idx + 1,
+                    "total_candidates": pop_size,
+                    "stage": stage_idx + 1,
+                    "total_stages": len(stage_schedule) or 1,
+                    "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
+                    "total_evals": total_evals_counter,
+                    "fitness": None,
+                    "champion_fitness": best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    "n_generations": n_generations,
+                    "n_generations_stage": n_generations_stage,
+                    "gen_in_stage": generation - stage_start_gen,
+                    "no_improve_counter": no_improve_count,
+                    "optimization_patience": patience,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+
                 # Evaluate in executor thread (blocking GPU work)
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
