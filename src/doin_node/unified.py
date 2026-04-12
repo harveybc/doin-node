@@ -2116,17 +2116,21 @@ class UnifiedNode:
         opt_cfg = role.optimization_config if role else {}
         n_generations = opt_cfg.get("n_generations", 15)
 
-        # Compute per-stage generation boundaries for correct dashboard display
-        def _stage_gen_info(sched, sidx, n_gen):
-            """Return (stage_start_gen, gens_in_this_stage) from schedule."""
+        # Compute per-stage generation boundaries for correct dashboard display.
+        # stage_start_gen = generation where the current stage actually began
+        # (may differ from stage_schedule start_gen if patience caused early advance).
+        # n_generations_stage = planned gens for this stage from the schedule.
+        def _gens_for_stage(sched, sidx, n_gen):
+            """Return planned gens-in-this-stage from schedule."""
             if not sched or sidx >= len(sched):
-                return 0, n_gen
+                return n_gen
             s = sched[sidx]
-            start = s.get("start_gen", 0)
-            gens = s.get("end_gen", start + n_gen) - start
-            return start, gens
+            return s.get("end_gen", n_gen) - s.get("start_gen", 0)
 
-        stage_start_gen, n_generations_stage = _stage_gen_info(stage_schedule, stage_idx, n_generations)
+        # On recovery, stage_start_gen is stored in pop_state; fall back to schedule start_gen.
+        stage_start_gen = pop_state.get("stage_start_gen",
+                                        stage_schedule[stage_idx].get("start_gen", 0) if stage_schedule and stage_idx < len(stage_schedule) else 0)
+        n_generations_stage = _gens_for_stage(stage_schedule, stage_idx, n_generations)
 
         while self._running:
             pop_size = len(population)
@@ -2359,7 +2363,8 @@ class UnifiedNode:
                     stage_idx = repro_result.get("stage_idx", stage_idx)
                     no_improve_count = 0          # reset patience on stage advance
                     best_fitness_ever = float("inf")  # reset champion for new stage
-                    stage_start_gen, n_generations_stage = _stage_gen_info(stage_schedule, stage_idx, n_generations)
+                    stage_start_gen = generation  # actual gen where new stage begins
+                    n_generations_stage = _gens_for_stage(stage_schedule, stage_idx, n_generations)
                     logger.info("[SHARED] Stage advanced to %d for %s (patience & champion reset)",
                                 stage_idx, domain_id)
                 # Sync per-stage patience from reproduce result
@@ -2376,6 +2381,7 @@ class UnifiedNode:
                     "population": population,
                     "generation": generation,
                     "stage_idx": stage_idx,
+                    "stage_start_gen": stage_start_gen,
                     "no_improve_count": no_improve_count,
                     "best_fitness_ever": best_fitness_ever,
                     "innovation_tracker": innovation_tracker_data,

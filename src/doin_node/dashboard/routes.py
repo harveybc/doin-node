@@ -357,23 +357,30 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["n_generations_stage"] = info["n_generations"]  # default: same as total
         info["metric_type"] = opt_cfg.get("metric_type", "regression")
         if stages:
-            # Current stage from round count (clamped)
-            cur_round = node._domain_round_count.get(domain_id, 0)
-            cumulative = 0
-            cur_stage_idx = 0
-            cur_stage_name = stages[0].get("name", "") if stages else ""
-            for si, sd in enumerate(stages):
-                cumulative += sd.get("generations", 0)
-                if cur_round < cumulative:
-                    cur_stage_idx = si
-                    cur_stage_name = sd.get("name", "")
-                    break
+            # Prefer live candidate data for stage info (accounts for patience-based early advances)
+            cc = node._current_candidate if hasattr(node, "_current_candidate") else {}
+            if cc and cc.get("domain_id") == domain_id:
+                info["current_stage"] = cc.get("stage", 1)
+                info["current_stage_name"] = cc.get("stage_name", stages[0].get("name", "") if stages else "")
+                info["n_generations_stage"] = cc.get("n_generations_stage", info["n_generations"])
             else:
-                cur_stage_idx = len(stages) - 1
-                cur_stage_name = stages[-1].get("name", "") if stages else ""
-            info["current_stage"] = cur_stage_idx + 1
-            info["current_stage_name"] = cur_stage_name
-            info["n_generations_stage"] = stages[cur_stage_idx].get("generations", info["n_generations"])
+                # Fallback: derive from round count (may be inaccurate with patience-based advances)
+                cur_round = node._domain_round_count.get(domain_id, 0)
+                cumulative = 0
+                cur_stage_idx = 0
+                cur_stage_name = stages[0].get("name", "") if stages else ""
+                for si, sd in enumerate(stages):
+                    cumulative += sd.get("generations", 0)
+                    if cur_round < cumulative:
+                        cur_stage_idx = si
+                        cur_stage_name = sd.get("name", "")
+                        break
+                else:
+                    cur_stage_idx = len(stages) - 1
+                    cur_stage_name = stages[-1].get("name", "") if stages else ""
+                info["current_stage"] = cur_stage_idx + 1
+                info["current_stage_name"] = cur_stage_name
+                info["n_generations_stage"] = stages[cur_stage_idx].get("generations", info["n_generations"])
 
         domains.append(info)
 
