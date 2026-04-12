@@ -2116,6 +2116,18 @@ class UnifiedNode:
         opt_cfg = role.optimization_config if role else {}
         n_generations = opt_cfg.get("n_generations", 15)
 
+        # Compute per-stage generation boundaries for correct dashboard display
+        def _stage_gen_info(sched, sidx, n_gen):
+            """Return (stage_start_gen, gens_in_this_stage) from schedule."""
+            if not sched or sidx >= len(sched):
+                return 0, n_gen
+            s = sched[sidx]
+            start = s.get("start_gen", 0)
+            gens = s.get("end_gen", start + n_gen) - start
+            return start, gens
+
+        stage_start_gen, n_generations_stage = _stage_gen_info(stage_schedule, stage_idx, n_generations)
+
         while self._running:
             pop_size = len(population)
             gen_results = self._shared_pop_results.get(domain_id, {})
@@ -2197,8 +2209,8 @@ class UnifiedNode:
                     "candidate_params": result.get("hyper_dict"),
                     "model_summary": result.get("model_summary"),
                     "n_generations": n_generations,
-                    "n_generations_stage": n_generations,
-                    "gen_in_stage": generation,
+                    "n_generations_stage": n_generations_stage,
+                    "gen_in_stage": generation - stage_start_gen,
                     "no_improve_counter": no_improve_count,
                     "optimization_patience": patience,
                     "neat_species_count": result.get("neat_species_count"),
@@ -2222,8 +2234,8 @@ class UnifiedNode:
                     train_naive_mae=result.get("train_naive_mae"),
                     champion_fitness=best_fitness_ever if best_fitness_ever < float("inf") else None,
                     n_generations=n_generations,
-                    n_generations_stage=n_generations,
-                    gen_in_stage=generation,
+                    n_generations_stage=n_generations_stage,
+                    gen_in_stage=generation - stage_start_gen,
                     no_improve_counter=no_improve_count,
                     optimization_patience=patience,
                     neat_species_count=result.get("neat_species_count"),
@@ -2306,8 +2318,8 @@ class UnifiedNode:
                                 stage=stage_idx + 1,
                                 total_stages=len(stage_schedule) or 1,
                                 n_generations=n_generations,
-                                n_generations_stage=n_generations,
-                                gen_in_stage=generation,
+                                n_generations_stage=n_generations_stage,
+                                gen_in_stage=generation - stage_start_gen,
                                 no_improve_counter=no_improve_count,
                                 optimization_patience=patience)
 
@@ -2347,6 +2359,7 @@ class UnifiedNode:
                     stage_idx = repro_result.get("stage_idx", stage_idx)
                     no_improve_count = 0          # reset patience on stage advance
                     best_fitness_ever = float("inf")  # reset champion for new stage
+                    stage_start_gen, n_generations_stage = _stage_gen_info(stage_schedule, stage_idx, n_generations)
                     logger.info("[SHARED] Stage advanced to %d for %s (patience & champion reset)",
                                 stage_idx, domain_id)
                 # Sync per-stage patience from reproduce result
