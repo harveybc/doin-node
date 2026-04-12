@@ -2194,10 +2194,18 @@ class UnifiedNode:
                 }
 
                 # Evaluate in executor thread (blocking GPU work)
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda gi=genome_data, g=generation: plugin.evaluate_candidate(gi, g),
-                )
+                try:
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda gi=genome_data, g=generation: plugin.evaluate_candidate(gi, g),
+                    )
+                except Exception as _eval_err:
+                    logger.error(
+                        "[SHARED] Candidate %d/%d CRASHED gen=%d %s: %s",
+                        candidate_idx + 1, pop_size, generation, domain_id, _eval_err,
+                    )
+                    # Record penalty so generation can still complete
+                    result = {"fitness": float("inf"), "_eval_error": str(_eval_err)}
 
                 fitness = result.get("fitness", float("inf"))
                 logger.info(
@@ -2359,15 +2367,30 @@ class UnifiedNode:
                     "big",
                 )
 
-                # Reproduce
-                repro_result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: plugin.reproduce_shared(
-                        population, generation, repro_seed,
-                        innovation_tracker_data, stage_schedule,
-                        param_defaults, stage_idx, no_improve_count,
-                    ),
-                )
+                # Reproduce (with crash resilience)
+                try:
+                    repro_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: plugin.reproduce_shared(
+                            population, generation, repro_seed,
+                            innovation_tracker_data, stage_schedule,
+                            param_defaults, stage_idx, no_improve_count,
+                        ),
+                    )
+                except Exception as _repro_err:
+                    logger.error(
+                        "[SHARED] reproduce_shared CRASHED gen=%d %s: %s — "
+                        "re-evaluating same generation",
+                        generation, domain_id, _repro_err,
+                    )
+                    # Clear generation results and retry the same generation
+                    self._shared_pop_results[domain_id] = {}
+                    self._shared_pop_claims[domain_id] = set()
+                    self._shared_pop_claim_times[domain_id] = {}
+                    gen_results = {}
+                    claims = set()
+                    await asyncio.sleep(5)
+                    continue
 
                 # Check for convergence
                 if repro_result.get("converged"):
