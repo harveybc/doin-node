@@ -11,6 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
+import subprocess
+import time
 from typing import Any, Callable, Coroutine
 
 from aiohttp import ClientSession, ClientTimeout, web
@@ -60,13 +64,87 @@ class Transport:
         self._message_callback = callback
 
     async def start(self) -> None:
-        """Start the HTTP server and client session."""
+        """Start the HTTP server and client session.
+
+        If a previous instance is still holding our port, kill it and wait
+        for the port to be released before binding. This guarantees the
+        newest code always runs — no silent failures from stale processes.
+        """
+        self._kill_stale_process_on_port(self.port)
+
         self._session = ClientSession(timeout=DEFAULT_TIMEOUT)
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.host, self.port)
         await site.start()
         logger.info("Transport listening on %s:%d", self.host, self.port)
+
+    @staticmethod
+    def _kill_stale_process_on_port(port: int, timeout: int = 30) -> None:
+        """Find and kill any process listening on *port*, then wait for release.
+
+        Only kills processes owned by the current user. Raises RuntimeError
+        if the port cannot be freed within *timeout* seconds.
+        """
+        my_uid = os.getuid()
+
+        def _find_listener_pid() -> int | None:
+            try:
+                out = subprocess.check_output(
+                    ["lsof", "-i", f":{port}", "-sTCP:LISTEN", "-t", "-n", "-P"],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                for line in out.strip().splitlines():
+                    pid = int(line.strip())
+                    # Only kill our own processes
+                    try:
+                        if os.stat(f"/proc/{pid}").st_uid == my_uid:
+                            return pid
+                    except OSError:
+                        continue
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+            return None
+
+        pid = _find_listener_pid()
+        if pid is None:
+            return  # port is free
+
+        if pid == os.getpid():
+            return  # we own it already (shouldn't happen, but be safe)
+
+        logger.warning(
+            "Port %d held by stale process PID %d — killing it to bind new instance",
+            port, pid,
+        )
+
+        # Graceful SIGTERM first, then hard SIGKILL
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+        deadline = time.monotonic() + timeout
+        killed_hard = False
+        while time.monotonic() < deadline:
+            if _find_listener_pid() is None:
+                logger.info("Port %d freed (stale PID %d terminated)", port, pid)
+                return
+            time.sleep(1)
+            # After 5s of grace, escalate to SIGKILL
+            if not killed_hard and time.monotonic() - (deadline - timeout) > 5:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    killed_hard = True
+                    logger.warning("Sent SIGKILL to stale PID %d", pid)
+                except OSError:
+                    pass
+
+        raise RuntimeError(
+            f"FATAL: Port {port} still occupied by PID {pid} after {timeout}s. "
+            f"Cannot start node — manually kill it with: kill -9 {pid}"
+        )
 
     async def stop(self) -> None:
         """Gracefully shut down transport."""
