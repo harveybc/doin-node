@@ -2184,7 +2184,7 @@ class UnifiedNode:
                     "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
                     "total_evals": total_evals_counter,
                     "fitness": None,
-                    "champion_fitness": best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    "champion_fitness": min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
                     "n_generations": n_generations,
                     "n_generations_stage": n_generations_stage,
                     "gen_in_stage": generation - stage_start_gen,
@@ -2229,7 +2229,7 @@ class UnifiedNode:
                     "train_mae": result.get("train_mae"),
                     "val_naive_mae": result.get("val_naive_mae"),
                     "train_naive_mae": result.get("train_naive_mae"),
-                    "champion_fitness": best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    "champion_fitness": min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
                     "candidate_params": result.get("hyper_dict"),
                     "model_summary": result.get("model_summary"),
                     "n_generations": n_generations,
@@ -2256,7 +2256,7 @@ class UnifiedNode:
                     train_mae=result.get("train_mae"),
                     val_naive_mae=result.get("val_naive_mae"),
                     train_naive_mae=result.get("train_naive_mae"),
-                    champion_fitness=best_fitness_ever if best_fitness_ever < float("inf") else None,
+                    champion_fitness=min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
                     n_generations=n_generations,
                     n_generations_stage=n_generations_stage,
                     gen_in_stage=generation - stage_start_gen,
@@ -2274,9 +2274,9 @@ class UnifiedNode:
                 # Push result via peer APIs (best-effort)
                 await self._push_result_to_peers(domain_id, generation, candidate_idx, result)
 
-                # Update champion tracking
-                if fitness < best_fitness_ever:
-                    best_fitness_ever = fitness
+                # Update live champion tracking (dashboard/broadcast only — NOT best_fitness_ever,
+                # which is only updated at generation end from gen_best across ALL results)
+                if fitness < (self._domain_best.get(domain_id, (None, float("inf")))[1]):
                     self._domain_best[domain_id] = (result.get("hyper_dict", {}), fitness)
                     self._domain_champion_metrics[domain_id] = {
                         "round": generation,
