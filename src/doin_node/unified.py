@@ -2158,7 +2158,13 @@ class UnifiedNode:
         # Optimization config for dashboard fields
         role = self._domain_roles.get(domain_id)
         opt_cfg = role.optimization_config if role else {}
-        n_generations = opt_cfg.get("n_generations", 15)
+        # n_generations: derive from stage schedule sum, fallback to config
+        def _total_gens_from_schedule(sched):
+            if not sched:
+                return 0
+            last = sched[-1]
+            return last.get("end_gen", 0)
+        n_generations = _total_gens_from_schedule(stage_schedule) or opt_cfg.get("n_generations", 20)
 
         # Compute per-stage generation boundaries for correct dashboard display.
         # stage_start_gen = generation where the current stage actually began

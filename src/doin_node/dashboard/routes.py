@@ -352,11 +352,13 @@ async def _api_optimization(request: web.Request) -> web.Response:
         # Expose optimization config fields for dashboard defaults
         opt_cfg = dr.optimization_config if dr else {}
         stages = opt_cfg.get("optimization_stages", opt_cfg.get("staged_stages", []))
-        info["n_generations"] = opt_cfg.get("n_generations", 15)
+        # Derive n_generations from sum of per-stage generations, fallback to config
+        _total_gens = sum(s.get("generations", 0) for s in stages) if stages else 0
+        info["n_generations"] = _total_gens or opt_cfg.get("n_generations", 20)
         info["optimization_patience"] = opt_cfg.get("optimization_patience", 0)
         info["population_size"] = opt_cfg.get("population_size", 20)
         info["total_stages"] = len(stages) if stages else 1
-        info["n_generations_stage"] = info["n_generations"]  # default: same as total
+        info["n_generations_stage"] = stages[0].get("generations", info["n_generations"]) if stages else info["n_generations"]
         info["metric_type"] = opt_cfg.get("metric_type", "regression")
         if stages:
             # Prefer live candidate data for stage info (accounts for patience-based early advances)
