@@ -179,6 +179,8 @@ def setup_dashboard(app: web.Application, node: Any) -> None:
     app.router.add_get("/api/chain", _api_chain)
     app.router.add_get("/api/events", _api_events)
     app.router.add_get("/api/candidate", _api_candidate)
+    app.router.add_get("/api/alerts", _api_alerts)
+    app.router.add_post("/api/alerts/ack", _api_alerts_ack)
     logger.info("Dashboard enabled at /dashboard")
 
 
@@ -586,3 +588,24 @@ async def _api_candidate(request: web.Request) -> web.Response:
     """Return current candidate being evaluated (local state, not on blockchain)."""
     node = request.app["_doin_node"]
     return web.json_response(node._current_candidate or {}, dumps=_dumps)
+
+
+# ── Alerts ───────────────────────────────────────────────────
+
+async def _api_alerts(request: web.Request) -> web.Response:
+    """Return accumulated alerts (version mismatches, anomalies, etc.)."""
+    node = request.app["_doin_node"]
+    limit = int(request.query.get("limit", "200"))
+    alerts = list(reversed(node._alerts[-limit:]))
+    return web.json_response({
+        "alerts": alerts,
+        "count": len(alerts),
+        "unseen": node._alerts_unseen,
+    }, dumps=_dumps)
+
+
+async def _api_alerts_ack(request: web.Request) -> web.Response:
+    """Reset the unseen alerts counter (user acknowledged them)."""
+    node = request.app["_doin_node"]
+    node._alerts_unseen = 0
+    return web.json_response({"status": "ok"})

@@ -334,6 +334,11 @@ class UnifiedNode:
         self._live_events: list[dict[str, Any]] = []  # Most recent events (capped at 500)
         self._live_events_max = 500
 
+        # ── Alerts (version mismatches, anomalies — shown in dashboard Alerts tab) ──
+        self._alerts: list[dict[str, Any]] = []  # {severity, category, message, details, timestamp, peer}
+        self._alerts_max = 200
+        self._alerts_unseen = 0  # incremented on new alert, reset via API
+
         # ── Experiment tracker ──
         stats_file = config.experiment_stats_file or str(
             Path(config.data_dir) / "experiment_stats.csv"
@@ -547,6 +552,24 @@ class UnifiedNode:
         self._live_events.append(event)
         if len(self._live_events) > self._live_events_max:
             self._live_events = self._live_events[-self._live_events_max:]
+
+    def _log_alert(self, severity: str, category: str, message: str, **kwargs: Any) -> None:
+        """Record an alert for the dashboard Alerts tab.
+
+        severity: 'critical' | 'warning' | 'info'
+        category: 'version_mismatch' | 'plugin_mismatch' | 'sync_error' | 'anomaly' | ...
+        """
+        alert = {
+            "severity": severity,
+            "category": category,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            **kwargs,
+        }
+        self._alerts.append(alert)
+        self._alerts_unseen += 1
+        if len(self._alerts) > self._alerts_max:
+            self._alerts = self._alerts[-self._alerts_max:]
 
     def _get_peers_for_discovery(self) -> list[dict]:
         """Return known peers for the /peers endpoint."""
@@ -910,10 +933,18 @@ class UnifiedNode:
                 if peer_versions.get(k) != v
             }
             if mismatches:
+                mismatch_str = ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in mismatches.items())
                 logger.warning(
                     "🚫 Dropping message %s from %s — version mismatch: %s",
-                    message.msg_type.value, sender_endpoint,
-                    ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in mismatches.items()),
+                    message.msg_type.value, sender_endpoint, mismatch_str,
+                )
+                self._log_alert(
+                    "critical", "version_mismatch",
+                    f"Version mismatch with {sender_endpoint}: {mismatch_str}",
+                    peer=sender_endpoint,
+                    msg_type=message.msg_type.value,
+                    our_versions={k: ov for k, (ov, _) in mismatches.items()},
+                    their_versions={k: tv for k, (_, tv) in mismatches.items()},
                 )
                 return
 
@@ -926,10 +957,16 @@ class UnifiedNode:
                 if peer_plugins.get(k) != v
             }
             if plugin_mismatches:
+                plugin_mismatch_str = ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in plugin_mismatches.items())
                 logger.warning(
                     "🚫 Dropping message %s from %s — plugin mismatch: %s",
-                    message.msg_type.value, sender_endpoint,
-                    ", ".join(f"{k}: ours={ov} theirs={tv}" for k, (ov, tv) in plugin_mismatches.items()),
+                    message.msg_type.value, sender_endpoint, plugin_mismatch_str,
+                )
+                self._log_alert(
+                    "critical", "plugin_mismatch",
+                    f"Plugin mismatch with {sender_endpoint}: {plugin_mismatch_str}",
+                    peer=sender_endpoint,
+                    msg_type=message.msg_type.value,
                 )
                 return
 

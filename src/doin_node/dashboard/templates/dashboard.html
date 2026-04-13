@@ -247,6 +247,7 @@
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabChain"><i class="fas fa-cubes"></i> Chain</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabDomains"><i class="fas fa-cogs"></i> Domains</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabCandidate"><i class="fas fa-microscope"></i> Current Candidate</a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabAlerts" id="alertsTabLink"><i class="fas fa-exclamation-triangle"></i> Alerts <span id="alertsBadge" class="badge badge-danger" style="display:none; font-size:10px; vertical-align:top;">0</span></a></li>
                 </ul>
               </div>
               <div class="card-body">
@@ -342,6 +343,18 @@
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  <!-- Alerts Tab -->
+                  <div class="tab-pane fade" id="tabAlerts">
+                    <div class="mb-2">
+                      <button class="btn btn-sm btn-outline-success" id="ackAlertsBtn"><i class="fas fa-check"></i> Acknowledge All</button>
+                      <span class="ml-2 text-muted" id="alertsSummary"></span>
+                    </div>
+                    <table class="table table-sm table-striped" style="font-size:12px">
+                      <thead><tr><th style="width:80px">Severity</th><th style="width:150px">Category</th><th>Message</th><th style="width:130px">Peer</th><th style="width:100px">Time</th></tr></thead>
+                      <tbody id="alertsBody"></tbody>
+                    </table>
                   </div>
 
                 </div>
@@ -464,10 +477,11 @@ async function api(url) {
 async function refreshAll() {
   document.getElementById('refreshSpin').style.display = 'inline-block';
 
-  const [node, peers, opt, training, evals, metrics, plugins, chain, events, candidate] = await Promise.all([
+  const [node, peers, opt, training, evals, metrics, plugins, chain, events, candidate, alerts] = await Promise.all([
     api('/api/node'), api('/api/peers'), api('/api/optimization'), null,
     null, api('/api/metrics?limit=500'), api('/api/plugins'),
     api('/api/chain?limit=30'), api('/api/events?limit=300'), api('/api/candidate'),
+    api('/api/alerts?limit=200'),
   ]);
 
   // Node
@@ -912,6 +926,42 @@ async function refreshAll() {
 
   document.getElementById('refreshSpin').style.display = 'none';
 
+  // Alerts tab
+  if (alerts) {
+    const badge = document.getElementById('alertsBadge');
+    const tabLink = document.getElementById('alertsTabLink');
+    if (alerts.unseen > 0) {
+      badge.textContent = alerts.unseen;
+      badge.style.display = 'inline';
+      tabLink.classList.add('text-danger');
+    } else {
+      badge.style.display = 'none';
+      tabLink.classList.remove('text-danger');
+    }
+    document.getElementById('alertsSummary').textContent = alerts.count > 0 ? `${alerts.count} total alert(s)` : 'No alerts';
+    if (alerts.alerts && alerts.alerts.length > 0) {
+      document.getElementById('alertsBody').innerHTML = alerts.alerts.map(a => {
+        const sevColors = { critical: 'badge-danger', warning: 'badge-warning', info: 'badge-info' };
+        const sevBg = { critical: 'background:rgba(220,53,69,0.12)', warning: 'background:rgba(255,193,7,0.08)', info: '' };
+        const cls = sevColors[a.severity] || 'badge-secondary';
+        const bg = sevBg[a.severity] || '';
+        const details = [];
+        if (a.our_versions) details.push('Ours: ' + JSON.stringify(a.our_versions));
+        if (a.their_versions) details.push('Theirs: ' + JSON.stringify(a.their_versions));
+        if (a.msg_type) details.push('Msg: ' + a.msg_type);
+        const detailStr = details.length > 0 ? '<br><small class="text-muted">' + details.join(' | ') + '</small>' : '';
+        return `<tr style="${bg}">
+          <td><span class="badge ${cls}">${a.severity}</span></td>
+          <td>${a.category}</td>
+          <td>${a.message}${detailStr}</td>
+          <td><code>${a.peer || '-'}</code></td>
+          <td>${fmtTime(a.timestamp)}</td></tr>`;
+      }).join('');
+    } else {
+      document.getElementById('alertsBody').innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3"><i class="fas fa-check-circle text-success"></i> No alerts \u2014 all systems healthy</td></tr>';
+    }
+  }
+
   // Current Candidate tab
   if (candidate && candidate.timestamp) {
     document.getElementById('candidateEmpty').style.display = 'none';
@@ -1003,6 +1053,13 @@ function startCountdown() {
 document.getElementById('refreshInterval').addEventListener('change', function() {
   refreshMs = parseInt(this.value) * 1000;
   startCountdown();
+});
+
+// Acknowledge alerts
+document.getElementById('ackAlertsBtn').addEventListener('click', async function() {
+  await fetch('/api/alerts/ack', { method: 'POST' });
+  document.getElementById('alertsBadge').style.display = 'none';
+  document.getElementById('alertsTabLink').classList.remove('text-danger');
 });
 
 // Boot
