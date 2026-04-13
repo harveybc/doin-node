@@ -2140,6 +2140,48 @@ class UnifiedNode:
         n_generations_stage = _gens_for_stage(stage_schedule, stage_idx, n_generations)
 
         while self._running:
+            # ── Check if chain has a newer shared population (from peer sync) ──
+            chain_pop = self._recover_shared_state_from_chain(domain_id)
+            if chain_pop is not None:
+                chain_gen = chain_pop.get("generation", 0)
+                if chain_gen > generation:
+                    logger.info(
+                        "[SHARED] Chain has newer generation %d (local=%d) for %s — fast-forwarding",
+                        chain_gen, generation, domain_id,
+                    )
+                    population = chain_pop["population"]
+                    generation = chain_gen
+                    stage_idx = chain_pop.get("stage_idx", stage_idx)
+                    no_improve_count = chain_pop.get("no_improve_count", 0)
+                    best_fitness_ever = chain_pop.get("best_fitness_ever", float("inf"))
+                    innovation_tracker_data = chain_pop.get("innovation_tracker", {})
+                    stage_schedule = chain_pop.get("stage_schedule", stage_schedule)
+                    param_defaults = chain_pop.get("param_defaults", param_defaults)
+                    stage_start_gen = chain_pop.get(
+                        "stage_start_gen",
+                        stage_schedule[stage_idx].get("start_gen", 0) if stage_schedule and stage_idx < len(stage_schedule) else 0,
+                    )
+                    n_generations_stage = _gens_for_stage(stage_schedule, stage_idx, n_generations)
+                    if stage_schedule and stage_idx < len(stage_schedule):
+                        stage_patience = stage_schedule[stage_idx].get("patience")
+                        if stage_patience is not None:
+                            patience = stage_patience
+
+                    # Update in-memory state
+                    self._shared_pop_state[domain_id] = chain_pop
+                    self._shared_pop_results[domain_id] = {}
+                    self._shared_pop_claims[domain_id] = set()
+                    self._shared_pop_claim_times[domain_id] = {}
+                    self._shared_pop_claim_result_counts[domain_id] = {}
+                    self._shared_pop_generation[domain_id] = generation
+
+                    logger.info(
+                        "[SHARED] Fast-forwarded to gen=%d stage=%d (%s) for %s",
+                        generation, stage_idx,
+                        stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "?",
+                        domain_id,
+                    )
+
             pop_size = len(population)
             gen_results = self._shared_pop_results.get(domain_id, {})
             claims = self._shared_pop_claims.get(domain_id, set())
