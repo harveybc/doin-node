@@ -325,7 +325,9 @@ class UnifiedNode:
         self._shared_pop_claims: dict[str, set[int]] = {}  # domain_id → set of claimed candidate indices
         self._shared_pop_generation: dict[str, int] = {}  # domain_id → current generation
         self._shared_pop_claim_times: dict[str, dict[int, float]] = {}  # domain_id → {candidate_idx → timestamp}
+        self._shared_pop_claim_result_counts: dict[str, dict[int, int]] = {}  # domain_id → {candidate_idx → result_count_at_claim_time}
         self._shared_claim_timeout: float = 600.0  # 10 min timeout for pending claims
+        self._shared_claim_result_patience: int = 4  # expire claim after N other results arrive
         self._shared_poll_idx: int = 0  # Round-robin index for peer polling
 
         # ── Live event log (for dashboard) ──
@@ -1421,6 +1423,10 @@ class UnifiedNode:
                 claim_times = self._shared_pop_claim_times.get(domain_id, {})
                 claim_times[idx] = time.time()
                 self._shared_pop_claim_times[domain_id] = claim_times
+                claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
+                results = self._shared_pop_results.get(domain_id, {})
+                claim_rcounts[idx] = len(results)
+                self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
                 logger.debug("[SHARED] Peer %s claimed candidate %d gen=%d %s",
                              message.sender_id[:12], idx, gen, domain_id)
             return
@@ -2073,6 +2079,7 @@ class UnifiedNode:
             self._shared_pop_state[domain_id] = pop_state
             self._shared_pop_results[domain_id] = {}
             self._shared_pop_claims[domain_id] = set()
+            self._shared_pop_claim_result_counts[domain_id] = {}
             self._shared_pop_generation[domain_id] = pop_state.get("generation", 0)
 
             logger.info(
@@ -2160,6 +2167,9 @@ class UnifiedNode:
                 claim_times = self._shared_pop_claim_times.get(domain_id, {})
                 claim_times[candidate_idx] = time.time()
                 self._shared_pop_claim_times[domain_id] = claim_times
+                claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
+                claim_rcounts[candidate_idx] = len(gen_results)
+                self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
 
                 # Claim via peer APIs (best-effort)
                 await self._claim_on_peers(domain_id, generation, candidate_idx)
@@ -2387,6 +2397,7 @@ class UnifiedNode:
                     self._shared_pop_results[domain_id] = {}
                     self._shared_pop_claims[domain_id] = set()
                     self._shared_pop_claim_times[domain_id] = {}
+                    self._shared_pop_claim_result_counts[domain_id] = {}
                     gen_results = {}
                     claims = set()
                     await asyncio.sleep(5)
@@ -2437,6 +2448,7 @@ class UnifiedNode:
                 self._shared_pop_results[domain_id] = {}
                 self._shared_pop_claims[domain_id] = set()
                 self._shared_pop_claim_times[domain_id] = {}
+                self._shared_pop_claim_result_counts[domain_id] = {}
                 self._shared_pop_generation[domain_id] = generation
                 gen_results = {}
                 claims = set()
@@ -4072,22 +4084,40 @@ class UnifiedNode:
     # ── Shared-population coordination API ─────────────────────
 
     def _expire_stale_claims(self, domain_id: str) -> None:
-        """Remove claims that have timed out without a result."""
+        """Remove claims that have timed out without a result.
+
+        Uses result-count-based expiry: if N other candidates have been
+        evaluated since the claim was made and the claimed candidate still
+        has no result, expire the claim so another node can pick it up.
+        Falls back to time-based expiry as a safety net.
+        """
         now = time.time()
         claim_times = self._shared_pop_claim_times.get(domain_id, {})
+        claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
         claims = self._shared_pop_claims.get(domain_id, set())
         results = self._shared_pop_results.get(domain_id, {})
-        expired = [
-            idx for idx, ts in list(claim_times.items())
-            if now - ts > self._shared_claim_timeout and idx not in results
-        ]
+        current_result_count = len(results)
+        expired = []
+        for idx in list(claim_times.keys()):
+            if idx in results:
+                continue  # already resolved
+            count_at_claim = claim_rcounts.get(idx, 0)
+            results_since_claim = current_result_count - count_at_claim
+            time_elapsed = now - claim_times.get(idx, now)
+            if results_since_claim >= self._shared_claim_result_patience or time_elapsed > self._shared_claim_timeout:
+                expired.append(idx)
         for idx in expired:
+            count_at_claim = claim_rcounts.get(idx, 0)
+            results_since = current_result_count - count_at_claim
             claims.discard(idx)
             claim_times.pop(idx, None)
-            logger.info("[SHARED] Claim expired for candidate %d in %s", idx, domain_id)
+            claim_rcounts.pop(idx, None)
+            logger.info("[SHARED] Claim expired for candidate %d in %s (results_since=%d)",
+                        idx, domain_id, results_since)
         if expired:
             self._shared_pop_claims[domain_id] = claims
             self._shared_pop_claim_times[domain_id] = claim_times
+            self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
 
     async def _http_shared_candidates(self, request) -> Any:
         """GET /api/shared/candidates?domain_id=X
@@ -4128,6 +4158,10 @@ class UnifiedNode:
             if state == "claimed" and i in claim_times:
                 entry["claimed_at"] = claim_times[i]
                 entry["timeout_remaining"] = max(0, self._shared_claim_timeout - (time.time() - claim_times[i]))
+                claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
+                count_at_claim = claim_rcounts.get(i, 0)
+                entry["results_since_claim"] = len(results) - count_at_claim
+                entry["result_patience"] = self._shared_claim_result_patience
             if state == "evaluated":
                 entry["fitness"] = results[i].get("fitness")
             candidates.append(entry)
@@ -4195,6 +4229,9 @@ class UnifiedNode:
         claim_times = self._shared_pop_claim_times.get(domain_id, {})
         claim_times[candidate_idx] = time.time()
         self._shared_pop_claim_times[domain_id] = claim_times
+        claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
+        claim_rcounts[candidate_idx] = len(results)
+        self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
 
         logger.info("[SHARED-API] Candidate %d claimed by %s gen=%d %s",
                      candidate_idx, requester[:12], gen, domain_id)
@@ -4204,6 +4241,7 @@ class UnifiedNode:
             "candidate_idx": candidate_idx,
             "generation": gen,
             "timeout_s": self._shared_claim_timeout,
+            "result_patience": self._shared_claim_result_patience,
         })
 
     async def _http_shared_result(self, request) -> Any:
