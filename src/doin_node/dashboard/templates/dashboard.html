@@ -191,6 +191,12 @@
                       <span id="csValNaive" style="color:#0b5e6e">--</span>
                     </div>
                   </div>
+                  <div id="csFitnessBreakdown" style="display:none; font-size:11px; margin:4px 0; padding:4px 6px; background:rgba(255,255,255,0.05); border-radius:4px">
+                    <span class="metric-label" style="color:#aaa">Fitness = base − penalty</span><br>
+                    <span style="color:#aaa">base=</span><span id="csFitBase" class="text-light">--</span>
+                    <span style="color:#aaa"> − penalty=</span><span id="csFitPenalty" class="text-danger">--</span>
+                    <span style="color:#aaa"> = </span><span id="csFitResult" class="text-success">--</span>
+                  </div>
                   <hr style="margin:6px 0; border-color:#444">
                   <!-- Last Candidate Evaluated -->
                   <div class="mb-1">
@@ -635,11 +641,23 @@ async function refreshAll() {
           document.getElementById('csValMAE').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 4) : '--';
           document.getElementById('csTrainNaive').textContent = c.train_mae != null ? fmt(c.train_mae, 4) : '--';
           document.getElementById('csValNaive').textContent = c.val_mae != null ? fmt(c.val_mae, 4) : '--';
+          // Fitness breakdown: base = 0.4*trainF1 + 0.6*valF1, penalty = base - fitness
+          if (c.train_naive_mae != null && c.val_naive_mae != null && d.best_performance != null) {
+            const trainF1 = parseFloat(c.train_naive_mae);
+            const valF1 = parseFloat(c.val_naive_mae);
+            const base = 0.4 * trainF1 + 0.6 * valF1;
+            const penalty = base - parseFloat(d.best_performance);
+            document.getElementById('csFitBase').textContent = fmt(base, 6);
+            document.getElementById('csFitPenalty').textContent = penalty > 0.0001 ? fmt(penalty, 6) : '0';
+            document.getElementById('csFitResult').textContent = fmt(d.best_performance, 6);
+            document.getElementById('csFitnessBreakdown').style.display = 'block';
+          }
         } else {
           document.getElementById('csTrainMAE').textContent = c.train_mae != null ? fmt(c.train_mae, 6) : '--';
           document.getElementById('csValMAE').textContent = c.val_mae != null ? fmt(c.val_mae, 6) : '--';
           document.getElementById('csTrainNaive').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 6) : '--';
           document.getElementById('csValNaive').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 6) : '--';
+          document.getElementById('csFitnessBreakdown').style.display = 'none';
         }
       } else if (latestChamp) {
         document.getElementById('csPerformance').textContent = latestChamp.performance != null ? fmt(latestChamp.performance, 6) : '--';
@@ -648,11 +666,23 @@ async function refreshAll() {
           document.getElementById('csValMAE').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 4) : '--';
           document.getElementById('csTrainNaive').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 4) : '--';
           document.getElementById('csValNaive').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 4) : '--';
+          // Fitness breakdown from champion event
+          if (latestChamp.train_naive_mae != null && latestChamp.val_naive_mae != null && latestChamp.performance != null) {
+            const trainF1 = parseFloat(latestChamp.train_naive_mae);
+            const valF1 = parseFloat(latestChamp.val_naive_mae);
+            const base = 0.4 * trainF1 + 0.6 * valF1;
+            const penalty = base - parseFloat(latestChamp.performance);
+            document.getElementById('csFitBase').textContent = fmt(base, 6);
+            document.getElementById('csFitPenalty').textContent = penalty > 0.0001 ? fmt(penalty, 6) : '0';
+            document.getElementById('csFitResult').textContent = fmt(latestChamp.performance, 6);
+            document.getElementById('csFitnessBreakdown').style.display = 'block';
+          }
         } else {
           document.getElementById('csTrainMAE').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 6) : '--';
           document.getElementById('csValMAE').textContent = latestChamp.val_mae != null ? fmt(latestChamp.val_mae, 6) : '--';
           document.getElementById('csTrainNaive').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 6) : '--';
           document.getElementById('csValNaive').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 6) : '--';
+          document.getElementById('csFitnessBreakdown').style.display = 'none';
         }
       }
 
