@@ -1476,8 +1476,11 @@ class UnifiedNode:
             if gen is not None and idx is not None and gen == cur_gen:
                 results = self._shared_pop_results.get(domain_id, {})
                 if idx not in results:  # First result wins
+                    _role = self._domain_roles.get(domain_id)
+                    _hib_peer = getattr(_role, 'higher_is_better', False) if _role else False
+                    _worst_peer = float("-inf") if _hib_peer else float("inf")
                     results[idx] = {
-                        "fitness": candidate_data.get("fitness", float("inf")),
+                        "fitness": candidate_data.get("fitness", _worst_peer),
                         "val_mae": candidate_data.get("val_mae"),
                         "train_mae": candidate_data.get("train_mae"),
                         "val_naive_mae": candidate_data.get("val_naive_mae"),
@@ -1489,7 +1492,7 @@ class UnifiedNode:
                     # Also update population fitness for reproduction
                     pop_state = self._shared_pop_state.get(domain_id)
                     if pop_state and idx < len(pop_state.get("population", [])):
-                        pop_state["population"][idx]["fitness"] = candidate_data.get("fitness", float("inf"))
+                        pop_state["population"][idx]["fitness"] = candidate_data.get("fitness", _worst_peer)
                     logger.info(
                         "[SHARED] Peer %s result: candidate %d/%s gen=%d fitness=%.6f %s",
                         message.sender_id[:12], idx,
@@ -2107,7 +2110,8 @@ class UnifiedNode:
                 pop_state["generation"] = 0
                 pop_state["stage_idx"] = 0
                 pop_state["no_improve_count"] = 0
-                pop_state["best_fitness_ever"] = float("inf")
+                _hib = getattr(role, 'higher_is_better', False)
+                pop_state["best_fitness_ever"] = float("-inf") if _hib else float("inf")
 
                 # Store population in genesis via an OPTIMAE_ACCEPTED transaction
                 await self._store_shared_population_in_chain(domain_id, pop_state)
@@ -2139,11 +2143,21 @@ class UnifiedNode:
         """Run the shared-population optimization loop for a domain."""
         import hashlib as _hl
 
+        role = self._domain_roles.get(domain_id)
+        _hib = getattr(role, 'higher_is_better', False) if role else False
+        _worst_fitness = float("-inf") if _hib else float("inf")
+
+        def _current_champion_fitness():
+            """Return best known fitness (from gen tracking + live champion), or None."""
+            db = self._domain_best.get(domain_id, (None, _worst_fitness))[1]
+            best = max(best_fitness_ever, db) if _hib else min(best_fitness_ever, db)
+            return best if math.isfinite(best) else None
+
         population = pop_state["population"]
         generation = pop_state.get("generation", 0)
         stage_idx = pop_state.get("stage_idx", 0)
         no_improve_count = pop_state.get("no_improve_count", 0)
-        best_fitness_ever = pop_state.get("best_fitness_ever") or float("inf")
+        best_fitness_ever = pop_state.get("best_fitness_ever") or _worst_fitness
         innovation_tracker_data = pop_state.get("innovation_tracker", {})
         stage_schedule = pop_state.get("stage_schedule", [])
         param_defaults = pop_state.get("param_defaults", {})
@@ -2156,7 +2170,6 @@ class UnifiedNode:
                 patience = stage_patience
 
         # Optimization config for dashboard fields
-        role = self._domain_roles.get(domain_id)
         opt_cfg = role.optimization_config if role else {}
         # n_generations: derive from stage schedule sum, fallback to config
         def _total_gens_from_schedule(sched):
@@ -2196,7 +2209,7 @@ class UnifiedNode:
                     generation = chain_gen
                     stage_idx = chain_pop.get("stage_idx", stage_idx)
                     no_improve_count = chain_pop.get("no_improve_count", 0)
-                    best_fitness_ever = chain_pop.get("best_fitness_ever", float("inf"))
+                    best_fitness_ever = chain_pop.get("best_fitness_ever", _worst_fitness)
                     innovation_tracker_data = chain_pop.get("innovation_tracker", {})
                     stage_schedule = chain_pop.get("stage_schedule", stage_schedule)
                     param_defaults = chain_pop.get("param_defaults", param_defaults)
@@ -2279,7 +2292,7 @@ class UnifiedNode:
                     "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
                     "total_evals": total_evals_counter,
                     "fitness": None,
-                    "champion_fitness": min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
+                    "champion_fitness": _current_champion_fitness(),
                     "n_generations": n_generations,
                     "n_generations_stage": n_generations_stage,
                     "gen_in_stage": generation - stage_start_gen,
@@ -2300,9 +2313,9 @@ class UnifiedNode:
                         candidate_idx + 1, pop_size, generation, domain_id, _eval_err,
                     )
                     # Record penalty so generation can still complete
-                    result = {"fitness": float("inf"), "_eval_error": str(_eval_err)}
+                    result = {"fitness": _worst_fitness, "_eval_error": str(_eval_err)}
 
-                fitness = result.get("fitness", float("inf"))
+                fitness = result.get("fitness", _worst_fitness)
                 logger.info(
                     "[SHARED] Candidate %d/%d result: fitness=%.6f gen=%d %s",
                     candidate_idx + 1, pop_size, fitness, generation, domain_id,
@@ -2332,7 +2345,7 @@ class UnifiedNode:
                     "train_mae": result.get("train_mae"),
                     "val_naive_mae": result.get("val_naive_mae"),
                     "train_naive_mae": result.get("train_naive_mae"),
-                    "champion_fitness": min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
+                    "champion_fitness": _current_champion_fitness(),
                     "candidate_params": result.get("hyper_dict"),
                     "model_summary": result.get("model_summary"),
                     "n_generations": n_generations,
@@ -2359,7 +2372,7 @@ class UnifiedNode:
                     train_mae=result.get("train_mae"),
                     val_naive_mae=result.get("val_naive_mae"),
                     train_naive_mae=result.get("train_naive_mae"),
-                    champion_fitness=min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) if min(best_fitness_ever, self._domain_best.get(domain_id, (None, float("inf")))[1]) < float("inf") else None,
+                    champion_fitness=_current_champion_fitness(),
                     n_generations=n_generations,
                     n_generations_stage=n_generations_stage,
                     gen_in_stage=generation - stage_start_gen,
@@ -2379,7 +2392,8 @@ class UnifiedNode:
 
                 # Update live champion tracking (dashboard/broadcast only — NOT best_fitness_ever,
                 # which is only updated at generation end from gen_best across ALL results)
-                if fitness < (self._domain_best.get(domain_id, (None, float("inf")))[1]):
+                _cur_best = self._domain_best.get(domain_id, (None, _worst_fitness))[1]
+                if self._is_better(domain_id, fitness, _cur_best):
                     self._domain_best[domain_id] = (result.get("hyper_dict", {}), fitness)
                     self._domain_champion_metrics[domain_id] = {
                         "round": generation,
@@ -2418,13 +2432,15 @@ class UnifiedNode:
 
                 # Update population genomes with fitness results
                 for idx, res in gen_results.items():
-                    population[idx]["fitness"] = res.get("fitness", float("inf"))
+                    population[idx]["fitness"] = res.get("fitness", _worst_fitness)
 
                 # Check improvement for patience
-                gen_best = min(r.get("fitness", float("inf")) for r in gen_results.values())
+                gen_fitnesses = [r.get("fitness", _worst_fitness) for r in gen_results.values()]
+                gen_best = max(gen_fitnesses) if _hib else min(gen_fitnesses)
                 avg_fitness = sum(r.get("fitness", 0) for r in gen_results.values()) / max(len(gen_results), 1)
                 prev_best = best_fitness_ever
-                if gen_best < best_fitness_ever:
+                _gen_improved = (gen_best > best_fitness_ever) if _hib else (gen_best < best_fitness_ever)
+                if _gen_improved:
                     best_fitness_ever = gen_best
                     no_improve_count = 0
                 else:
@@ -2436,7 +2452,7 @@ class UnifiedNode:
                 self._log_event("generation_end", domain_id=domain_id,
                                 gen=generation, generation=generation,
                                 best_fitness=gen_best, avg_fitness=avg_fitness,
-                                champion_fitness=best_fitness_ever if best_fitness_ever < float("inf") else None,
+                                champion_fitness=best_fitness_ever if math.isfinite(best_fitness_ever) else None,
                                 champion_val_mae=champ_metrics.get("val_mae"),
                                 champion_train_mae=champ_metrics.get("train_mae"),
                                 no_improve_count=no_improve_count, patience=f"{no_improve_count}/{patience}",
@@ -2501,7 +2517,7 @@ class UnifiedNode:
                 if repro_result.get("stage_advanced"):
                     stage_idx = repro_result.get("stage_idx", stage_idx)
                     no_improve_count = 0          # reset patience on stage advance
-                    best_fitness_ever = float("inf")  # reset champion for new stage
+                    best_fitness_ever = _worst_fitness  # reset champion for new stage
                     stage_start_gen = generation  # actual gen where new stage begins
                     n_generations_stage = _gens_for_stage(stage_schedule, stage_idx, n_generations)
                     logger.info("[SHARED] Stage advanced to %d for %s (patience & champion reset)",
@@ -2623,6 +2639,9 @@ class UnifiedNode:
         """Broadcast a candidate evaluation result for shared-population mode."""
         # Strip large model blob from broadcast (keep it local)
         broadcast_result = {k: v for k, v in result.items() if k != "_model_b64"}
+        _role = self._domain_roles.get(domain_id)
+        _hib_bc = getattr(_role, 'higher_is_better', False) if _role else False
+        _worst_bc = float("-inf") if _hib_bc else float("inf")
         msg = Message(
             msg_type=MessageType.CANDIDATE_EVALUATION,
             sender_id=self.peer_id,
@@ -2634,7 +2653,7 @@ class UnifiedNode:
                     "_shared_result": True,
                     "generation": generation,
                     "candidate_idx": candidate_idx,
-                    "fitness": result.get("fitness", float("inf")),
+                    "fitness": result.get("fitness", _worst_bc),
                     "val_mae": result.get("val_mae"),
                     "train_mae": result.get("train_mae"),
                     "val_naive_mae": result.get("val_naive_mae"),
@@ -2684,11 +2703,14 @@ class UnifiedNode:
         """Push evaluation result to all peers via their HTTP API."""
         import aiohttp as _ah
 
+        _role = self._domain_roles.get(domain_id)
+        _hib_push = getattr(_role, 'higher_is_better', False) if _role else False
+        _worst_push = float("-inf") if _hib_push else float("inf")
         payload = {
             "domain_id": domain_id,
             "candidate_idx": candidate_idx,
             "generation": generation,
-            "fitness": result.get("fitness", float("inf")),
+            "fitness": result.get("fitness", _worst_push),
             "val_mae": result.get("val_mae"),
             "train_mae": result.get("train_mae"),
             "val_naive_mae": result.get("val_naive_mae"),
