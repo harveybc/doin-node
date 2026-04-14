@@ -384,6 +384,7 @@ let refreshMs = 5000;
 let countdownVal = 5;
 let countdownTimer = null;
 let isBinaryDomain = false;  // Auto-detected from domain config
+let higherIsBetter = false;   // Auto-detected from /api/optimization
 
 // ── Charts ──
 const perfCtx = document.getElementById('perfChart').getContext('2d');
@@ -433,8 +434,8 @@ const bestChart = new Chart(bestCtx, {
 // Helper: update chart labels based on domain type
 function updateChartLabels() {
   if (isBinaryDomain) {
-    perfChart.data.datasets[0].label = 'Champion Binary Fitness (lower=better)';
-    perfChart.options.scales.y.title.text = 'Binary Fitness (CBF, lower=better)';
+    perfChart.data.datasets[0].label = 'Champion Binary Fitness (higher=better)';
+    perfChart.options.scales.y.title.text = 'Binary Fitness (higher=better)';
     bestChart.data.datasets[0].label = 'Val F1 (40%)';
     bestChart.data.datasets[1].label = 'Train F1 (40%)';
     bestChart.data.datasets[2].label = 'Val Accuracy (20%)';
@@ -531,6 +532,7 @@ async function refreshAll() {
   if (opt && opt.domains) {
     let rounds = 0, best = null;
     const hib = opt.higher_is_better || false;
+    higherIsBetter = hib;
 
     // Detect binary domain from metric_type or domain_id
     const prevBinary = isBinaryDomain;
@@ -539,7 +541,7 @@ async function refreshAll() {
       updateChartLabels();
       // Update champion panel labels
       if (isBinaryDomain) {
-        document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (lower=better)';
+        document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (higher=better)';
         document.getElementById('csTrainMAELabel').textContent = 'Train F1 (40%)';
         document.getElementById('csValMAELabel').textContent = 'Val F1 (40%)';
         document.getElementById('csTrainNaiveLabel').textContent = 'Train Accuracy (20%)';
@@ -679,7 +681,7 @@ async function refreshAll() {
       const t = fmtTime(e.timestamp);
       const f = (v,d) => v != null ? fmt(v,d||6) : '--';
       if (e.type === 'candidate_eval') {
-        const isBetter = e.fitness != null && e.champion_fitness != null && parseFloat(e.fitness) < parseFloat(e.champion_fitness);
+        const isBetter = e.fitness != null && e.champion_fitness != null && (higherIsBetter ? parseFloat(e.fitness) > parseFloat(e.champion_fitness) : parseFloat(e.fitness) < parseFloat(e.champion_fitness));
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
         const metricsStr = isBinaryDomain
@@ -831,7 +833,7 @@ async function refreshAll() {
           var perfLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.15)">
             <td><span class="badge badge-success">🏆 Champion</span></td>
-            <td>Gen ${e.gen} | <strong>${perfLabel}=${nda}</strong> (lower=better) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
+            <td>Gen ${e.gen} | <strong>${perfLabel}=${nda}</strong> (${higherIsBetter ? 'higher=better' : 'lower=better'}) | ${breakdown} | test=${f(e.test_mae)}${e.is_improvement ? ' ⬆️' : ''}</td>
             <td>${t}</td></tr>`;
         case 'broadcast':
           return `<tr style="background:rgba(23,162,184,0.1)">
@@ -842,13 +844,13 @@ async function refreshAll() {
           var acceptLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(40,167,69,0.2)">
             <td><span class="badge badge-success">✅ Accept</span></td>
-            <td>${acceptLabel}=${f(e.performance,6)} beats prev=${f(e.previous_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${acceptLabel}=${f(e.performance,6)} beats prev=${f(e.previous_best,6)} (${higherIsBetter ? 'higher=better' : 'lower=better'}) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'auto_reject':
           var rejectLabel = isBinaryDomain ? 'Fitness' : 'NDA';
           return `<tr style="background:rgba(220,53,69,0.1)">
             <td><span class="badge badge-danger">❌ Reject</span></td>
-            <td>${rejectLabel}=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (lower=better) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
+            <td>${rejectLabel}=${f(e.performance,6)} does not beat best=${f(e.current_best,6)} (${higherIsBetter ? 'higher=better' : 'lower=better'}) from <code>${e.peer||''}</code>${e.is_self ? ' (self)' : ' (peer)'}</td>
             <td>${t}</td></tr>`;
         case 'generation_end':
           var neatGenInfo = e.neat_species_count != null ? ` | 🧬 species=${e.neat_species_count} avg_params=${e.neat_avg_complexity != null ? parseFloat(e.neat_avg_complexity).toFixed(1) : '?'}` : '';

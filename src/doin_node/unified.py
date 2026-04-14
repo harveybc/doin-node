@@ -2610,6 +2610,19 @@ class UnifiedNode:
             timestamp=datetime.now(timezone.utc),
         )
         self.consensus.record_transaction(tx)
+
+        # Accumulate increment so block generation threshold can be met
+        role = self._domain_roles.get(domain_id)
+        domain_weight = role.weight if role else 1.0
+        increment = 0.01 * domain_weight
+        self.consensus.state.pending_increments[domain_id] = (
+            self.consensus.state.pending_increments.get(domain_id, 0.0) + increment
+        )
+        logger.info(
+            "[SHARED] Recorded gen %d population in chain for %s (increment=%.6f)",
+            pop_state.get("generation", 0), domain_id, increment,
+        )
+
         await self.try_generate_block()
 
     async def _broadcast_shared_claim(
