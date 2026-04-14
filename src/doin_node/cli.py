@@ -17,7 +17,12 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
+
+# Ensure TensorFlow uses memory growth so worker subprocesses can share GPU
+os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
 import sys
 from pathlib import Path
 from typing import Any

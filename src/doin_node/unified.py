@@ -2316,6 +2316,10 @@ class UnifiedNode:
                     result = {"fitness": _worst_fitness, "_eval_error": str(_eval_err)}
 
                 fitness = result.get("fitness", _worst_fitness)
+                # Sanitize: non-finite fitness (inf/nan from worker failures) → worst
+                if not math.isfinite(fitness):
+                    fitness = _worst_fitness
+                    result["fitness"] = _worst_fitness
                 logger.info(
                     "[SHARED] Candidate %d/%d result: fitness=%.6f gen=%d %s",
                     candidate_idx + 1, pop_size, fitness, generation, domain_id,
@@ -2612,8 +2616,7 @@ class UnifiedNode:
         self.consensus.record_transaction(tx)
 
         # Accumulate increment so block generation threshold can be met
-        role = self._domain_roles.get(domain_id)
-        domain_weight = role.weight if role else 1.0
+        domain_weight = self.vuw.compute_weights().get(domain_id, 1.0)
         increment = 0.01 * domain_weight
         self.consensus.state.pending_increments[domain_id] = (
             self.consensus.state.pending_increments.get(domain_id, 0.0) + increment
