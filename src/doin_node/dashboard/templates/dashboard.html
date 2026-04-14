@@ -543,14 +543,14 @@ async function refreshAll() {
       if (isBinaryDomain) {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (higher=better)';
         document.getElementById('csTrainMAELabel').textContent = 'Train F1 (40%)';
-        document.getElementById('csValMAELabel').textContent = 'Val F1 (40%)';
-        document.getElementById('csTrainNaiveLabel').textContent = 'Train Accuracy (20%)';
-        document.getElementById('csValNaiveLabel').textContent = 'Val Accuracy (20%)';
+        document.getElementById('csValMAELabel').textContent = 'Val F1 (60%)';
+        document.getElementById('csTrainNaiveLabel').textContent = 'Train Accuracy';
+        document.getElementById('csValNaiveLabel').textContent = 'Val Accuracy';
         // Candidate tab
-        document.getElementById('candValMAELabel').textContent = 'Val F1 (40%)';
+        document.getElementById('candValMAELabel').textContent = 'Val F1 (60%)';
         document.getElementById('candTrainMAELabel').textContent = 'Train F1 (40%)';
-        document.getElementById('candValNaiveLabel').textContent = 'Val Accuracy (20%)';
-        document.getElementById('candTrainNaiveLabel').textContent = 'Train Accuracy (20%)';
+        document.getElementById('candValNaiveLabel').textContent = 'Val Accuracy';
+        document.getElementById('candTrainNaiveLabel').textContent = 'Train Accuracy';
       } else {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion NDA (lower=better)';
         document.getElementById('csTrainMAELabel').textContent = 'Train MAE';
