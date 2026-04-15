@@ -748,11 +748,11 @@ async function refreshAll() {
     const nGensStage = parseInt(prog.n_generations_stage || cand.n_generations_stage || optDom.n_generations_stage || prog.n_generations || cand.n_generations || optDom.n_generations || 10);
     // Generation within current stage (0-based)
     const genInStage = parseInt(prog.gen_in_stage != null ? prog.gen_in_stage : (cand.gen_in_stage != null ? cand.gen_in_stage : 0));
-    // Read patience counter
-    const noImprove = parseInt(prog.no_improve_counter || (latGen ? (latGen.no_improve_counter || 0) : (cand.no_improve_counter || 0)));
-    const optPatience = parseInt(prog.optimization_patience || (latGen ? (latGen.optimization_patience || 0) : (cand.optimization_patience || optDom.optimization_patience || 0)));
+    // Read patience counter (use ?? to avoid treating 0 as falsy)
+    const noImprove = parseInt(prog.no_improve_counter ?? (latGen ? (latGen.no_improve_counter ?? 0) : (cand.no_improve_counter ?? 0)));
+    const optPatience = parseInt(prog.optimization_patience ?? (latGen ? (latGen.optimization_patience ?? 0) : (cand.optimization_patience ?? optDom.optimization_patience ?? 0)));
     // Stage info: events → candidate → optimization config
-    const curStage = parseInt(prog.stage || cand.stage || optDom.current_stage || 1);
+    const curStage = parseInt(prog.stage ?? cand.stage ?? optDom.current_stage ?? 1);
     const totStages = parseInt(prog.total_stages || cand.total_stages || optDom.total_stages || 1);
     const stageName = prog.stage_name || cand.stage_name || optDom.current_stage_name || '';
 
