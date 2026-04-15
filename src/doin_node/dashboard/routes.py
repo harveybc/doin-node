@@ -299,9 +299,23 @@ async def _api_optimization(request: web.Request) -> web.Response:
                             }
 
     for domain_id, dr in node._domain_roles.items():
+        # Derive generation/stage from chain shared-pop state (authoritative)
+        _chain_gen = node._domain_round_count.get(domain_id, 0)
+        _chain_stage = None
+        _chain_stage_name = None
+        _chain_no_improve = None
+        pop_st = node._shared_pop_state.get(domain_id)
+        if pop_st:
+            _chain_gen = pop_st.get("generation", _chain_gen)
+            _chain_stage = pop_st.get("stage_idx")
+            _sched = pop_st.get("stage_schedule", [])
+            if _chain_stage is not None and _sched and _chain_stage < len(_sched):
+                _chain_stage_name = _sched[_chain_stage].get("name", "")
+            _chain_no_improve = pop_st.get("no_improve_count")
+
         info: dict[str, Any] = {
             "domain_id": domain_id,
-            "round": node._domain_round_count.get(domain_id, 0),
+            "round": _chain_gen,
             "best_performance": None,
             "best_params": None,
             "target_performance": None,
@@ -361,15 +375,19 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["n_generations_stage"] = stages[0].get("generations", info["n_generations"]) if stages else info["n_generations"]
         info["metric_type"] = opt_cfg.get("metric_type", "regression")
         if stages:
-            # Prefer live candidate data for stage info (accounts for patience-based early advances)
-            cc = node._current_candidate if hasattr(node, "_current_candidate") else {}
-            if cc and cc.get("domain_id") == domain_id:
+            # Priority: chain shared-pop state > live candidate > fallback
+            if _chain_stage is not None:
+                info["current_stage"] = _chain_stage + 1
+                info["current_stage_name"] = _chain_stage_name or ""
+                if _chain_stage < len(stages):
+                    info["n_generations_stage"] = stages[_chain_stage].get("generations", info["n_generations"])
+            elif (cc := (node._current_candidate if hasattr(node, "_current_candidate") else {})) and cc.get("domain_id") == domain_id:
                 info["current_stage"] = cc.get("stage", 1)
                 info["current_stage_name"] = cc.get("stage_name", stages[0].get("name", "") if stages else "")
                 info["n_generations_stage"] = cc.get("n_generations_stage", info["n_generations"])
             else:
-                # Fallback: derive from round count (may be inaccurate with patience-based advances)
-                cur_round = node._domain_round_count.get(domain_id, 0)
+                # Fallback: derive from round count
+                cur_round = _chain_gen
                 cumulative = 0
                 cur_stage_idx = 0
                 cur_stage_name = stages[0].get("name", "") if stages else ""

@@ -2111,7 +2111,7 @@ class UnifiedNode:
                 pop_state["stage_idx"] = 0
                 pop_state["no_improve_count"] = 0
                 _hib = getattr(role, 'higher_is_better', False)
-                pop_state["best_fitness_ever"] = float("-inf") if _hib else float("inf")
+                pop_state["best_fitness_ever"] = None  # None = no champion yet (worst fitness)
 
                 # Store population in genesis via an OPTIMAE_ACCEPTED transaction
                 await self._store_shared_population_in_chain(domain_id, pop_state)
@@ -2150,14 +2150,18 @@ class UnifiedNode:
         def _current_champion_fitness():
             """Return best known fitness (from gen tracking + live champion), or None."""
             db = self._domain_best.get(domain_id, (None, _worst_fitness))[1]
-            best = max(best_fitness_ever, db) if _hib else min(best_fitness_ever, db)
+            if db is None:
+                db = _worst_fitness
+            bfe = best_fitness_ever if best_fitness_ever is not None else _worst_fitness
+            best = max(bfe, db) if _hib else min(bfe, db)
             return best if math.isfinite(best) else None
 
         population = pop_state["population"]
         generation = pop_state.get("generation", 0)
         stage_idx = pop_state.get("stage_idx", 0)
         no_improve_count = pop_state.get("no_improve_count", 0)
-        best_fitness_ever = pop_state.get("best_fitness_ever") or _worst_fitness
+        _bfe_raw = pop_state.get("best_fitness_ever")
+        best_fitness_ever = _bfe_raw if (_bfe_raw is not None and math.isfinite(_bfe_raw)) else _worst_fitness
         innovation_tracker_data = pop_state.get("innovation_tracker", {})
         stage_schedule = pop_state.get("stage_schedule", [])
         param_defaults = pop_state.get("param_defaults", {})
@@ -2209,7 +2213,8 @@ class UnifiedNode:
                     generation = chain_gen
                     stage_idx = chain_pop.get("stage_idx", stage_idx)
                     no_improve_count = chain_pop.get("no_improve_count", 0)
-                    best_fitness_ever = chain_pop.get("best_fitness_ever", _worst_fitness)
+                    _bfe_chain = chain_pop.get("best_fitness_ever")
+                    best_fitness_ever = _bfe_chain if (_bfe_chain is not None and math.isfinite(_bfe_chain)) else _worst_fitness
                     innovation_tracker_data = chain_pop.get("innovation_tracker", {})
                     stage_schedule = chain_pop.get("stage_schedule", stage_schedule)
                     param_defaults = chain_pop.get("param_defaults", param_defaults)
@@ -2542,12 +2547,15 @@ class UnifiedNode:
                     "stage_idx": stage_idx,
                     "stage_start_gen": stage_start_gen,
                     "no_improve_count": no_improve_count,
-                    "best_fitness_ever": best_fitness_ever,
+                    "best_fitness_ever": best_fitness_ever if math.isfinite(best_fitness_ever) else None,
                     "innovation_tracker": innovation_tracker_data,
                     "stage_schedule": stage_schedule,
                     "param_defaults": param_defaults,
                 }
                 await self._store_shared_population_in_chain(domain_id, new_pop_state)
+
+                # Update in-memory shared state for API queries
+                self._shared_pop_state[domain_id] = new_pop_state
 
                 # Reset per-generation tracking
                 self._shared_pop_results[domain_id] = {}
