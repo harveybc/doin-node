@@ -79,6 +79,19 @@ class TestSchemaCreation:
         assert "idx_fact_round_performance" in indexes
         conn.close()
 
+    def test_generic_metric_columns_exist(self, tmp_db):
+        import sqlite3
+        conn = sqlite3.connect(tmp_db.db_path)
+        experiment_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(dim_experiment)")
+        }
+        round_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(fact_round)")
+        }
+        assert {"performance_metric", "metric_schema", "higher_is_better"} <= experiment_columns
+        assert {"metric_schema", "metrics"} <= round_columns
+        conn.close()
+
 
 # ── 2. Experiment lifecycle ──────────────────────────────────────
 
@@ -174,6 +187,26 @@ class TestRoundRecording:
         assert r["peers_count"] == 5
         assert json.loads(r["parameters"])["y"] == 3.0
 
+    def test_generic_metrics_are_json_queryable(self, tmp_db):
+        eid = tmp_db.create_experiment(
+            domain_id="trading",
+            node_id="n1",
+            performance_metric="annual_rap",
+            metric_schema="trading.metrics.v1",
+            higher_is_better=True,
+        )
+        tmp_db.record_round(
+            experiment_id=eid,
+            domain_id="trading",
+            round_number=1,
+            performance=0.17,
+            metric_schema="trading.metrics.v1",
+            detail_metrics={"annual_return": 0.31, "annual_rap": 0.17},
+        )
+        row = tmp_db.get_rounds(eid)[0]
+        assert row["metric_schema"] == "trading.metrics.v1"
+        assert json.loads(row["metrics"])["annual_rap"] == pytest.approx(0.17)
+
     def test_multiple_rounds(self, tmp_db):
         eid = tmp_db.create_experiment(domain_id="d1", node_id="n1")
         for i in range(10):
@@ -218,6 +251,20 @@ class TestSummaryGeneration:
         assert s["best_performance"] == 3.0
         assert s["node_id"] == "n1"
         assert s["hostname"] == "h1"
+
+    def test_finalize_uses_min_for_lower_is_better(self, tmp_db):
+        eid = tmp_db.create_experiment(
+            domain_id="mae", node_id="n1", higher_is_better=False,
+        )
+        for index, performance in enumerate((0.5, 0.2, 0.4), start=1):
+            tmp_db.record_round(
+                experiment_id=eid,
+                domain_id="mae",
+                round_number=index,
+                performance=performance,
+            )
+        tmp_db.finalize_experiment(eid)
+        assert tmp_db.get_experiment_summary(eid)["best_performance"] == pytest.approx(0.2)
 
     def test_get_all_summaries(self, tmp_db):
         for dom in ["a", "b", "c"]:

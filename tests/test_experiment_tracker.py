@@ -72,6 +72,28 @@ class TestPerformanceTracking:
         assert float(rows[1]["performance_delta"]) == 2.0
         assert float(rows[2]["performance_delta"]) == 0.0
 
+    def test_lower_is_better_direction_is_preserved(self, tmp_path):
+        csv_path = tmp_path / "lower.csv"
+        tracker = ExperimentTracker(csv_path, node_id="lower-test")
+        tracker.start_experiment(
+            "mae",
+            performance_metric="mae",
+            metric_schema="prediction.metrics.v1",
+            higher_is_better=False,
+            target_performance=0.2,
+        )
+        tracker.record_round("mae", performance=0.5)
+        tracker.record_round("mae", performance=0.3)
+        tracker.record_round("mae", performance=0.4)
+        tracker.record_round("mae", performance=0.1)
+
+        rows = _read_csv(csv_path)
+        assert float(rows[2]["best_performance"]) == pytest.approx(0.3)
+        assert float(rows[1]["performance_delta"]) == pytest.approx(0.2)
+        assert rows[3]["converged"] == "True"
+        assert rows[0]["performance_metric"] == "mae"
+        assert rows[0]["higher_is_better"] == "False"
+
 
 class TestConvergence:
     def test_time_to_target_on_convergence(self, tracker, csv_path):
@@ -147,6 +169,20 @@ class TestJSONFields:
         rows = _read_csv(csv_path)
         config = json.loads(rows[0]["optimization_config"])
         assert config == {"n_params": 10}
+
+    def test_generic_metric_vector_is_preserved(self, tracker, csv_path):
+        tracker.record_round(
+            "quadratic",
+            performance=0.3,
+            detail_metrics={
+                "metric_schema": "trading.metrics.v1",
+                "total_return": 0.4,
+                "annual_rap": 0.2,
+            },
+        )
+        metrics = json.loads(_read_csv(csv_path)[0]["metrics"])
+        assert metrics["metric_schema"] == "trading.metrics.v1"
+        assert metrics["annual_rap"] == pytest.approx(0.2)
 
 
 class TestAutoStart:

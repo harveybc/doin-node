@@ -266,6 +266,7 @@ class Node:
             parameters=tc.parameters,
             optimae_id=tc.optimae_id,
             reported_performance=tc.reported_performance,
+            metric_evidence=tc.metric_evidence,
             priority=tc.priority,
         )
         self.task_queue.add(task)
@@ -340,6 +341,7 @@ class Node:
             parameters=task.parameters,
             optimae_id=task.optimae_id,
             reported_performance=task.reported_performance,
+            metric_evidence=task.metric_evidence,
             priority=task.priority,
         )
         msg = Message(

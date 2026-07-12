@@ -8,7 +8,7 @@ Tables:
   _schema_version       – migration tracking
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 -- Migration tracking
@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS dim_experiment (
     node_id TEXT NOT NULL,
     hostname TEXT,
     optimizer_plugin TEXT,
+    performance_metric TEXT,
+    metric_schema TEXT,
+    higher_is_better BOOLEAN DEFAULT TRUE,
     optimization_config JSON,
     param_bounds JSON,
     target_performance REAL,
@@ -78,7 +81,11 @@ CREATE TABLE IF NOT EXISTS fact_round (
     val_mae REAL,
     val_naive_mae REAL,
     test_mae REAL,
-    test_naive_mae REAL
+    test_naive_mae REAL,
+
+    -- Domain-independent metric evidence
+    metric_schema TEXT,
+    metrics JSON
 );
 
 -- Fact: Experiment summary

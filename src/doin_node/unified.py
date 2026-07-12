@@ -119,6 +119,14 @@ class DomainRole:
     synthetic_data_validation: bool = True  # When False, skip quorum verification — auto-accept if better
     higher_is_better: bool = True  # False for predictor (lower fitness = better)
 
+    # Inference / synthetic-data plugin configs. When empty, the loader falls
+    # back to optimization_config for backward compatibility (see setup_plugins).
+    inference_config: dict[str, Any] = field(default_factory=dict)
+    synthetic_data_config: dict[str, Any] = field(default_factory=dict)
+
+    # Metric type hint injected into optimizer/inference configs when set
+    metric_type: str = ""
+
     # Stop criteria — optimization stops when performance >= this value (per-model)
     target_performance: float | None = None
 
@@ -412,10 +420,17 @@ class UnifiedNode:
     def _register_domain(self, role: DomainRole) -> None:
         """Register a domain and its role configuration."""
         from doin_core.models.domain import DomainConfig
+        performance_metric = str(
+            role.optimization_config.get("optimization_metric")
+            or role.optimization_config.get("performance_metric")
+            or role.metric_type
+            or "fitness"
+        )
         domain = Domain(
             id=role.domain_id,
             name=role.domain_id,
-            performance_metric="fitness",
+            performance_metric=performance_metric,
+            higher_is_better=role.higher_is_better,
             config=DomainConfig(
                 optimization_plugin=role.optimization_plugin or "default",
                 inference_plugin=role.inference_plugin or "default",
@@ -695,6 +710,14 @@ class UnifiedNode:
                 param_bounds={k: list(v) for k, v in role.param_bounds.items()},
                 target_performance=role.target_performance,
                 optimizer_plugin=role.optimization_plugin,
+                performance_metric=str(
+                    role.optimization_config.get("optimization_metric")
+                    or role.optimization_config.get("performance_metric")
+                    or role.metric_type
+                    or "fitness"
+                ),
+                metric_schema=str(role.optimization_config.get("metric_schema") or ""),
+                higher_is_better=role.higher_is_better,
             )
 
         # Register HTTP routes
@@ -844,7 +867,7 @@ class UnifiedNode:
         This is critical for the island model: when syncing blocks from peers,
         we pick up champion solutions from other nodes and use them as the
         starting point for our next optimization round.
-        Also restores champion metrics (MAE breakdowns) from the chain.
+        Also restores the complete public champion metric vector from the chain.
         """
         height = self._get_height()
         for i in range(height):
@@ -860,11 +883,14 @@ class UnifiedNode:
                         current = self._domain_best.get(domain_id, (None, None))
                         if self._is_better(domain_id, verified, current[1]):
                             self._domain_best[domain_id] = (parameters, verified)
-                            # Restore champion metrics from chain transaction
-                            cm = {k: tx.payload.get(k) for k in [
-                                "val_mae", "train_mae", "val_naive_mae",
-                                "train_naive_mae", "test_mae", "test_naive_mae",
-                            ] if tx.payload.get(k) is not None}
+                            # New transactions carry a generic vector. Keep the
+                            # legacy MAE fields readable for old chains.
+                            cm = tx.payload.get("champion_metrics") or {
+                                k: tx.payload.get(k) for k in [
+                                    "val_mae", "train_mae", "val_naive_mae",
+                                    "train_naive_mae", "test_mae", "test_naive_mae",
+                                ] if tx.payload.get(k) is not None
+                            }
                             if cm:
                                 self._domain_champion_metrics[domain_id] = {
                                     "performance": verified,
@@ -1096,10 +1122,7 @@ class UnifiedNode:
                 if cm:
                     self._domain_champion_metrics[data.domain_id] = {
                         "performance": data.reported_performance,
-                        **{k: cm[k] for k in [
-                            "val_mae", "train_mae", "val_naive_mae", "train_naive_mae",
-                            "test_mae", "test_naive_mae",
-                        ] if k in cm and cm[k] is not None},
+                        **self._public_champion_metrics(cm),
                     }
                 logger.info(
                     "🏝️  MIGRATION: optimistic adopt from peer %s for %s: %.6f → %.6f",
@@ -1220,6 +1243,9 @@ class UnifiedNode:
             parameters=data.parameters,
             optimae_id=data.optimae_id,
             reported_performance=data.reported_performance,
+            metric_evidence=self._public_champion_metrics(
+                getattr(data, "champion_metrics", None) or {}
+            ),
             priority=0,
         )
         self.task_queue.add(task)
@@ -1300,7 +1326,8 @@ class UnifiedNode:
                 reported_performance=reported,
             )
 
-        # Record OPTIMAE_ACCEPTED transaction on chain (include MAE breakdowns for chain history)
+        # Record the full public metric vector. Legacy MAE columns remain for
+        # older dashboards while generic consumers use champion_metrics.
         cm = getattr(data, 'champion_metrics', None) or {}
         self.consensus.record_transaction(Transaction(
             tx_type=TransactionType.OPTIMAE_ACCEPTED,
@@ -1320,6 +1347,7 @@ class UnifiedNode:
                 "train_naive_mae": cm.get("train_naive_mae"),
                 "test_mae": cm.get("test_mae"),
                 "test_naive_mae": cm.get("test_naive_mae"),
+                "champion_metrics": self._public_champion_metrics(cm),
                 **onchain_metrics,
             },
         ))
@@ -1355,10 +1383,7 @@ class UnifiedNode:
                     "round": -1,
                     "performance": verified,
                     "parameters": data.parameters,
-                    **{k: cm[k] for k in [
-                        "val_mae", "train_mae", "val_naive_mae", "train_naive_mae",
-                        "test_mae", "test_naive_mae",
-                    ] if k in cm and cm[k] is not None},
+                    **self._public_champion_metrics(cm),
                 }
 
             is_remote = sender_id != self.peer_id
@@ -1555,6 +1580,7 @@ class UnifiedNode:
             parameters=tc.parameters,
             optimae_id=tc.optimae_id,
             reported_performance=tc.reported_performance,
+            metric_evidence=tc.metric_evidence,
             priority=tc.priority,
         )
         self.task_queue.add(task)
@@ -1696,6 +1722,7 @@ class UnifiedNode:
                     "reward_fraction": incentive_result.reward_fraction,
                     "quorum_agree_fraction": result.agree_fraction,
                     "incentive_reason": incentive_result.reason,
+                    "champion_metrics": self._public_champion_metrics(task.metric_evidence),
                     **onchain_metrics,
                 },
             ))
@@ -1857,10 +1884,7 @@ class UnifiedNode:
             if cm and isinstance(cm, dict):
                 self._domain_champion_metrics[domain_id] = {
                     "performance": perf,
-                    **{k: cm[k] for k in [
-                        "round", "val_mae", "train_mae", "val_naive_mae",
-                        "train_naive_mae", "test_mae", "test_naive_mae",
-                    ] if k in cm and cm[k] is not None},
+                    **self._public_champion_metrics(cm),
                 }
             # Also inject into optimizer plugin if running
             plugin = self._optimizer_plugins.get(domain_id)
@@ -2865,8 +2889,12 @@ class UnifiedNode:
                     domain_id, current_stage, fitness,
                 )
             else:
-                # Lower is better for predictor NDA
-                improvement = stage_start_fit - fitness
+                role = node._domain_roles.get(domain_id)
+                improvement = (
+                    fitness - stage_start_fit
+                    if role and role.higher_is_better
+                    else stage_start_fit - fitness
+                )
                 if improvement > stage_advance_threshold:
                     logger.info(
                         "🚀 [%s] Stage %d: improvement %.6f > threshold %.6f"
@@ -3126,8 +3154,12 @@ class UnifiedNode:
             2. Creates a CANDIDATE_EVALUATED transaction for the blockchain
             3. Broadcasts to peers so all nodes accumulate all results
             """
+            raw_metrics = candidate_info.get("metrics")
+            if not isinstance(raw_metrics, dict):
+                raw_metrics = {}
             try:
-                detail_metrics = {
+                detail_metrics = dict(raw_metrics)
+                detail_metrics.update({
                     "generation": candidate_info.get("generation", ""),
                     "stage": candidate_info.get("stage", ""),
                     "total_stages": candidate_info.get("total_stages", ""),
@@ -3149,7 +3181,7 @@ class UnifiedNode:
                     "val_naive_mae": candidate_info.get("val_naive_mae"),
                     "test_mae": candidate_info.get("test_mae"),
                     "test_naive_mae": candidate_info.get("test_naive_mae"),
-                }
+                })
                 node.experiment_tracker.record_round(
                     domain_id,
                     performance=candidate_info.get("fitness", 0.0),
@@ -3191,6 +3223,8 @@ class UnifiedNode:
                     "val_naive_mae": candidate_info.get("val_naive_mae"),
                     "test_mae": candidate_info.get("test_mae"),
                     "test_naive_mae": candidate_info.get("test_naive_mae"),
+                    "metric_schema": raw_metrics.get("metric_schema"),
+                    "metrics": raw_metrics,
                     "no_improve_counter": candidate_info.get("no_improve_counter"),
                     "optimization_patience": candidate_info.get("optimization_patience"),
                     "neat_species_count": candidate_info.get("neat_species_count"),
@@ -3261,6 +3295,7 @@ class UnifiedNode:
     ) -> None:
         """Broadcast a new local champion to the DOIN network (commit→reveal)."""
         performance = fitness  # Use raw fitness; comparison respects higher_is_better per domain
+        metrics = dict(metrics or {})
 
         # Include trained model in broadcast parameters for evaluator verification (inference-only)
         model_b64 = metrics.pop("_model_b64", None)
@@ -3337,12 +3372,8 @@ class UnifiedNode:
                 reported_performance=performance,
                 nonce=nonce,
                 champion_metrics={
-                    "val_mae": metrics.get("val_mae"),
-                    "train_mae": metrics.get("train_mae"),
-                    "val_naive_mae": metrics.get("val_naive_mae"),
-                    "train_naive_mae": metrics.get("train_naive_mae"),
-                    "test_mae": metrics.get("test_mae"),
-                    "test_naive_mae": metrics.get("test_naive_mae"),
+                    key: value for key, value in metrics.items()
+                    if key not in {"fitness", "_model_b64"}
                 },
             ).model_dump_json()),
         )
@@ -3362,6 +3393,14 @@ class UnifiedNode:
             "📡 Champion broadcast: domain=%s gen=%d perf=%.4f optimae=%s",
             domain_id, gen, performance, optimae_id[:16],
         )
+
+    @staticmethod
+    def _public_champion_metrics(metrics: dict | None) -> dict:
+        """Return chain-safe metric evidence without duplicating model bytes."""
+        return {
+            key: value for key, value in (metrics or {}).items()
+            if key not in {"_model_b64", "_best_model_b64"} and value is not None
+        }
 
     async def _broadcast_stage_complete(
         self, domain_id: str, stage: int, total_stages: int,
@@ -3591,6 +3630,7 @@ class UnifiedNode:
             parameters=task.parameters,
             optimae_id=task.optimae_id,
             reported_performance=task.reported_performance,
+            metric_evidence=task.metric_evidence,
             priority=task.priority,
         )
         msg = Message(

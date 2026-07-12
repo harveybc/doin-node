@@ -72,6 +72,20 @@ class OLAPDatabase:
                         self._conn.execute(f"ALTER TABLE fact_round ADD COLUMN {col} REAL")
                     except sqlite3.OperationalError:
                         pass  # column already exists
+            if current < 3:
+                for table, column, definition in (
+                    ("dim_experiment", "performance_metric", "TEXT"),
+                    ("dim_experiment", "metric_schema", "TEXT"),
+                    ("dim_experiment", "higher_is_better", "BOOLEAN DEFAULT TRUE"),
+                    ("fact_round", "metric_schema", "TEXT"),
+                    ("fact_round", "metrics", "JSON"),
+                ):
+                    try:
+                        self._conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                        )
+                    except sqlite3.OperationalError:
+                        pass
             self._conn.executescript(SCHEMA_SQL)  # idempotent CREATE IF NOT EXISTS
             self._conn.execute(
                 "INSERT INTO _schema_version (version, applied_at) VALUES (?, ?)",
@@ -88,6 +102,9 @@ class OLAPDatabase:
         node_id: str,
         hostname: str = "",
         optimizer_plugin: str = "",
+        performance_metric: str = "fitness",
+        metric_schema: str = "",
+        higher_is_better: bool = True,
         optimization_config: dict[str, Any] | None = None,
         param_bounds: dict[str, Any] | None = None,
         target_performance: float | None = None,
@@ -104,12 +121,14 @@ class OLAPDatabase:
             self._conn.execute(
                 """INSERT INTO dim_experiment
                    (experiment_id, domain_id, node_id, hostname,
-                    optimizer_plugin, optimization_config, param_bounds,
+                    optimizer_plugin, performance_metric, metric_schema,
+                    higher_is_better, optimization_config, param_bounds,
                     target_performance, started_at, doin_version)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     eid, domain_id, node_id, hostname,
-                    optimizer_plugin,
+                    optimizer_plugin, performance_metric, metric_schema,
+                    bool(higher_is_better),
                     json.dumps(optimization_config or {}),
                     json.dumps(param_bounds or {}),
                     target_performance, now, doin_version,
@@ -140,6 +159,7 @@ class OLAPDatabase:
         converged: bool = False,
         round_id: str | None = None,
         detail_metrics: dict[str, Any] | None = None,
+        metric_schema: str = "",
     ) -> str:
         rid = round_id or uuid.uuid4().hex
         now = _now_iso()
@@ -154,8 +174,8 @@ class OLAPDatabase:
                     time_to_current_best_seconds, time_to_target_seconds,
                     chain_height, peers_count, block_reward_earned, converged,
                     train_mae, train_naive_mae, val_mae, val_naive_mae,
-                    test_mae, test_naive_mae)
-                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?,?)""",
+                    test_mae, test_naive_mae, metric_schema, metrics)
+                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?,?, ?,?)""",
                 (
                     rid, experiment_id, domain_id, round_number, now,
                     performance, best_performance, performance_delta, is_improvement,
@@ -167,6 +187,8 @@ class OLAPDatabase:
                     dm.get("train_mae"), dm.get("train_naive_mae"),
                     dm.get("val_mae"), dm.get("val_naive_mae"),
                     dm.get("test_mae"), dm.get("test_naive_mae"),
+                    metric_schema or dm.get("metric_schema", ""),
+                    json.dumps(dm, sort_keys=True, default=str),
                 ),
             )
         return rid
@@ -194,9 +216,10 @@ class OLAPDatabase:
             if exp is None:
                 return
 
+            aggregate = "MAX" if bool(exp["higher_is_better"]) else "MIN"
             agg = self._conn.execute(
-                """SELECT COUNT(*) AS total_rounds,
-                          MAX(performance) AS best_perf,
+                f"""SELECT COUNT(*) AS total_rounds,
+                          {aggregate}(performance) AS best_perf,
                           MAX(elapsed_seconds) AS total_elapsed,
                           MAX(time_to_target_seconds) AS ttt
                    FROM fact_round WHERE experiment_id=?""",

@@ -52,6 +52,9 @@ COLUMNS = [
     # Node / environment
     "hostname",
     "optimizer_plugin",
+    "performance_metric",
+    "metric_schema",
+    "higher_is_better",
     "doin_version",
     # Network context
     "chain_height",
@@ -80,6 +83,7 @@ COLUMNS = [
     "best_fitness_gen",
     "neat_species_count",
     "neat_avg_complexity",
+    "metrics",
 ]
 
 
@@ -148,6 +152,9 @@ class ExperimentTracker:
         param_bounds: dict[str, Any] | None = None,
         target_performance: float | None = None,
         optimizer_plugin: str = "",
+        performance_metric: str = "fitness",
+        metric_schema: str = "",
+        higher_is_better: bool = True,
         experiment_id: str | None = None,
     ) -> str:
         """Start tracking a new experiment for a domain. Returns experiment_id."""
@@ -162,6 +169,9 @@ class ExperimentTracker:
                 param_bounds=param_bounds or {},
                 target_performance=target_performance,
                 optimizer_plugin=optimizer_plugin,
+                performance_metric=performance_metric,
+                metric_schema=metric_schema,
+                higher_is_better=higher_is_better,
             )
         # Write to OLAP database
         if self._olap:
@@ -171,6 +181,9 @@ class ExperimentTracker:
                     node_id=self._node_id,
                     hostname=self._hostname,
                     optimizer_plugin=optimizer_plugin,
+                    performance_metric=performance_metric,
+                    metric_schema=metric_schema,
+                    higher_is_better=higher_is_better,
                     optimization_config=optimization_config,
                     param_bounds=param_bounds,
                     target_performance=target_performance,
@@ -214,10 +227,18 @@ class ExperimentTracker:
             # Performance tracking
             improved = False
             perf_delta = 0.0
-            if exp.best_performance is None or performance > exp.best_performance:
-                perf_delta = performance - (exp.best_performance or 0.0)
+            is_better = (
+                exp.best_performance is None
+                or (performance > exp.best_performance if exp.higher_is_better
+                    else performance < exp.best_performance)
+            )
+            if is_better:
                 if exp.best_performance is not None:
-                    perf_delta = performance - exp.best_performance
+                    perf_delta = (
+                        performance - exp.best_performance
+                        if exp.higher_is_better
+                        else exp.best_performance - performance
+                    )
                 exp.best_performance = performance
                 exp.best_parameters = parameters
                 exp.time_to_best_mono = now_mono
@@ -228,7 +249,11 @@ class ExperimentTracker:
             if (
                 not converged
                 and exp.target_performance is not None
-                and performance >= exp.target_performance
+                and (
+                    performance >= exp.target_performance
+                    if exp.higher_is_better
+                    else performance <= exp.target_performance
+                )
             ):
                 exp.converged = True
                 exp.time_to_target_seconds = now_mono - exp.start_mono
@@ -273,6 +298,9 @@ class ExperimentTracker:
                 "param_bounds": json.dumps(exp.param_bounds),
                 "hostname": self._hostname,
                 "optimizer_plugin": exp.optimizer_plugin,
+                "performance_metric": exp.performance_metric,
+                "metric_schema": exp.metric_schema,
+                "higher_is_better": exp.higher_is_better,
                 "doin_version": self._doin_version,
                 "chain_height": chain_height,
                 "peers_count": peers_count,
@@ -281,6 +309,7 @@ class ExperimentTracker:
 
             # Add detailed metrics (MAE breakdowns + NEAT tracking) if provided
             dm = detail_metrics or {}
+            row["metrics"] = json.dumps(dm, sort_keys=True, default=str)
             for key in ("train_mae", "train_naive_mae", "val_mae", "val_naive_mae",
                         "test_mae", "test_naive_mae",
                         "generation", "stage", "total_stages", "stage_name",
@@ -317,6 +346,7 @@ class ExperimentTracker:
                         converged=converged,
                         round_id=row["round_id"],
                         detail_metrics=detail_metrics,
+                        metric_schema=exp.metric_schema,
                     )
                 except Exception:
                     logger.exception("OLAP: failed to record round")
@@ -429,6 +459,9 @@ class ExperimentTracker:
             "time_to_target_seconds": exp.time_to_target_seconds,
             "elapsed_seconds": round(elapsed, 2),
             "optimizer_plugin": exp.optimizer_plugin,
+            "performance_metric": exp.performance_metric,
+            "metric_schema": exp.metric_schema,
+            "higher_is_better": exp.higher_is_better,
         }
 
 
@@ -443,6 +476,9 @@ class _DomainExperiment:
         "param_bounds",
         "target_performance",
         "optimizer_plugin",
+        "performance_metric",
+        "metric_schema",
+        "higher_is_better",
         "round_count",
         "best_performance",
         "best_parameters",
@@ -460,6 +496,9 @@ class _DomainExperiment:
         param_bounds: dict[str, Any] | None = None,
         target_performance: float | None = None,
         optimizer_plugin: str = "",
+        performance_metric: str = "fitness",
+        metric_schema: str = "",
+        higher_is_better: bool = True,
     ) -> None:
         self.experiment_id = experiment_id
         self.start_utc = start_utc or datetime.now(timezone.utc)
@@ -468,6 +507,9 @@ class _DomainExperiment:
         self.param_bounds = param_bounds or {}
         self.target_performance = target_performance
         self.optimizer_plugin = optimizer_plugin
+        self.performance_metric = performance_metric
+        self.metric_schema = metric_schema
+        self.higher_is_better = bool(higher_is_better)
         self.round_count = 0
         self.best_performance: float | None = None
         self.best_parameters: dict[str, Any] | None = None

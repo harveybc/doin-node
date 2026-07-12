@@ -44,6 +44,9 @@ def _ensure_pg_schema(pg_conn) -> None:
         node_id TEXT NOT NULL,
         hostname TEXT,
         optimizer_plugin TEXT,
+        performance_metric TEXT,
+        metric_schema TEXT,
+        higher_is_better BOOLEAN DEFAULT TRUE,
         optimization_config JSONB,
         param_bounds JSONB,
         target_performance DOUBLE PRECISION,
@@ -72,8 +75,30 @@ def _ensure_pg_schema(pg_conn) -> None:
         chain_height INTEGER DEFAULT 0,
         peers_count INTEGER DEFAULT 0,
         block_reward_earned DOUBLE PRECISION DEFAULT 0.0,
-        converged BOOLEAN DEFAULT FALSE
+        converged BOOLEAN DEFAULT FALSE,
+        train_mae DOUBLE PRECISION,
+        train_naive_mae DOUBLE PRECISION,
+        val_mae DOUBLE PRECISION,
+        val_naive_mae DOUBLE PRECISION,
+        test_mae DOUBLE PRECISION,
+        test_naive_mae DOUBLE PRECISION,
+        metric_schema TEXT,
+        metrics JSONB
     )""")
+    for statement in (
+        "ALTER TABLE dim_experiment ADD COLUMN IF NOT EXISTS performance_metric TEXT",
+        "ALTER TABLE dim_experiment ADD COLUMN IF NOT EXISTS metric_schema TEXT",
+        "ALTER TABLE dim_experiment ADD COLUMN IF NOT EXISTS higher_is_better BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS train_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS train_naive_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS val_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS val_naive_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS test_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS test_naive_mae DOUBLE PRECISION",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS metric_schema TEXT",
+        "ALTER TABLE fact_round ADD COLUMN IF NOT EXISTS metrics JSONB",
+    ):
+        cur.execute(statement)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fact_experiment_summary (
         experiment_id TEXT PRIMARY KEY REFERENCES dim_experiment(experiment_id),
