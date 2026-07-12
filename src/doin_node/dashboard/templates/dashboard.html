@@ -390,6 +390,7 @@ let refreshMs = 5000;
 let countdownVal = 5;
 let countdownTimer = null;
 let isBinaryDomain = false;  // Auto-detected from domain config
+let isTradingDomain = false; // Generic risk-adjusted trading metric contract
 let higherIsBetter = false;   // Auto-detected from /api/optimization
 
 // ── Charts ──
@@ -542,11 +543,23 @@ async function refreshAll() {
 
     // Detect binary domain from metric_type or domain_id
     const prevBinary = isBinaryDomain;
+    const prevTrading = isTradingDomain;
     isBinaryDomain = opt.domains.some(d => d.metric_type === 'binary' || (d.domain_id && d.domain_id.includes('binary')));
-    if (isBinaryDomain !== prevBinary) {
+    isTradingDomain = opt.domains.some(d => d.metric_type === 'train_validation_l1_score' || (d.domain_id && d.domain_id.startsWith('trading-')));
+    if (isBinaryDomain !== prevBinary || isTradingDomain !== prevTrading) {
       updateChartLabels();
       // Update champion panel labels
-      if (isBinaryDomain) {
+      if (isTradingDomain) {
+        document.getElementById('csPerformanceLabel').textContent = 'Champion L2 Fitness (higher=better)';
+        document.getElementById('csTrainMAELabel').textContent = 'Train-tail RAP';
+        document.getElementById('csValMAELabel').textContent = 'Validation RAP';
+        document.getElementById('csTrainNaiveLabel').textContent = 'Mean RAP score';
+        document.getElementById('csValNaiveLabel').textContent = 'Gap penalty';
+        document.getElementById('candValMAELabel').textContent = 'Validation RAP';
+        document.getElementById('candTrainMAELabel').textContent = 'Train-tail RAP';
+        document.getElementById('candValNaiveLabel').textContent = 'Gap penalty';
+        document.getElementById('candTrainNaiveLabel').textContent = 'Mean RAP score';
+      } else if (isBinaryDomain) {
         document.getElementById('csPerformanceLabel').textContent = '🏆 Champion Binary Fitness (higher=better)';
         document.getElementById('csTrainMAELabel').textContent = 'Train F1 (40%)';
         document.getElementById('csValMAELabel').textContent = 'Val F1 (60%)';
@@ -579,11 +592,18 @@ async function refreshAll() {
       }
       const params = d.best_params ? `<code style="font-size:10px">${JSON.stringify(d.best_params,null,0).substring(0,120)}...</code>` : '--';
       const c = d.champion || {};
+      const cm = c.metric_evidence || {};
       const srcBadge = c.source === 'blockchain' ? '<span class="badge badge-success">chain</span>' : (c.source === 'local' ? '<span class="badge badge-warning">local</span>' : '');
-      const champRow = c.val_mae !== undefined ? `
+      const champRow = (c.val_mae !== undefined || Object.keys(cm).length) ? `
         <tr style="font-size:11px; background:rgba(40,167,69,0.25); color:#fff">
           <td colspan="2"><strong>🏆 Champion ${srcBadge} ${c.block_index != null ? '(block #'+c.block_index+')' : (c.round != null ? '(round '+c.round+')' : '')}</strong></td>
-          <td colspan="5">${isBinaryDomain ? `
+          <td colspan="5">${isTradingDomain ? `
+            L2: <strong>${fmt(d.best_performance,6)}</strong> &nbsp;|&nbsp;
+            Train-tail RAP: ${fmt(cm.train_tail_selection_score,6)} &nbsp;|&nbsp;
+            Validation RAP: ${fmt(cm.validation_selection_score,6)} &nbsp;|&nbsp;
+            Return: ${fmt(cm.total_return,6)} &nbsp;|&nbsp;
+            Drawdown: ${fmt(cm.max_drawdown_fraction,6)} &nbsp;|&nbsp; Trades: ${cm.trades_total != null ? cm.trades_total : 'N/A'}`
+          : isBinaryDomain ? `
             F1: <strong>Train ${fmt(c.train_naive_mae,4)}</strong> / Val ${fmt(c.val_naive_mae,4)} &nbsp;|&nbsp;
             Acc: Train ${fmt(c.train_mae,4)} / Val ${fmt(c.val_mae,4)} &nbsp;|&nbsp;
             Test F1: <strong>${c.test_naive_mae != null ? fmt(c.test_naive_mae,4) : 'N/A'}</strong> / Acc ${c.test_mae != null ? fmt(c.test_mae,4) : 'N/A'}`
@@ -615,6 +635,13 @@ async function refreshAll() {
     const latestGenEnd = evList.find(e => e.type === 'generation_end');
     // Find latest champion event for champion metrics
     const latestChamp = evList.find(e => e.type === 'champion' || e.type === 'auto_accept');
+    const completedEvals = evList.filter(e => e.type === 'candidate_eval' && e.fitness != null);
+    const provisionalChamp = completedEvals.reduce((best, item) => {
+      if (!best) return item;
+      return higherIsBetter
+        ? (parseFloat(item.fitness) > parseFloat(best.fitness) ? item : best)
+        : (parseFloat(item.fitness) < parseFloat(best.fitness) ? item : best);
+    }, null);
 
     // Check if blockchain has champion data (from /api/optimization)
     const hasChainChampion = opt && opt.domains && opt.domains.length > 0 && opt.domains[0].champion;
@@ -635,7 +662,14 @@ async function refreshAll() {
         const d = opt.domains[0];
         document.getElementById('csPerformance').textContent = d.best_performance != null ? fmt(d.best_performance, 6) : '--';
         const c = d.champion || {};
-        if (isBinaryDomain) {
+        const m = c.metric_evidence || {};
+        if (isTradingDomain) {
+          document.getElementById('csTrainMAE').textContent = fmt(m.train_tail_selection_score, 6);
+          document.getElementById('csValMAE').textContent = fmt(m.validation_selection_score, 6);
+          document.getElementById('csTrainNaive').textContent = fmt(m.train_validation_selection_mean_score, 6);
+          document.getElementById('csValNaive').textContent = fmt(m.train_validation_selection_gap_penalty, 6);
+          document.getElementById('csFitnessBreakdown').style.display = 'none';
+        } else if (isBinaryDomain) {
           // Binary: F1 as primary, Accuracy as secondary
           document.getElementById('csTrainMAE').textContent = c.train_naive_mae != null ? fmt(c.train_naive_mae, 4) : '--';
           document.getElementById('csValMAE').textContent = c.val_naive_mae != null ? fmt(c.val_naive_mae, 4) : '--';
@@ -661,7 +695,14 @@ async function refreshAll() {
         }
       } else if (latestChamp) {
         document.getElementById('csPerformance').textContent = latestChamp.performance != null ? fmt(latestChamp.performance, 6) : '--';
-        if (isBinaryDomain) {
+        const m = latestChamp.metric_evidence || {};
+        if (isTradingDomain) {
+          document.getElementById('csTrainMAE').textContent = fmt(m.train_tail_selection_score, 6);
+          document.getElementById('csValMAE').textContent = fmt(m.validation_selection_score, 6);
+          document.getElementById('csTrainNaive').textContent = fmt(m.train_validation_selection_mean_score, 6);
+          document.getElementById('csValNaive').textContent = fmt(m.train_validation_selection_gap_penalty, 6);
+          document.getElementById('csFitnessBreakdown').style.display = 'none';
+        } else if (isBinaryDomain) {
           document.getElementById('csTrainMAE').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 4) : '--';
           document.getElementById('csValMAE').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 4) : '--';
           document.getElementById('csTrainNaive').textContent = latestChamp.train_mae != null ? fmt(latestChamp.train_mae, 4) : '--';
@@ -683,6 +724,15 @@ async function refreshAll() {
           document.getElementById('csTrainNaive').textContent = latestChamp.train_naive_mae != null ? fmt(latestChamp.train_naive_mae, 6) : '--';
           document.getElementById('csValNaive').textContent = latestChamp.val_naive_mae != null ? fmt(latestChamp.val_naive_mae, 6) : '--';
           document.getElementById('csFitnessBreakdown').style.display = 'none';
+        }
+      } else if (provisionalChamp) {
+        const m = provisionalChamp.metric_evidence || {};
+        document.getElementById('csPerformance').textContent = fmt(provisionalChamp.fitness, 6);
+        if (isTradingDomain) {
+          document.getElementById('csTrainMAE').textContent = fmt(m.train_tail_selection_score, 6);
+          document.getElementById('csValMAE').textContent = fmt(m.validation_selection_score, 6);
+          document.getElementById('csTrainNaive').textContent = fmt(m.train_validation_selection_mean_score, 6);
+          document.getElementById('csValNaive').textContent = fmt(m.train_validation_selection_gap_penalty, 6);
         }
       }
 
@@ -714,7 +764,10 @@ async function refreshAll() {
         const isBetter = e.fitness != null && e.champion_fitness != null && (higherIsBetter ? parseFloat(e.fitness) > parseFloat(e.champion_fitness) : parseFloat(e.fitness) < parseFloat(e.champion_fitness));
         const bg = isBetter ? 'background:rgba(40,167,69,0.12)' : '';
         const neatInfo = e.neat_species_count != null ? ` | sp=${e.neat_species_count} p=${e.neat_complexity||'?'}` : '';
-        const metricsStr = isBinaryDomain
+        const m = e.metric_evidence || {};
+        const metricsStr = isTradingDomain
+          ? `fit=<strong>${f(e.fitness,6)}</strong> | tail_RAP=${f(m.train_tail_selection_score,6)} val_RAP=${f(m.validation_selection_score,6)} | ret=${f(m.total_return,6)} dd=${f(m.max_drawdown_fraction,6)} trades=${m.trades_total != null ? m.trades_total : '--'} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${isBetter ? ' better' : ''}`
+          : isBinaryDomain
           ? `fit=<strong>${f(e.fitness,6)}</strong> | f1_v=${f(e.val_naive_mae,4)} f1_t=${f(e.train_naive_mae,4)} | acc_v=${f(e.val_mae,4)} acc_t=${f(e.train_mae,4)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`
           : `fit=<strong>${f(e.fitness,6)}</strong> | val=${f(e.val_mae)} train=${f(e.train_mae)} | naive_v=${f(e.val_naive_mae)} naive_t=${f(e.train_naive_mae)} | champ=${f(e.champion_fitness,6)} | #${e.total_evals||0}${neatInfo}${isBetter ? ' ⬆️' : ''}`;
         return `<tr style="${bg}">
@@ -824,7 +877,13 @@ async function refreshAll() {
     }
 
     bestChart.data.labels = maeLabels;
-    if (isBinaryDomain) {
+    const cm = candidate.metric_evidence || {};
+    if (isTradingDomain) {
+      document.getElementById('candValMAE').textContent = fmt(cm.validation_selection_score, 6);
+      document.getElementById('candTrainMAE').textContent = fmt(cm.train_tail_selection_score, 6);
+      document.getElementById('candValNaive').textContent = fmt(cm.train_validation_selection_gap_penalty, 6);
+      document.getElementById('candTrainNaive').textContent = fmt(cm.train_validation_selection_mean_score, 6);
+    } else if (isBinaryDomain) {
       // Binary mode: F1 as primary (solid), Accuracy as secondary (dashed)
       bestChart.data.datasets[0].data = valNaiveData;   // Val F1 (primary)
       bestChart.data.datasets[1].data = trainNaiveData;  // Train F1 (primary)

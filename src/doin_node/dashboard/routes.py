@@ -15,6 +15,8 @@ import os
 import subprocess
 import time
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 
 import math
@@ -39,9 +41,44 @@ def _sanitize_for_json(obj):
 
 def _dumps(obj):
     return json.dumps(_sanitize_for_json(obj), default=_json_default)
-from pathlib import Path
-from typing import Any
 
+
+_DASHBOARD_METRIC_KEYS = (
+    "metric_schema", "optimization_metric", "total_return",
+    "risk_adjusted_total_return", "train_validation_l1_score",
+    "train_tail_selection_score", "validation_selection_score",
+    "train_validation_selection_mean_score",
+    "train_validation_selection_gap",
+    "train_validation_selection_gap_penalty", "max_drawdown_fraction",
+    "max_drawdown_pct", "sharpe_ratio", "trades_total", "final_equity",
+    "model_artifact_sha256", "model_artifact_bytes", "model_artifact_format",
+    "val_mae", "train_mae", "val_naive_mae", "train_naive_mae",
+    "test_mae", "test_naive_mae",
+)
+
+
+def _compact_metric_evidence(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    source = metrics or {}
+    return {key: source[key] for key in _DASHBOARD_METRIC_KEYS if source.get(key) is not None}
+
+
+def _dashboard_transaction_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Redact model bytes and large traces from the monitoring API only."""
+    result = dict(payload)
+    parameters = result.get("parameters")
+    if isinstance(parameters, dict):
+        result["parameters"] = {
+            key: value for key, value in parameters.items() if key != "_model_b64"
+        }
+        model_b64 = parameters.get("_model_b64")
+        if model_b64:
+            result["model_artifact_embedded"] = True
+            result["model_artifact_base64_chars"] = len(model_b64)
+    if isinstance(result.get("champion_metrics"), dict):
+        result["champion_metrics"] = _compact_metric_evidence(
+            result["champion_metrics"]
+        )
+    return result
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
@@ -269,6 +306,9 @@ async def _api_optimization(request: web.Request) -> web.Response:
                     domain_id = tx.domain_id
                     verified = tx.payload.get("verified_performance")
                     parameters = tx.payload.get("parameters")
+                    metric_evidence = _compact_metric_evidence(
+                        tx.payload.get("champion_metrics")
+                    )
                     if verified is not None:
                         prev = chain_champions.get(domain_id)
                         # Determine if this is better
@@ -289,12 +329,13 @@ async def _api_optimization(request: web.Request) -> web.Response:
                                 "parameters": parameters,
                                 "block_index": block.header.index,
                                 "peer_id": tx.peer_id,
-                                "val_mae": tx.payload.get("val_mae"),
-                                "train_mae": tx.payload.get("train_mae"),
-                                "val_naive_mae": tx.payload.get("val_naive_mae"),
-                                "train_naive_mae": tx.payload.get("train_naive_mae"),
-                                "test_mae": tx.payload.get("test_mae"),
-                                "test_naive_mae": tx.payload.get("test_naive_mae"),
+                                "val_mae": metric_evidence.get("val_mae", tx.payload.get("val_mae")),
+                                "train_mae": metric_evidence.get("train_mae", tx.payload.get("train_mae")),
+                                "val_naive_mae": metric_evidence.get("val_naive_mae", tx.payload.get("val_naive_mae")),
+                                "train_naive_mae": metric_evidence.get("train_naive_mae", tx.payload.get("train_naive_mae")),
+                                "test_mae": metric_evidence.get("test_mae", tx.payload.get("test_mae")),
+                                "test_naive_mae": metric_evidence.get("test_naive_mae", tx.payload.get("test_naive_mae")),
+                                "metric_evidence": metric_evidence,
                                 "effective_increment": tx.payload.get("effective_increment"),
                             }
 
@@ -337,6 +378,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
                 "val_naive_mae": chain_champ.get("val_naive_mae"),
                 "test_mae": chain_champ.get("test_mae"),
                 "test_naive_mae": chain_champ.get("test_naive_mae"),
+                "metric_evidence": chain_champ.get("metric_evidence", {}),
             }
         else:
             # Fallback to local state only if chain has no data yet
@@ -355,6 +397,7 @@ async def _api_optimization(request: web.Request) -> web.Response:
                     "val_naive_mae": champion.get("val_naive_mae"),
                     "test_mae": champion.get("test_mae"),
                     "test_naive_mae": champion.get("test_naive_mae"),
+                    "metric_evidence": _compact_metric_evidence(champion),
                 }
 
         for dcfg in node.config.domains:
@@ -521,12 +564,15 @@ async def _api_metrics(request: web.Request) -> web.Response:
                     "is_improvement": is_improvement,
                     "peer_id": str(tx.peer_id)[:12],
                     "timestamp": ts_str,
-                    "val_mae": tx.payload.get("val_mae"),
-                    "train_mae": tx.payload.get("train_mae"),
-                    "val_naive_mae": tx.payload.get("val_naive_mae"),
-                    "train_naive_mae": tx.payload.get("train_naive_mae"),
-                    "test_mae": tx.payload.get("test_mae"),
-                    "test_naive_mae": tx.payload.get("test_naive_mae"),
+                    "val_mae": (tx.payload.get("champion_metrics") or {}).get("val_mae", tx.payload.get("val_mae")),
+                    "train_mae": (tx.payload.get("champion_metrics") or {}).get("train_mae", tx.payload.get("train_mae")),
+                    "val_naive_mae": (tx.payload.get("champion_metrics") or {}).get("val_naive_mae", tx.payload.get("val_naive_mae")),
+                    "train_naive_mae": (tx.payload.get("champion_metrics") or {}).get("train_naive_mae", tx.payload.get("train_naive_mae")),
+                    "test_mae": (tx.payload.get("champion_metrics") or {}).get("test_mae", tx.payload.get("test_mae")),
+                    "test_naive_mae": (tx.payload.get("champion_metrics") or {}).get("test_naive_mae", tx.payload.get("test_naive_mae")),
+                    "metric_evidence": _compact_metric_evidence(
+                        tx.payload.get("champion_metrics")
+                    ),
                 })
 
         # Apply limit (keep latest)
@@ -572,7 +618,7 @@ async def _api_chain(request: web.Request) -> web.Response:
                     "domain_id": tx.domain_id,
                     "peer_id": str(tx.peer_id)[:12],
                     "timestamp": tx.timestamp.isoformat() if hasattr(tx.timestamp, "isoformat") else str(tx.timestamp),
-                    "payload": tx.payload,
+                    "payload": _dashboard_transaction_payload(tx.payload),
                 })
             blocks.append({
                 "index": block.header.index,

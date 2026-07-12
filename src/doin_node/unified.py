@@ -2951,6 +2951,7 @@ class UnifiedNode:
             # Store current candidate state for /api/candidate (local, per-machine)
             _cand_params = stage_info.get("candidate_params")
             _model_summary = stage_info.get("model_summary")
+            _metric_evidence = stage_info.get("metric_evidence") or {}
             node._current_candidate = {
                 "domain_id": domain_id,
                 "gen": gen,
@@ -2966,6 +2967,7 @@ class UnifiedNode:
                 "val_naive_mae": stage_info.get("val_naive_mae"),
                 "train_naive_mae": stage_info.get("train_naive_mae"),
                 "champion_fitness": stage_info.get("champion_fitness"),
+                "metric_evidence": _metric_evidence,
                 "candidate_params": _cand_params,
                 "model_summary": _model_summary,
                 "n_generations": stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
@@ -2990,6 +2992,7 @@ class UnifiedNode:
                 val_naive_mae=stage_info.get("val_naive_mae"),
                 train_naive_mae=stage_info.get("train_naive_mae"),
                 champion_fitness=stage_info.get("champion_fitness"),
+                metric_evidence=_metric_evidence,
                 n_generations=stage_info.get("n_generations_total") or opt_cfg.get("n_generations", 15),
                 n_generations_stage=stage_info.get("n_generations_stage"),
                 gen_in_stage=stage_info.get("gen_in_stage"),
@@ -3330,6 +3333,7 @@ class UnifiedNode:
             test_mae=metrics.get("test_mae"),
             val_naive_mae=metrics.get("val_naive_mae"), train_naive_mae=metrics.get("train_naive_mae"),
             test_naive_mae=metrics.get("test_naive_mae"),
+            metric_evidence=self._public_dashboard_metrics(metrics),
             is_improvement=is_improvement)
 
         logger.info(
@@ -3406,6 +3410,23 @@ class UnifiedNode:
             key: value for key, value in (metrics or {}).items()
             if key not in {"_model_b64", "_best_model_b64"} and value is not None
         }
+
+    @staticmethod
+    def _public_dashboard_metrics(metrics: dict | None) -> dict:
+        """Return compact generic metrics suitable for live dashboard events."""
+        keys = (
+            "metric_schema", "optimization_metric", "total_return",
+            "risk_adjusted_total_return", "train_validation_l1_score",
+            "train_tail_selection_score", "validation_selection_score",
+            "train_validation_selection_mean_score",
+            "train_validation_selection_gap",
+            "train_validation_selection_gap_penalty",
+            "max_drawdown_fraction", "max_drawdown_pct", "sharpe_ratio",
+            "trades_total", "final_equity", "model_artifact_sha256",
+            "model_artifact_bytes", "model_artifact_format",
+        )
+        source = metrics or {}
+        return {key: source[key] for key in keys if source.get(key) is not None}
 
     async def _broadcast_stage_complete(
         self, domain_id: str, stage: int, total_stages: int,

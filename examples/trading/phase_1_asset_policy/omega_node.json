@@ -49,6 +49,15 @@
         "optimization_resume": true,
         "optimization_pause_on_resume": false,
         "shared_population": false,
+        "initial_candidate_params": {
+          "learning_rate": 0.0001,
+          "batch_size": 256,
+          "gamma": 0.99,
+          "tau": 0.005,
+          "train_freq": 1,
+          "gradient_steps": 1,
+          "continuous_action_threshold": 0.2277750211333599
+        },
         "node_seed_offset": 0,
         "ga_seed": 1701,
         "ga_population": 20,
