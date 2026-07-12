@@ -2876,7 +2876,12 @@ class UnifiedNode:
             # ── Stage-sync: trigger network-wide stage advance on significant improvement ──
             # If the fitness improvement since stage start exceeds the threshold,
             # broadcast STAGE_COMPLETE so ALL nodes advance to the next stage.
-            stage_advance_threshold = node.config.get("stage_advance_threshold", 1e-5)
+            role = node._domain_roles.get(domain_id)
+            stage_advance_threshold = float(
+                (role.optimization_config if role else {}).get(
+                    "stage_advance_threshold", 1e-5
+                )
+            )
             stage_start_fit = node._domain_stage_start_fitness.get(domain_id)
             current_stage = stage_info.get("stage", 1)
             total_stages = stage_info.get("total_stages", 1)

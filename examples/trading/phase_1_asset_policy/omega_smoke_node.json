@@ -1,0 +1,101 @@
+{
+  "$doc": "Bounded single-island DOIN smoke for the Phase 1 SOLUSDT 4h SAC asset policy on Omega.",
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-trading-phase1-omega-smoke",
+  "identity_file": "./doin-data-trading-phase1-omega-smoke/identity.pem",
+  "bootstrap_peers": [],
+  "target_block_time": 60,
+  "initial_threshold": -1000000000.0,
+  "acceptance_tolerance": 0.000001,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 1.0,
+  "quorum_tolerance": 0.000001,
+  "optimizer_loop_interval": 5,
+  "eval_poll_interval": 5,
+  "eval_max_concurrent": 1,
+  "storage_backend": "sqlite",
+  "network_protocol": "flooding",
+  "discovery_enabled": false,
+  "dashboard_enabled": true,
+  "fee_market_enabled": false,
+  "reset_chain": false,
+  "require_deterministic_seed": true,
+  "experiment_stats_file": "./doin-data-trading-phase1-omega-smoke/experiment_stats.csv",
+  "olap_db_path": "./doin-data-trading-phase1-omega-smoke/olap.db",
+  "domains": [
+    {
+      "domain_id": "trading-asset-policy-solusdt-4h-sac-v1",
+      "optimize": true,
+      "evaluate": false,
+      "optimization_plugin": "trading_asset",
+      "inference_plugin": "trading_asset",
+      "synthetic_data_plugin": "trading_scenario",
+      "has_synthetic_data": false,
+      "synthetic_data_validation": false,
+      "higher_is_better": true,
+      "metric_type": "train_validation_l1_score",
+      "optimization_config": {
+        "agent_multi_root": "/home/harveybc/Documents/GitHub/agent-multi",
+        "base_config": "examples/config/phase_1_asset_policy/phase_1_asset_policy_solusdt_4h_sac_config.json",
+        "load_config": "examples/config/phase_1_asset_policy/optimization/phase_1_asset_policy_solusdt_4h_sac_smoke_optimization_config.json",
+        "runtime_overlay": "configs/runtime/omega.json",
+        "optimizer_plugin": "default_optimizer",
+        "pipeline_plugin": "rl_pipeline_with_validation",
+        "preprocessor_plugin": "default_preprocessor",
+        "metric_type": "train_validation_l1_score",
+        "optimization_metric": "train_validation_l1_score",
+        "metric_schema": "trading.metrics.v1",
+        "higher_is_better": true,
+        "optimization_resume": false,
+        "optimization_pause_on_resume": false,
+        "shared_population": false,
+        "node_seed_offset": 0,
+        "ga_seed": 1701,
+        "ga_population": 2,
+        "population_size": 2,
+        "optimization_patience": 1,
+        "stage_advance_threshold": 1.0,
+        "optimization_stages": [
+          {
+            "name": "contract_smoke",
+            "params": "all",
+            "generations": 0,
+            "patience": 1
+          }
+        ],
+        "hyperparameter_bounds": {
+          "learning_rate": [0.00001, 0.0005],
+          "batch_size": [128, 512],
+          "gamma": [0.95, 0.999],
+          "tau": [0.001, 0.02],
+          "train_freq": [1, 8],
+          "gradient_steps": [1, 8],
+          "continuous_action_threshold": [0.05, 0.35]
+        }
+      },
+      "param_bounds": {
+        "learning_rate": [0.00001, 0.0005],
+        "batch_size": [128, 512],
+        "gamma": [0.95, 0.999],
+        "tau": [0.001, 0.02],
+        "train_freq": [1, 8],
+        "gradient_steps": [1, 8],
+        "continuous_action_threshold": [0.05, 0.35]
+      },
+      "resource_limits": {
+        "max_training_seconds": 1800,
+        "max_memory_mb": 7000,
+        "max_epochs": 1,
+        "max_batch_size": 512
+      },
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 0.000001,
+        "bonus_threshold": 0.01,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      }
+    }
+  ]
+}
