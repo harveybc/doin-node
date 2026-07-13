@@ -29,6 +29,10 @@ def test_chain_dashboard_redacts_model_but_preserves_chain_payload_source() -> N
             "total_return": 0.2,
             "history": [{"epoch": 1}],
         },
+        "metrics": {
+            "train_validation_l1_score": 0.03,
+            "splits": {"validation": {"trace": list(range(100))}},
+        },
     }
 
     displayed = _dashboard_transaction_payload(source)
@@ -37,8 +41,10 @@ def test_chain_dashboard_redacts_model_but_preserves_chain_payload_source() -> N
     assert displayed["model_artifact_embedded"] is True
     assert displayed["model_artifact_base64_chars"] == 4
     assert displayed["champion_metrics"] == {"total_return": 0.2}
+    assert displayed["metrics"] == {"train_validation_l1_score": 0.03}
     assert source["parameters"]["_model_b64"] == "abcd"
     assert "history" in source["champion_metrics"]
+    assert "splits" in source["metrics"]
 
 
 def test_dashboard_versions_cover_only_active_trading_components() -> None:

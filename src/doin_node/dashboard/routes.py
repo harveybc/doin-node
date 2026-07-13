@@ -76,6 +76,8 @@ def _dashboard_transaction_payload(payload: dict[str, Any]) -> dict[str, Any]:
         result["champion_metrics"] = _compact_metric_evidence(
             result["champion_metrics"]
         )
+    if isinstance(result.get("metrics"), dict):
+        result["metrics"] = _compact_metric_evidence(result["metrics"])
     return result
 
 
