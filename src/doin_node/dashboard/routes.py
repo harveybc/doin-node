@@ -234,6 +234,37 @@ async def _fetch_peer_monitor(
     }
 
 
+def _deduplicate_monitor_members(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge route-level snapshots that resolve to the same peer identity."""
+    result: list[dict[str, Any]] = []
+    by_peer_id: dict[str, int] = {}
+    for member in members:
+        peer_id = str(member.get("peer_id") or member.get("endpoint") or "")
+        existing_index = by_peer_id.get(peer_id)
+        if existing_index is None:
+            member["known_endpoints"] = list(dict.fromkeys(
+                member.get("known_endpoints") or []
+            ))
+            by_peer_id[peer_id] = len(result)
+            result.append(member)
+            continue
+
+        existing = result[existing_index]
+        routes = list(existing.get("known_endpoints") or [])
+        routes.extend(member.get("known_endpoints") or [])
+        endpoint = member.get("endpoint")
+        if endpoint and endpoint != "local":
+            routes.append(endpoint)
+        routes = list(dict.fromkeys(routes))
+
+        if existing.get("status") != "online" and member.get("status") == "online":
+            member["known_endpoints"] = routes
+            result[existing_index] = member
+        else:
+            existing["known_endpoints"] = routes
+    return result
+
+
 def _version_mismatches(versions: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         component: {"expected": revision, "actual": versions.get(component)}
@@ -255,7 +286,7 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
         _fetch_peer_monitor(node, peer_id, endpoints)
         for peer_id, endpoints in groups
     ))
-    members = [local, *remote_members]
+    members = _deduplicate_monitor_members([local, *remote_members])
 
     aggregate_alerts: list[dict[str, Any]] = []
     online = 0

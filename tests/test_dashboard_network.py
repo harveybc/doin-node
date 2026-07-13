@@ -11,6 +11,7 @@ import pytest
 from doin_node.dashboard.routes import (
     _PACKAGE_VERSIONS,
     _build_network_overview,
+    _deduplicate_monitor_members,
     _endpoint_http_url,
     _local_monitor_snapshot,
     _peer_endpoint_groups,
@@ -106,6 +107,38 @@ def test_endpoint_url_supports_ipv4_and_ipv6() -> None:
     assert _endpoint_http_url("fd00::2:8470", "/dashboard") == (
         "http://[fd00::2]:8470/dashboard"
     )
+
+
+def test_route_snapshots_are_merged_by_resolved_peer_identity() -> None:
+    local = {
+        "peer_id": "local-peer", "status": "online", "endpoint": "local",
+        "known_endpoints": [], "is_local": True,
+    }
+    duplicate_local = {
+        "peer_id": "local-peer", "status": "online",
+        "endpoint": "192.168.1.10:8470",
+        "known_endpoints": ["192.168.1.10:8470"],
+    }
+    offline = {
+        "peer_id": "remote-peer", "status": "offline",
+        "endpoint": "192.168.1.20:8470",
+        "known_endpoints": ["192.168.1.20:8470"],
+    }
+    online = {
+        "peer_id": "remote-peer", "status": "online",
+        "endpoint": "100.64.0.20:8470",
+        "known_endpoints": ["100.64.0.20:8470"],
+    }
+
+    members = _deduplicate_monitor_members([local, duplicate_local, offline, online])
+
+    assert [member["peer_id"] for member in members] == ["local-peer", "remote-peer"]
+    assert members[0]["endpoint"] == "local"
+    assert members[0]["known_endpoints"] == ["192.168.1.10:8470"]
+    assert members[1]["status"] == "online"
+    assert members[1]["known_endpoints"] == [
+        "192.168.1.20:8470", "100.64.0.20:8470",
+    ]
 
 
 def test_dashboard_exposes_network_as_initial_monitoring_view() -> None:
