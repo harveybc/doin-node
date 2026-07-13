@@ -17,6 +17,7 @@ from doin_node.dashboard.routes import (
     _endpoint_http_url,
     _local_monitor_snapshot,
     _peer_endpoint_groups,
+    _stage_eta,
 )
 
 
@@ -54,8 +55,10 @@ def _node(*, peers=None, transport=None):
         _current_candidate={
             "domain_id": "trading-domain",
             "stage": 2,
+            "gen_in_stage": 1,
             "candidate_num": 3,
             "total_candidates": 20,
+            "n_generations_stage": 5,
             "timestamp": "2026-07-13T12:00:00Z",
             "candidate_params": {"large": "not exposed"},
         },
@@ -65,6 +68,11 @@ def _node(*, peers=None, transport=None):
                 get_runtime_statistics=lambda: {
                     "candidate_evaluations_total": 202,
                     "candidate_history_source": "/private/history.csv",
+                    "candidates_per_hour": 12.0,
+                    "candidate_seconds_median": 300.0,
+                    "candidate_seconds_p25": 240.0,
+                    "candidate_seconds_p75": 360.0,
+                    "rate_sample_size": 10,
                 }
             )
         },
@@ -88,10 +96,12 @@ def test_local_monitor_is_compact_and_human_labeled() -> None:
     assert snapshot["node_label"] == "omega"
     assert snapshot["chain_height"] == 8
     assert snapshot["candidate"]["candidate_num"] == 3
-    assert snapshot["optimization_history"] == {
-        "candidate_evaluations_total": 202,
-        "domains": {"trading-domain": {"candidate_evaluations_total": 202}},
-    }
+    history = snapshot["optimization_history"]
+    assert history["candidate_evaluations_total"] == 202
+    assert history["candidates_per_hour"] == 12.0
+    assert history["stage_candidates_remaining"] == 77
+    assert history["stage_eta_seconds"] == 23100.0
+    assert history["domains"]["trading-domain"]["rate_sample_size"] == 10
     assert "candidate_params" not in snapshot["candidate"]
     assert snapshot["best_performance"] == {"trading-domain": 0.04}
     assert snapshot["alerts_count"] == 1
@@ -100,6 +110,31 @@ def test_local_monitor_is_compact_and_human_labeled() -> None:
     ]
     assert snapshot["versions"] == _PACKAGE_VERSIONS
     assert "predictor" not in snapshot["versions"]
+
+
+def test_stage_eta_requires_enough_runtime_evidence() -> None:
+    assert _stage_eta({}, {"total_candidates": 20}) == {}
+    estimate = _stage_eta(
+        {
+            "candidates_per_hour": 10.0,
+            "candidate_seconds_median": 360.0,
+            "candidate_seconds_p25": 300.0,
+            "candidate_seconds_p75": 480.0,
+        },
+        {
+            "total_candidates": 20,
+            "n_generations_stage": 5,
+            "gen_in_stage": 3,
+            "candidate_num": 9,
+        },
+    )
+    assert estimate == {
+        "stage_candidates_remaining": 31,
+        "stage_eta_seconds": 11160.0,
+        "stage_eta_low_seconds": 9300.0,
+        "stage_eta_high_seconds": 14880.0,
+        "stage_eta_basis": "planned_stage_before_early_stopping",
+    }
 
 
 def test_peer_groups_deduplicate_alternate_routes() -> None:
@@ -202,6 +237,13 @@ def test_dashboard_exposes_network_as_initial_monitoring_view() -> None:
     assert "resolvePeerLabel(metric.peer_id)" in html
     assert "resolvePeerLabel(metric.generator_id)" in html
     assert "api('/api/network')" in html
+    assert 'id="bestPerfBasis"' in html
+    assert 'id="progressRuntime"' in html
+    assert 'id="networkThroughput"' in html
+    assert '>Cand/h<' in html
+    assert '>Stage ETA<' in html
+    assert "train_validation_l1_score" in html
+    assert "not weekly or annual return" in html
 
 
 def test_blockchain_history_attributes_candidates_and_champions() -> None:
@@ -322,6 +364,7 @@ async def test_network_overview_falls_back_and_preserves_offline_member() -> Non
         "offline_nodes": 1,
         "active_candidates": 2,
         "local_candidate_evaluations": 226,
+        "candidates_per_hour": 12.0,
         "alerts_total": 2,
         "alerts_unseen": 2,
         "version_mismatch_nodes": 1,

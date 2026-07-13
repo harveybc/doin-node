@@ -29,7 +29,9 @@
     .tabs-row .tab-content { flex: 1; overflow: hidden; min-height: 0; }
     .tabs-row .tab-pane { height: 100%; overflow-y: auto; }
     .small-box .inner h3 { font-size: 1.8rem; }
-    .small-box { margin-bottom: 8px; }
+    .small-box { margin-bottom: 8px; min-height: 108px; }
+    .small-box .inner p { margin-bottom: 0; }
+    .summary-detail { display: block; max-width: 85%; min-height: 13px; font-size: 10px; line-height: 1.2; color: rgba(255,255,255,0.82); }
     .badge-connected { background: #28a745; color: #fff; }
     .badge-known { background: #6c757d; color: #fff; }
     .badge-lan { background: #17a2b8; color: #fff; }
@@ -41,7 +43,7 @@
     .network-summary-item { min-width: 120px; padding: 4px 14px 7px 0; margin-right: 14px; border-right: 1px solid #495057; }
     .network-summary-item:last-child { border-right: 0; }
     .network-summary-value { display: block; font-size: 18px; font-weight: 600; line-height: 1.15; }
-    .network-table { table-layout: fixed; min-width: 1120px; }
+    .network-table { table-layout: fixed; min-width: 1320px; }
     .network-table td { vertical-align: middle; overflow-wrap: anywhere; }
     .network-node-name { font-weight: 600; color: #f8f9fa; }
     .network-subtext { display: block; color: #adb5bd; font-size: 10px; line-height: 1.25; }
@@ -115,7 +117,7 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-danger">
-              <div class="inner"><h3 id="bestPerf" style="font-size:1.4rem">--</h3><p>Best Performance</p></div>
+              <div class="inner"><h3 id="bestPerf" style="font-size:1.4rem">--</h3><p id="bestPerfLabel">Best Performance</p><span class="summary-detail" id="bestPerfBasis">Metric basis unavailable</span></div>
               <div class="icon"><i class="fas fa-trophy"></i></div>
             </div>
           </div>
@@ -127,7 +129,7 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-secondary">
-              <div class="inner"><h3 id="progressCard" style="font-size:1.2rem">--</h3><p>Progress</p></div>
+              <div class="inner"><h3 id="progressCard" style="font-size:1.2rem">--</h3><p>Progress</p><span class="summary-detail" id="progressRuntime">Rate and ETA pending</span></div>
               <div class="icon"><i class="fas fa-chart-pie"></i></div>
             </div>
           </div>
@@ -275,6 +277,7 @@
                       <div class="network-summary-item"><span class="metric-label">Online nodes</span><span class="network-summary-value text-success" id="networkOnline">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Active candidates</span><span class="network-summary-value text-info" id="networkCandidates">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Local evaluations</span><span class="network-summary-value text-info" id="networkLocalEvaluations">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Network throughput</span><span class="network-summary-value text-info" id="networkThroughput">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Committed evaluations</span><span class="network-summary-value text-info" id="networkCommittedEvaluations">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Champion improvements</span><span class="network-summary-value text-success" id="networkChampionImprovements">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Network alerts</span><span class="network-summary-value" id="networkAlertCount">--</span></div>
@@ -283,8 +286,8 @@
                     </div>
                     <div class="table-responsive">
                       <table class="table table-sm table-striped table-hover network-table" style="font-size:11px">
-                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:85px" title="All candidate evaluations in this optimizer's durable local history">Local total</th><th style="width:80px" title="Evaluations completed in the currently resumed optimization segment">Active run</th><th style="width:85px" title="Candidate evaluations durably committed to blockchain">On-chain</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
-                        <tbody id="networkNodesBody"><tr><td colspan="12" class="text-center text-muted">Loading network...</td></tr></tbody>
+                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:85px" title="All candidate evaluations in this optimizer's durable local history">Local total</th><th style="width:80px" title="Evaluations completed in the currently resumed optimization segment">Active run</th><th style="width:75px" title="Median candidate completion rate from recent local history">Cand/h</th><th style="width:95px" title="Planned active-stage ETA; L2 early stopping can finish sooner">Stage ETA</th><th style="width:85px" title="Candidate evaluations durably committed to blockchain">On-chain</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
+                        <tbody id="networkNodesBody"><tr><td colspan="14" class="text-center text-muted">Loading network...</td></tr></tbody>
                       </table>
                     </div>
                     <h6 class="mt-2 mb-1"><i class="fas fa-exclamation-triangle"></i> Recent Network Alerts</h6>
@@ -440,6 +443,7 @@ let isBinaryDomain = false;  // Auto-detected from domain config
 let isTradingDomain = false; // Generic risk-adjusted trading metric contract
 let higherIsBetter = false;   // Auto-detected from /api/optimization
 let networkPeerLabels = {};
+let localOptimizationHistory = {};
 const nodeColorPalette = ['#28a745', '#17a2b8', '#ffc107', '#dc3545', '#6f42c1', '#20c997'];
 
 // ── Charts ──
@@ -543,6 +547,36 @@ function fmtUptime(s) {
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
   return `${h}h ${m}m`;
 }
+function fmtDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return '--';
+  if (value < 60) return `${Math.max(1, Math.round(value))}s`;
+  const minutes = Math.round(value / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+function performanceDescriptor(metricType) {
+  const metric = String(metricType || '').toLowerCase();
+  const descriptors = {
+    train_validation_l1_score: {
+      label: 'Best L2 fitness',
+      basis: 'Composite; not weekly or annual return',
+      title: 'Return-fraction composite: mean train-tail and validation RAP minus their generalization-gap penalty. It is not an average weekly or annual return.',
+    },
+    mean_weekly_return: {label: 'Best mean weekly return', basis: 'Average return per week'},
+    annual_return: {label: 'Best annual return', basis: 'Compounded or full-year return'},
+    mean_weekly_rap: {label: 'Best mean weekly RAP', basis: 'Average risk-adjusted return per week'},
+    annual_rap: {label: 'Best annual RAP', basis: 'Annual risk-adjusted return'},
+    risk_adjusted_total_return: {label: 'Best period RAP', basis: 'Risk-adjusted evaluation-period return'},
+    total_return: {label: 'Best period return', basis: 'Full evaluation-period return'},
+  };
+  return descriptors[metric] || {
+    label: metric ? `Best ${metric.replaceAll('_', ' ')}` : 'Best performance',
+    basis: 'Metric period and unit defined by domain',
+  };
+}
 async function api(url) {
   try { return await (await fetch(url)).json(); } catch(e) { return null; }
 }
@@ -576,7 +610,8 @@ function colorForNode(label) {
 function renderNetwork(network, metrics) {
   const body = document.getElementById('networkNodesBody');
   if (!network || !network.summary) {
-    body.innerHTML = '<tr><td colspan="12" class="text-center text-danger">Network overview unavailable</td></tr>';
+    body.innerHTML = '<tr><td colspan="14" class="text-center text-danger">Network overview unavailable</td></tr>';
+    localOptimizationHistory = {};
     return;
   }
 
@@ -594,9 +629,12 @@ function renderNetwork(network, metrics) {
   }
 
   const summary = network.summary;
+  const localMember = (network.members || []).find(member => member.is_local);
+  localOptimizationHistory = (localMember && localMember.optimization_history) || {};
   document.getElementById('networkOnline').textContent = `${summary.online_nodes}/${summary.total_nodes}`;
   document.getElementById('networkCandidates').textContent = summary.active_candidates;
   document.getElementById('networkLocalEvaluations').textContent = summary.local_candidate_evaluations ?? '--';
+  document.getElementById('networkThroughput').textContent = summary.candidates_per_hour != null ? `${Number(summary.candidates_per_hour).toFixed(1)} cand/h` : '--';
   document.getElementById('networkCommittedEvaluations').textContent = evaluationHistory ? evaluationHistory.total_committed : '--';
   document.getElementById('networkChampionImprovements').textContent = metrics ? metrics.champion_improvements : '--';
   document.getElementById('networkAlertCount').textContent = summary.alerts_total;
@@ -630,6 +668,12 @@ function renderNetwork(network, metrics) {
     const best = bestValues.length ? fmt(bestValues[0], 6) : (candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--');
     const runEvaluations = candidate.total_evals != null ? candidate.total_evals : '--';
     const localEvaluations = (member.optimization_history || {}).candidate_evaluations_total ?? '--';
+    const runtime = member.optimization_history || {};
+    const rate = runtime.candidates_per_hour != null ? Number(runtime.candidates_per_hour).toFixed(1) : '--';
+    const eta = runtime.stage_eta_seconds != null ? fmtDuration(runtime.stage_eta_seconds) : '--';
+    const etaTitle = runtime.stage_eta_seconds != null ?
+      `Planned stage ETA ${eta}; recent-rate range ${fmtDuration(runtime.stage_eta_low_seconds)} to ${fmtDuration(runtime.stage_eta_high_seconds)}. Early stopping can finish sooner.` :
+      'ETA requires an active stage and at least three recent candidate completions.';
     const committedEvaluations = committedByPeer[String(member.peer_id || '').substring(0, 12)] || 0;
     const versionText = versionOrder.filter(key => member.versions && member.versions[key]).map(key => `${key}:${member.versions[key]}`).join(' | ');
     const versionHtml = online ?
@@ -644,13 +688,15 @@ function renderNetwork(network, metrics) {
       <td>${candidateHtml}</td>
       <td><strong>${esc(localEvaluations)}</strong></td>
       <td>${esc(runEvaluations)}</td>
+      <td>${esc(rate)}</td>
+      <td title="${esc(etaTitle)}">${esc(eta)}</td>
       <td>${esc(committedEvaluations)}</td>
       <td>${best}</td>
       <td><span class="badge ${member.alerts_count ? 'badge-danger' : 'badge-success'}">${esc(member.alerts_count || 0)}</span></td>
       <td>${versionHtml}</td>
       <td>${open}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="12" class="text-center text-muted">No nodes discovered</td></tr>';
+  }).join('') || '<tr><td colspan="14" class="text-center text-muted">No nodes discovered</td></tr>';
 
   const alertBody = document.getElementById('networkAlertsBody');
   const networkAlerts = network.alerts || [];
@@ -842,7 +888,13 @@ async function refreshAll() {
         <td>${params}</td>
       </tr>${champRow}`;
     }).join('');
+    const metricType = opt.domains.length ? opt.domains[0].metric_type : '';
+    const descriptor = performanceDescriptor(metricType);
+    const performanceBox = document.getElementById('bestPerf').closest('.small-box');
     document.getElementById('bestPerf').textContent = best !== null ? fmt(best) : '--';
+    document.getElementById('bestPerfLabel').textContent = descriptor.label;
+    document.getElementById('bestPerfBasis').textContent = descriptor.basis;
+    performanceBox.title = descriptor.title || descriptor.basis;
   }
 
   // Champion & Training panel — populated from events + blockchain
@@ -1041,6 +1093,7 @@ async function refreshAll() {
         `G${nGensStage}/${nGensStage} P${noImprove}/${optPatience} C${totCand}/${totCand}` +
         `<br><small>Complete</small>`;
       document.getElementById('progressCard').innerHTML = `100%`;
+      document.getElementById('progressRuntime').textContent = 'Complete';
     } else {
       // Remaining: candidates in current gen + remaining gens
       document.getElementById('remainingCard').innerHTML =
@@ -1053,6 +1106,16 @@ async function refreshAll() {
       const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
       const overallPct = ((genProgress + candProgressInGen / Math.max(nGensStage, 1)) * 100).toFixed(1);
       document.getElementById('progressCard').innerHTML = `${overallPct}%`;
+      const rate = localOptimizationHistory.candidates_per_hour;
+      const eta = localOptimizationHistory.stage_eta_seconds;
+      const runtimeText = rate != null ?
+        `${Number(rate).toFixed(1)} cand/h | stage ETA ${eta != null ? fmtDuration(eta) : '--'}` :
+        'Rate and ETA pending';
+      const runtimeElement = document.getElementById('progressRuntime');
+      runtimeElement.textContent = runtimeText;
+      runtimeElement.title = eta != null ?
+        `Recent-rate range: ${fmtDuration(localOptimizationHistory.stage_eta_low_seconds)} to ${fmtDuration(localOptimizationHistory.stage_eta_high_seconds)}. Early stopping can finish sooner.` :
+        'At least three recent candidate completions are required.';
     }
   }
 

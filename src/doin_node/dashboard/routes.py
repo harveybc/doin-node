@@ -138,12 +138,45 @@ def _compact_candidate(candidate: dict[str, Any] | None) -> dict[str, Any]:
     keys = (
         "domain_id", "stage", "total_stages", "stage_name", "gen",
         "gen_in_stage", "candidate_num", "total_candidates", "total_evals",
-        "fitness", "champion_fitness", "timestamp",
+        "fitness", "champion_fitness", "n_generations_stage",
+        "no_improve_counter", "optimization_patience", "timestamp",
     )
     return {key: source[key] for key in keys if source.get(key) is not None}
 
 
-def _local_optimization_history(node: Any) -> dict[str, Any]:
+def _stage_eta(
+    statistics: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Estimate planned time left in the active stage before early stopping."""
+    try:
+        population = max(1, int(candidate["total_candidates"]))
+        generations = max(1, int(candidate["n_generations_stage"]))
+        generation = max(0, int(candidate.get("gen_in_stage", 0)))
+        candidate_number = min(population, max(0, int(candidate.get("candidate_num", 0))))
+        candidates_per_hour = float(statistics["candidates_per_hour"])
+        median_seconds = float(statistics["candidate_seconds_median"])
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return {}
+    if candidates_per_hour <= 0 or median_seconds <= 0:
+        return {}
+
+    remaining = max(0, (generations - generation) * population - candidate_number)
+    p25_seconds = float(statistics.get("candidate_seconds_p25", median_seconds))
+    p75_seconds = float(statistics.get("candidate_seconds_p75", median_seconds))
+    return {
+        "stage_candidates_remaining": remaining,
+        "stage_eta_seconds": remaining * median_seconds,
+        "stage_eta_low_seconds": remaining * min(p25_seconds, p75_seconds),
+        "stage_eta_high_seconds": remaining * max(p25_seconds, p75_seconds),
+        "stage_eta_basis": "planned_stage_before_early_stopping",
+    }
+
+
+def _local_optimization_history(
+    node: Any,
+    candidate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Collect durable candidate totals exposed by optional optimizer adapters."""
     domains: dict[str, dict[str, Any]] = {}
     sources: dict[str, int] = {}
@@ -155,7 +188,14 @@ def _local_optimization_history(node: Any) -> dict[str, Any]:
             statistics = getter() or {}
             count = max(0, int(statistics.get("candidate_evaluations_total", 0)))
             source = str(statistics.get("candidate_history_source") or domain_id)
-            domains[domain_id] = {"candidate_evaluations_total": count}
+            domain_statistics = {
+                key: value for key, value in statistics.items()
+                if key not in {"candidate_history_source"}
+            }
+            active_candidate = candidate or {}
+            if active_candidate.get("domain_id") == domain_id:
+                domain_statistics.update(_stage_eta(statistics, active_candidate))
+            domains[domain_id] = domain_statistics
             # Multiple domains may deliberately share one append-only history.
             sources[source] = max(count, sources.get(source, 0))
         except Exception:
@@ -164,10 +204,17 @@ def _local_optimization_history(node: Any) -> dict[str, Any]:
                 domain_id,
                 exc_info=True,
             )
-    return {
+    result = {
         "candidate_evaluations_total": sum(sources.values()),
         "domains": domains,
     }
+    active_domain = str((candidate or {}).get("domain_id") or "")
+    if active_domain in domains:
+        result.update({
+            key: value for key, value in domains[active_domain].items()
+            if key != "candidate_evaluations_total"
+        })
+    return result
 
 
 def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
@@ -196,7 +243,7 @@ def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
         "domains": list(node._domain_roles),
         "versions": dict(_PACKAGE_VERSIONS),
         "candidate": candidate,
-        "optimization_history": _local_optimization_history(node),
+        "optimization_history": _local_optimization_history(node, candidate),
         "best_performance": best_performance,
         "alerts": alerts,
         "alerts_count": len(node._alerts),
@@ -340,6 +387,7 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
     version_mismatch_nodes = 0
     active_candidates = 0
     local_candidate_evaluations = 0
+    candidates_per_hour = 0.0
     for member in members:
         member["version_mismatches"] = (
             _version_mismatches(member.get("versions") or {})
@@ -355,6 +403,11 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
             local_candidate_evaluations += int(
                 (member.get("optimization_history") or {}).get(
                     "candidate_evaluations_total", 0
+                )
+            )
+            candidates_per_hour += float(
+                (member.get("optimization_history") or {}).get(
+                    "candidates_per_hour", 0.0
                 )
             )
         for alert in member.get("alerts") or []:
@@ -377,6 +430,7 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
             "offline_nodes": len(members) - online,
             "active_candidates": active_candidates,
             "local_candidate_evaluations": local_candidate_evaluations,
+            "candidates_per_hour": round(candidates_per_hour, 3),
             "alerts_total": sum(int(member.get("alerts_count", 0)) for member in members),
             "alerts_unseen": sum(int(member.get("alerts_unseen", 0)) for member in members),
             "version_mismatch_nodes": version_mismatch_nodes,
