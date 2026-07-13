@@ -5,7 +5,11 @@
   "port": 8470,
   "data_dir": "./doin-data-trading-phase1-omega",
   "identity_file": "./doin-data-trading-phase1-omega/identity.pem",
-  "bootstrap_peers": [],
+  "bootstrap_peers": [
+    "100.110.215.85:8470",
+    "100.107.204.49:8470",
+    "100.107.204.49:8471"
+  ],
   "target_block_time": 600,
   "initial_threshold": -1000000000.0,
   "acceptance_tolerance": 0.000001,
