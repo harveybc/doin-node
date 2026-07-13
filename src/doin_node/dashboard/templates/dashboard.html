@@ -255,6 +255,7 @@
               <div class="card-header p-0 border-bottom-0">
                 <ul class="nav nav-tabs" role="tablist">
                   <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tabNetwork" id="networkTabLink"><i class="fas fa-network-wired"></i> Network <span id="networkBadge" class="badge badge-danger" style="display:none; font-size:10px; vertical-align:top;">0</span></a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabChampions"><i class="fas fa-trophy"></i> Champions <span id="championCountBadge" class="badge badge-success" style="font-size:10px; vertical-align:top;">0</span></a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPeers"><i class="fas fa-server"></i> Peers</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvals"><i class="fas fa-flask"></i> Candidate Evaluations</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvents"><i class="fas fa-list"></i> Network Events</a></li>
@@ -273,14 +274,16 @@
                     <div class="network-summary">
                       <div class="network-summary-item"><span class="metric-label">Online nodes</span><span class="network-summary-value text-success" id="networkOnline">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Active candidates</span><span class="network-summary-value text-info" id="networkCandidates">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Committed evaluations</span><span class="network-summary-value text-info" id="networkCommittedEvaluations">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Champion improvements</span><span class="network-summary-value text-success" id="networkChampionImprovements">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Network alerts</span><span class="network-summary-value" id="networkAlertCount">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Version mismatches</span><span class="network-summary-value" id="networkVersionMismatches">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Chain range</span><span class="network-summary-value" id="networkChainRange">--</span></div>
                     </div>
                     <div class="table-responsive">
                       <table class="table table-sm table-striped table-hover network-table" style="font-size:11px">
-                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
-                        <tbody id="networkNodesBody"><tr><td colspan="9" class="text-center text-muted">Loading network...</td></tr></tbody>
+                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:80px" title="Evaluations completed by the currently running process">Run evals</th><th style="width:85px" title="Candidate evaluations durably committed to blockchain">On-chain</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
+                        <tbody id="networkNodesBody"><tr><td colspan="11" class="text-center text-muted">Loading network...</td></tr></tbody>
                       </table>
                     </div>
                     <h6 class="mt-2 mb-1"><i class="fas fa-exclamation-triangle"></i> Recent Network Alerts</h6>
@@ -288,6 +291,16 @@
                       <table class="table table-sm table-striped" style="font-size:11px">
                         <thead><tr><th style="width:130px">Node</th><th style="width:75px">Severity</th><th style="width:145px">Category</th><th>Message</th><th style="width:100px">Time</th></tr></thead>
                         <tbody id="networkAlertsBody"><tr><td colspan="5" class="text-center text-muted"><i class="fas fa-check-circle text-success"></i> No network alerts</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <!-- Champion History Tab -->
+                  <div class="tab-pane fade" id="tabChampions">
+                    <div class="table-responsive">
+                      <table class="table table-sm table-striped table-hover" style="font-size:11px">
+                        <thead><tr><th style="width:45px">#</th><th style="width:60px">Block</th><th style="width:130px">Found by</th><th style="width:130px">Block by</th><th style="width:95px">Fitness</th><th style="width:95px">Improvement</th><th style="width:95px">Validation RAP</th><th style="width:95px">Train-tail RAP</th><th style="width:85px">Return</th><th style="width:85px">Drawdown</th><th style="width:100px">Time</th></tr></thead>
+                        <tbody id="championHistoryBody"><tr><td colspan="11" class="text-center text-muted">No champion improvements recorded</td></tr></tbody>
                       </table>
                     </div>
                   </div>
@@ -425,6 +438,8 @@ let countdownTimer = null;
 let isBinaryDomain = false;  // Auto-detected from domain config
 let isTradingDomain = false; // Generic risk-adjusted trading metric contract
 let higherIsBetter = false;   // Auto-detected from /api/optimization
+let networkPeerLabels = {};
+const nodeColorPalette = ['#28a745', '#17a2b8', '#ffc107', '#dc3545', '#6f42c1', '#20c997'];
 
 // ── Charts ──
 const perfCtx = document.getElementById('perfChart').getContext('2d');
@@ -444,10 +459,17 @@ const perfChart = new Chart(perfCtx, {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 200 },
     scales: {
-      x: { title: { display: true, text: 'Time' }, ticks: { maxTicksLimit: 12, font: { size: 10 }}},
+      x: { title: { display: true, text: 'Block / finder' }, ticks: { maxTicksLimit: 12, font: { size: 10 }}},
       y: { title: { display: true, text: 'Performance (lower=better)' }}
     },
-    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}}}
+    plugins: {
+      legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }}},
+      tooltip: { callbacks: { afterLabel: context => {
+        const meta = (perfChart.$championMeta || [])[context.dataIndex];
+        if (!meta) return '';
+        return [`Found by: ${meta.finder}`, `Block by: ${meta.generator}`, `Block: ${meta.block}`];
+      }}}
+    }
   }
 });
 
@@ -539,16 +561,42 @@ function fmtAge(ts) {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ago`;
 }
 
-function renderNetwork(network) {
+function resolvePeerLabel(peerId) {
+  const identity = String(peerId || '');
+  return networkPeerLabels[identity] || networkPeerLabels[identity.substring(0, 12)] || identity.substring(0, 12) || 'unknown';
+}
+
+function colorForNode(label) {
+  let hash = 0;
+  for (const char of String(label || '')) hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  return nodeColorPalette[hash % nodeColorPalette.length];
+}
+
+function renderNetwork(network, metrics) {
   const body = document.getElementById('networkNodesBody');
   if (!network || !network.summary) {
-    body.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Network overview unavailable</td></tr>';
+    body.innerHTML = '<tr><td colspan="11" class="text-center text-danger">Network overview unavailable</td></tr>';
     return;
+  }
+
+  networkPeerLabels = {};
+  for (const member of network.members || []) {
+    const peerId = String(member.peer_id || '');
+    const label = member.node_label || peerId.substring(0, 12) || 'unknown';
+    networkPeerLabels[peerId] = label;
+    networkPeerLabels[peerId.substring(0, 12)] = label;
+  }
+  const committedByPeer = {};
+  const evaluationHistory = metrics && metrics.candidate_evaluations;
+  for (const entry of (evaluationHistory && evaluationHistory.by_peer) || []) {
+    committedByPeer[String(entry.peer_id || '').substring(0, 12)] = entry.count || 0;
   }
 
   const summary = network.summary;
   document.getElementById('networkOnline').textContent = `${summary.online_nodes}/${summary.total_nodes}`;
   document.getElementById('networkCandidates').textContent = summary.active_candidates;
+  document.getElementById('networkCommittedEvaluations').textContent = evaluationHistory ? evaluationHistory.total_committed : '--';
+  document.getElementById('networkChampionImprovements').textContent = metrics ? metrics.champion_improvements : '--';
   document.getElementById('networkAlertCount').textContent = summary.alerts_total;
   document.getElementById('networkAlertCount').className = `network-summary-value ${summary.alerts_total ? 'text-danger' : 'text-success'}`;
   document.getElementById('networkVersionMismatches').textContent = summary.version_mismatch_nodes;
@@ -578,6 +626,8 @@ function renderNetwork(network) {
       '<span class="text-muted">Idle / waiting</span>';
     const bestValues = Object.values(member.best_performance || {});
     const best = bestValues.length ? fmt(bestValues[0], 6) : (candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--');
+    const runEvaluations = candidate.total_evals != null ? candidate.total_evals : '--';
+    const committedEvaluations = committedByPeer[String(member.peer_id || '').substring(0, 12)] || 0;
     const versionText = versionOrder.filter(key => member.versions && member.versions[key]).map(key => `${key}:${member.versions[key]}`).join(' | ');
     const versionHtml = online ?
       `<span class="${compatible ? 'text-success' : 'text-warning'}" title="${esc(versionText)}"><i class="fas ${compatible ? 'fa-check-circle' : 'fa-code-branch'}"></i> ${compatible ? 'Exact match' : esc(Object.keys(mismatches).join(', '))}</span>` :
@@ -589,12 +639,14 @@ function renderNetwork(network) {
       <td><span class="badge ${healthClass}">${healthLabel}</span>${member.error ? `<span class="network-subtext" title="${esc(member.error)}">route failed</span>` : ''}</td>
       <td>${member.chain_height != null ? esc(member.chain_height) : '--'}</td>
       <td>${candidateHtml}</td>
+      <td>${esc(runEvaluations)}</td>
+      <td>${esc(committedEvaluations)}</td>
       <td>${best}</td>
       <td><span class="badge ${member.alerts_count ? 'badge-danger' : 'badge-success'}">${esc(member.alerts_count || 0)}</span></td>
       <td>${versionHtml}</td>
       <td>${open}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" class="text-center text-muted">No nodes discovered</td></tr>';
+  }).join('') || '<tr><td colspan="11" class="text-center text-muted">No nodes discovered</td></tr>';
 
   const alertBody = document.getElementById('networkAlertsBody');
   const networkAlerts = network.alerts || [];
@@ -612,6 +664,34 @@ function renderNetwork(network) {
   }
 }
 
+function renderChampionHistory(metrics) {
+  const body = document.getElementById('championHistoryBody');
+  const improvements = ((metrics && metrics.metrics) || []).filter(metric => metric.is_improvement);
+  document.getElementById('championCountBadge').textContent = improvements.length;
+  if (!improvements.length) {
+    body.innerHTML = '<tr><td colspan="11" class="text-center text-muted">No champion improvements recorded</td></tr>';
+    return;
+  }
+  body.innerHTML = improvements.slice().reverse().map(metric => {
+    const evidence = metric.metric_evidence || {};
+    const previous = metric.previous_best_performance;
+    const delta = previous == null ? null : (higherIsBetter ? metric.performance - previous : previous - metric.performance);
+    return `<tr>
+      <td>${esc(metric.improvement_num || '--')}</td>
+      <td>${esc(metric.block_index)}</td>
+      <td><strong>${esc(resolvePeerLabel(metric.peer_id))}</strong><span class="network-subtext"><code>${esc(metric.peer_id)}</code></span></td>
+      <td>${esc(resolvePeerLabel(metric.generator_id))}<span class="network-subtext"><code>${esc(metric.generator_id)}</code></span></td>
+      <td>${fmt(metric.performance, 6)}</td>
+      <td class="text-success">${delta == null ? '--' : '+' + fmt(delta, 6)}</td>
+      <td>${fmt(evidence.validation_selection_score, 6)}</td>
+      <td>${fmt(evidence.train_tail_selection_score, 6)}</td>
+      <td>${fmt(evidence.total_return, 6)}</td>
+      <td>${fmt(evidence.max_drawdown_fraction, 6)}</td>
+      <td>${esc(fmtTime(metric.timestamp))}</td>
+    </tr>`;
+  }).join('');
+}
+
 // ── Refresh ──
 async function refreshAll() {
   document.getElementById('refreshSpin').style.display = 'inline-block';
@@ -623,7 +703,7 @@ async function refreshAll() {
     api('/api/alerts?limit=200'),
   ]);
 
-  renderNetwork(network);
+  renderNetwork(network, metrics);
 
   // Node
   if (node) {
@@ -973,19 +1053,27 @@ async function refreshAll() {
   }
 
   // Metrics → Charts (from blockchain via /api/metrics — identical on all synced nodes)
+  renderChampionHistory(metrics);
   if (metrics && metrics.metrics && metrics.metrics.length > 0) {
     const chainMetrics = metrics.metrics;
+    const championMetrics = chainMetrics.filter(metric => metric.is_improvement);
 
-    // NDA Performance History — plot best_performance over chain champions
+    // Performance history — one point per actual on-chain improvement.
     const ndaLabels = [];
     const ndaData = [];
-    for (const m of chainMetrics) {
+    const championMeta = [];
+    for (const m of championMetrics) {
       if (m.best_performance == null) continue;
-      ndaLabels.push(m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '#' + m.champion_num);
+      const finder = resolvePeerLabel(m.peer_id);
+      ndaLabels.push(`B${m.block_index} ${finder}`);
       ndaData.push(parseFloat(m.best_performance));
+      championMeta.push({finder, generator: resolvePeerLabel(m.generator_id), block: m.block_index});
     }
     perfChart.data.labels = ndaLabels;
     perfChart.data.datasets[0].data = ndaData;
+    perfChart.data.datasets[0].pointBackgroundColor = championMeta.map(meta => colorForNode(meta.finder));
+    perfChart.data.datasets[0].pointBorderColor = championMeta.map(meta => colorForNode(meta.finder));
+    perfChart.$championMeta = championMeta;
     perfChart.update();
 
     // MAE History — val_mae, train_mae, val_naive_mae, train_naive_mae per champion
@@ -997,13 +1085,13 @@ async function refreshAll() {
     let lastValNaive = null;
     let lastTrainNaive = null;
 
-    for (const m of chainMetrics) {
+    for (const m of championMetrics) {
       const evidence = m.metric_evidence || {};
       const vm = isTradingDomain ? evidence.validation_selection_score : m.val_mae;
       const tm = isTradingDomain ? evidence.train_tail_selection_score : m.train_mae;
       if (vm == null && tm == null) continue;
 
-      maeLabels.push(m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '#' + m.champion_num);
+      maeLabels.push(`B${m.block_index} ${resolvePeerLabel(m.peer_id)}`);
       valMaeData.push(vm != null ? parseFloat(vm) : null);
       trainMaeData.push(tm != null ? parseFloat(tm) : null);
 

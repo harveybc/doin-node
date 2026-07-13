@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ import pytest
 
 from doin_node.dashboard.routes import (
     _PACKAGE_VERSIONS,
+    _blockchain_metrics_payload,
     _build_network_overview,
     _deduplicate_monitor_members,
     _endpoint_http_url,
@@ -39,7 +41,11 @@ class _FakeTransport:
 
 def _node(*, peers=None, transport=None):
     return SimpleNamespace(
-        config=SimpleNamespace(node_label="omega", port=8470),
+        config=SimpleNamespace(
+            node_label="omega",
+            port=8470,
+            domains=[SimpleNamespace(domain_id="trading-domain", higher_is_better=True)],
+        ),
         identity=SimpleNamespace(peer_id="local-peer"),
         peer_id="local-peer",
         _start_time=time.time() - 120,
@@ -178,7 +184,90 @@ def test_dashboard_exposes_network_as_initial_monitoring_view() -> None:
     assert 'class="tab-pane fade show active" id="tabNetwork"' in html
     assert 'id="networkNodesBody"' in html
     assert 'id="networkAlertsBody"' in html
+    assert 'href="#tabChampions"' in html
+    assert 'id="championHistoryBody"' in html
+    assert "candidate_evaluations" in html
+    assert "resolvePeerLabel(metric.peer_id)" in html
+    assert "resolvePeerLabel(metric.generator_id)" in html
     assert "api('/api/network')" in html
+
+
+def test_blockchain_history_attributes_candidates_and_champions() -> None:
+    def transaction(kind, peer_id, tx_id, performance=None):
+        payload = {}
+        if performance is not None:
+            payload = {
+                "verified_performance": performance,
+                "champion_metrics": {"validation_selection_score": performance},
+            }
+        return SimpleNamespace(
+            tx_type=SimpleNamespace(value=kind),
+            peer_id=peer_id,
+            domain_id="trading-domain",
+            payload=payload,
+            id=tx_id,
+            timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+        )
+
+    blocks = [
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=0, generator_id="genesis",
+                timestamp=datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[],
+        ),
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=1, generator_id="generator-alpha-full",
+                timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[
+                transaction("candidate_evaluated", "peer-alpha-full", "candidate-1"),
+                transaction("candidate_evaluated", "peer-alpha-full", "candidate-2"),
+                transaction("optimae_accepted", "peer-alpha-full", "accepted-1", 0.10),
+            ],
+        ),
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=2, generator_id="generator-beta-full",
+                timestamp=datetime(2026, 7, 13, 13, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[
+                transaction("candidate_evaluated", "peer-beta-full", "candidate-3"),
+                transaction("optimae_accepted", "peer-beta-full", "accepted-2", 0.08),
+                transaction("optimae_accepted", "peer-beta-full", "accepted-3", 0.15),
+            ],
+        ),
+    ]
+    node = _node()
+    node.chaindb = SimpleNamespace(
+        height=len(blocks),
+        get_block=lambda index: blocks[index],
+    )
+
+    payload = _blockchain_metrics_payload(node, limit=2)
+
+    assert payload["candidate_evaluations"]["total_committed"] == 3
+    assert payload["candidate_evaluations"]["by_peer"] == [
+        {
+            "peer_id": "peer-alpha-f", "count": 2, "last_block_index": 1,
+            "last_timestamp": "2026-07-13T12:00:00+00:00",
+            "domains": {"trading-domain": 2},
+        },
+        {
+            "peer_id": "peer-beta-fu", "count": 1, "last_block_index": 2,
+            "last_timestamp": "2026-07-13T12:00:00+00:00",
+            "domains": {"trading-domain": 1},
+        },
+    ]
+    assert payload["champion_improvements"] == 2
+    assert len(payload["metrics"]) == 2
+    assert payload["metrics"][0]["is_improvement"] is False
+    assert payload["metrics"][1]["is_improvement"] is True
+    assert payload["metrics"][1]["improvement_num"] == 2
+    assert payload["metrics"][1]["peer_id"] == "peer-beta-fu"
+    assert payload["metrics"][1]["generator_id"] == "generator-be"
 
 
 @pytest.mark.asyncio

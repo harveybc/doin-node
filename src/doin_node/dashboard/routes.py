@@ -685,11 +685,10 @@ async def _api_evaluations(request: web.Request) -> web.Response:
 
 # ── Metrics Time Series ─────────────────────────────────────
 
-async def _api_metrics(request: web.Request) -> web.Response:
-    """Build metrics from blockchain — identical on every synced node."""
-    node = request.app[_NODE_KEY]
-    limit = int(request.query.get("limit", "500"))
+def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
+    """Build durable candidate and champion history from the local chain."""
     metrics: list[dict] = []
+    candidate_counts: dict[str, dict[str, Any]] = {}
 
     # Determine higher_is_better per domain
     hib_map: dict[str, bool] = {}
@@ -702,7 +701,8 @@ async def _api_metrics(request: web.Request) -> web.Response:
         height = node.chaindb.height
         # Track running best per domain
         running_best: dict[str, float] = {}
-        champion_index: dict[str, int] = {}  # sequential champion number per domain
+        acceptance_index: dict[str, int] = {}
+        improvement_index: dict[str, int] = {}
 
         for i in range(height):
             block = node.chaindb.get_block(i)
@@ -710,6 +710,25 @@ async def _api_metrics(request: web.Request) -> web.Response:
                 continue
             for tx in block.transactions:
                 tx_type_val = tx.tx_type.value if hasattr(tx.tx_type, "value") else str(tx.tx_type)
+                peer_id = str(tx.peer_id)[:12]
+                ts = tx.timestamp if getattr(tx, "timestamp", None) else block.header.timestamp
+                ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+
+                if tx_type_val == "candidate_evaluated":
+                    count = candidate_counts.setdefault(peer_id, {
+                        "peer_id": peer_id,
+                        "count": 0,
+                        "last_block_index": block.header.index,
+                        "last_timestamp": ts_str,
+                        "domains": {},
+                    })
+                    count["count"] += 1
+                    count["last_block_index"] = block.header.index
+                    count["last_timestamp"] = ts_str
+                    domains = count["domains"]
+                    domains[tx.domain_id] = domains.get(tx.domain_id, 0) + 1
+                    continue
+
                 if tx_type_val != "optimae_accepted":
                     continue
 
@@ -727,23 +746,29 @@ async def _api_metrics(request: web.Request) -> web.Response:
                 )
                 if is_improvement:
                     running_best[domain_id] = perf
+                    improvement_index[domain_id] = improvement_index.get(domain_id, 0) + 1
 
-                seq = champion_index.get(domain_id, 0) + 1
-                champion_index[domain_id] = seq
+                seq = acceptance_index.get(domain_id, 0) + 1
+                acceptance_index[domain_id] = seq
 
                 # Block timestamp
-                ts = block.header.timestamp
-                ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                block_ts = block.header.timestamp
+                block_ts_str = block_ts.isoformat() if hasattr(block_ts, "isoformat") else str(block_ts)
 
                 metrics.append({
                     "champion_num": seq,
+                    "acceptance_num": seq,
+                    "improvement_num": improvement_index.get(domain_id),
                     "block_index": block.header.index,
+                    "transaction_id": str(tx.id)[:16] if getattr(tx, "id", None) else "",
                     "domain_id": domain_id,
                     "performance": perf,
                     "best_performance": running_best[domain_id],
+                    "previous_best_performance": prev,
                     "is_improvement": is_improvement,
-                    "peer_id": str(tx.peer_id)[:12],
-                    "timestamp": ts_str,
+                    "peer_id": peer_id,
+                    "generator_id": str(block.header.generator_id)[:12],
+                    "timestamp": block_ts_str,
                     "val_mae": (tx.payload.get("champion_metrics") or {}).get("val_mae", tx.payload.get("val_mae")),
                     "train_mae": (tx.payload.get("champion_metrics") or {}).get("train_mae", tx.payload.get("train_mae")),
                     "val_naive_mae": (tx.payload.get("champion_metrics") or {}).get("val_naive_mae", tx.payload.get("val_naive_mae")),
@@ -759,7 +784,28 @@ async def _api_metrics(request: web.Request) -> web.Response:
         if len(metrics) > limit:
             metrics = metrics[-limit:]
 
-    return web.json_response({"metrics": metrics, "count": len(metrics)}, dumps=_dumps)
+    counts = sorted(
+        candidate_counts.values(),
+        key=lambda item: (-item["count"], item["peer_id"]),
+    )
+    return {
+        "metrics": metrics,
+        "count": len(metrics),
+        "candidate_evaluations": {
+            "total_committed": sum(item["count"] for item in counts),
+            "by_peer": counts,
+        },
+        "champion_improvements": sum(improvement_index.values()),
+    }
+
+
+async def _api_metrics(request: web.Request) -> web.Response:
+    """Build metrics from blockchain — identical on every synced node."""
+    node = request.app[_NODE_KEY]
+    limit = int(request.query.get("limit", "500"))
+    return web.json_response(
+        _blockchain_metrics_payload(node, limit), dumps=_dumps,
+    )
 
 
 # ── Plugins ──────────────────────────────────────────────────
