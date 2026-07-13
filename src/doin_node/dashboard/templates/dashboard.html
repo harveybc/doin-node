@@ -518,10 +518,10 @@ async function refreshAll() {
     if (node.versions) {
       var v = node.versions;
       var parts = [];
+      if (v['agent-multi'])  parts.push('agent:' + v['agent-multi']);
       if (v['doin-core'])    parts.push('core:' + v['doin-core']);
       if (v['doin-node'])    parts.push('node:' + v['doin-node']);
       if (v['doin-plugins'])  parts.push('plugins:' + v['doin-plugins']);
-      if (v['predictor'])    parts.push('predictor:' + v['predictor']);
       document.getElementById('versionInfo').textContent = parts.join(' | ');
     }
   }

@@ -1,4 +1,5 @@
 from doin_node.dashboard.routes import (
+    _PACKAGE_VERSIONS,
     _compact_metric_evidence,
     _dashboard_transaction_payload,
 )
@@ -38,3 +39,13 @@ def test_chain_dashboard_redacts_model_but_preserves_chain_payload_source() -> N
     assert displayed["champion_metrics"] == {"total_return": 0.2}
     assert source["parameters"]["_model_b64"] == "abcd"
     assert "history" in source["champion_metrics"]
+
+
+def test_dashboard_versions_cover_only_active_trading_components() -> None:
+    assert set(_PACKAGE_VERSIONS) == {
+        "agent-multi",
+        "doin-core",
+        "doin-node",
+        "doin-plugins",
+    }
+    assert "predictor" not in _PACKAGE_VERSIONS

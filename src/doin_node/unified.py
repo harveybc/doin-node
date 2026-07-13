@@ -81,6 +81,7 @@ from doin_core.protocol.messages import (
     TaskCompleted,
     TaskCreated,
 )
+from doin_node.versioning import compute_component_versions
 
 from doin_core.models.fee_market import FeeConfig, FeeMarket
 
@@ -474,74 +475,8 @@ class UnifiedNode:
 
     @staticmethod
     def _compute_component_versions() -> dict[str, str]:
-        """Compute git short hashes for DOIN component packages.
-
-        Used for the version handshake protocol: peers must have identical
-        component versions to be accepted into the network.
-        """
-        import importlib.metadata
-        import importlib.util
-        import subprocess as _sp
-
-        def _git_hash(path: str) -> str:
-            try:
-                r = _sp.run(
-                    ["git", "rev-parse", "--short=7", "HEAD"],
-                    capture_output=True, text=True, timeout=5, cwd=path,
-                )
-                if r.returncode == 0:
-                    return r.stdout.strip()
-            except Exception:
-                pass
-            return "unknown"
-
-        versions: dict[str, str] = {}
-        pkg_map = {
-            "doin-core": ("doin_core", "doin-core", [
-                Path.home() / "Documents" / "GitHub" / "doin-core",
-                Path.home() / "doin-core",
-            ]),
-            "doin-node": ("doin_node", "doin-node", [
-                Path.home() / "Documents" / "GitHub" / "doin-node",
-                Path.home() / "doin-node",
-            ]),
-            "doin-plugins": ("doin_plugins", "doin-plugins", [
-                Path.home() / "doin-plugins",
-                Path.home() / "Documents" / "GitHub" / "doin-plugins",
-            ]),
-            "predictor": ("predictor", "predictor", [
-                Path.home() / "Documents" / "GitHub" / "predictor",
-                Path.home() / "predictor",
-            ]),
-        }
-        for label, (import_name, dist_name, candidates) in pkg_map.items():
-            found = False
-            try:
-                spec = importlib.util.find_spec(import_name)
-                if spec and spec.origin:
-                    pkg_dir = Path(spec.origin).resolve().parent
-                    for parent in [pkg_dir] + list(pkg_dir.parents):
-                        if (parent / ".git").exists():
-                            versions[label] = _git_hash(str(parent))
-                            found = True
-                            break
-            except Exception:
-                pass
-            if found:
-                continue
-            for cand in candidates:
-                if cand.exists() and (cand / ".git").exists():
-                    versions[label] = _git_hash(str(cand))
-                    found = True
-                    break
-            if found:
-                continue
-            try:
-                ver = importlib.metadata.version(dist_name)
-                versions[label] = f"v{ver}"
-            except Exception:
-                versions[label] = "?"
-        return versions
+        """Compute exact revisions used by the peer version handshake."""
+        return compute_component_versions()
 
     def _peer_id_exists(self, peer_id: str) -> bool:
         """Check if a peer with this ID already exists (on any endpoint)."""
