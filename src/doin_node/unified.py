@@ -2784,6 +2784,28 @@ class UnifiedNode:
         except Exception:
             pass  # Network issues are expected
 
+    def _record_optimizer_round(
+        self,
+        domain_id: str,
+        *,
+        performance: float,
+        parameters: dict[str, Any],
+        detail_metrics: dict[str, Any],
+    ) -> None:
+        """Persist optimizer-thread metrics without touching ChainDB's connection."""
+        self.experiment_tracker.record_round(
+            domain_id,
+            performance=performance,
+            parameters=parameters,
+            wall_clock_seconds=0,
+            # Optimizer callbacks run in an executor thread. The sync manager
+            # keeps a scalar snapshot; ChainDB's SQLite connection is owned by
+            # the event-loop thread and must not be queried here.
+            chain_height=self.sync_manager.our_height,
+            peers_count=len(self._peers),
+            detail_metrics=detail_metrics,
+        )
+
     def _setup_optimizer_callbacks(self, domain_id: str, plugin: Any) -> None:
         """Wire DOIN callbacks onto the optimizer plugin."""
         if not hasattr(plugin, "set_local_champion_callback"):
@@ -3040,13 +3062,10 @@ class UnifiedNode:
                 "test_naive_mae": champ_test_naive,
             }
             try:
-                node.experiment_tracker.record_round(
+                node._record_optimizer_round(
                     domain_id,
                     performance=champ_fit if champ_fit is not None else 0.0,
                     parameters=champ_params,
-                    wall_clock_seconds=0,
-                    chain_height=node._get_height(),
-                    peers_count=len(node._peers),
                     detail_metrics=detail_metrics,
                 )
             except Exception:
@@ -3146,13 +3165,10 @@ class UnifiedNode:
                     "test_mae": candidate_info.get("test_mae"),
                     "test_naive_mae": candidate_info.get("test_naive_mae"),
                 })
-                node.experiment_tracker.record_round(
+                node._record_optimizer_round(
                     domain_id,
                     performance=candidate_info.get("fitness", 0.0),
                     parameters=candidate_info.get("parameters", {}),
-                    wall_clock_seconds=0,
-                    chain_height=node._get_height(),
-                    peers_count=len(node._peers),
                     detail_metrics=detail_metrics,
                 )
             except Exception:

@@ -73,6 +73,30 @@ def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     ) == "100.99.54.79:8470"
 
 
+def test_optimizer_round_uses_thread_safe_chain_height_snapshot() -> None:
+    node = make_node(port=8499)
+    captured = {}
+
+    class Tracker:
+        def record_round(self, domain_id, **kwargs):
+            captured.update({"domain_id": domain_id, **kwargs})
+
+    node.experiment_tracker = Tracker()
+    node.sync_manager.our_height = 17
+    node._get_height = lambda: (_ for _ in ()).throw(AssertionError("ChainDB touched"))
+
+    node._record_optimizer_round(
+        "test-domain",
+        performance=0.25,
+        parameters={"learning_rate": 0.001},
+        detail_metrics={"total_candidates_evaluated": 3},
+    )
+
+    assert captured["chain_height"] == 17
+    assert captured["performance"] == pytest.approx(0.25)
+    assert captured["detail_metrics"]["total_candidates_evaluated"] == 3
+
+
 # ── Test: Commit-Reveal (Hardening #1) ──────────────────────────────
 
 class TestCommitRevealIntegration:
