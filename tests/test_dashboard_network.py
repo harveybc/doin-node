@@ -61,6 +61,7 @@ def _node(*, peers=None, transport=None):
             "timestamp": "2026-07-13T12:00:00Z",
         }],
         _alerts_unseen=1,
+        _own_addresses={"127.0.0.1", "192.168.1.10", "100.64.0.10", "localhost"},
         _peers=peers or {},
         discovery=None,
         transport=transport,
@@ -76,6 +77,9 @@ def test_local_monitor_is_compact_and_human_labeled() -> None:
     assert "candidate_params" not in snapshot["candidate"]
     assert snapshot["best_performance"] == {"trading-domain": 0.04}
     assert snapshot["alerts_count"] == 1
+    assert snapshot["known_endpoints"] == [
+        "100.64.0.10:8470", "127.0.0.1:8470", "192.168.1.10:8470",
+    ]
     assert snapshot["versions"] == _PACKAGE_VERSIONS
     assert "predictor" not in snapshot["versions"]
 
@@ -141,6 +145,32 @@ def test_route_snapshots_are_merged_by_resolved_peer_identity() -> None:
     ]
 
 
+def test_unresolved_route_is_removed_when_online_peer_advertises_it() -> None:
+    online = {
+        "peer_id": "remote-peer", "status": "online",
+        "endpoint": "100.64.0.20:8470",
+        "known_endpoints": ["100.64.0.20:8470", "192.168.1.20:8470"],
+    }
+    unresolved_alias = {
+        "peer_id": "192.168.1.20:8470", "status": "offline",
+        "endpoint": "192.168.1.20:8470",
+        "known_endpoints": ["192.168.1.20:8470"],
+    }
+    unrelated_offline = {
+        "peer_id": "192.168.1.30:8470", "status": "offline",
+        "endpoint": "192.168.1.30:8470",
+        "known_endpoints": ["192.168.1.30:8470"],
+    }
+
+    members = _deduplicate_monitor_members([
+        online, unresolved_alias, unrelated_offline,
+    ])
+
+    assert [member["peer_id"] for member in members] == [
+        "remote-peer", "192.168.1.30:8470",
+    ]
+
+
 def test_dashboard_exposes_network_as_initial_monitoring_view() -> None:
     html = _DASHBOARD.read_text()
 
@@ -168,6 +198,7 @@ async def test_network_overview_falls_back_and_preserves_offline_member() -> Non
         }],
         "alerts_count": 1,
         "alerts_unseen": 1,
+        "known_endpoints": ["192.168.1.2:8470", "100.64.0.2:8470"],
     }
     payloads = {
         "http://192.168.1.2:8470/api/monitor": OSError("LAN unavailable"),

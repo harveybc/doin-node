@@ -145,6 +145,11 @@ def _compact_candidate(candidate: dict[str, Any] | None) -> dict[str, Any]:
 
 def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
     hostname = socket.gethostname()
+    local_endpoints = [
+        f"{address}:{node.config.port}"
+        for address in sorted(getattr(node, "_own_addresses", set()))
+        if address not in {"localhost", "unknown", "::1"}
+    ]
     candidate = _compact_candidate(node._current_candidate)
     best_performance = {
         domain_id: performance
@@ -157,6 +162,7 @@ def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
         "hostname": hostname,
         "peer_id": node.identity.peer_id if node.identity else "unknown",
         "port": node.config.port,
+        "known_endpoints": local_endpoints,
         "status": "online",
         "uptime_s": round(time.time() - node._start_time, 1),
         "chain_height": node.chaindb.height if node.chaindb else 0,
@@ -210,8 +216,11 @@ async def _fetch_peer_monitor(
                 _endpoint_http_url(endpoint, "/api/monitor"),
                 timeout_seconds=_NETWORK_MONITOR_TIMEOUT_SECONDS,
             )
+            advertised_endpoints = payload.get("known_endpoints") or []
             payload["endpoint"] = endpoint
-            payload["known_endpoints"] = endpoints
+            payload["known_endpoints"] = list(dict.fromkeys([
+                *endpoints, *advertised_endpoints,
+            ]))
             payload["dashboard_url"] = _endpoint_http_url(endpoint, "/dashboard")
             payload["status"] = "online"
             return payload
@@ -262,7 +271,18 @@ def _deduplicate_monitor_members(members: list[dict[str, Any]]) -> list[dict[str
             result[existing_index] = member
         else:
             existing["known_endpoints"] = routes
-    return result
+    online_endpoints = {
+        endpoint
+        for member in result
+        if member.get("status") == "online"
+        for endpoint in member.get("known_endpoints") or []
+    }
+    return [
+        member
+        for member in result
+        if member.get("status") == "online"
+        or not online_endpoints.intersection(member.get("known_endpoints") or [])
+    ]
 
 
 def _version_mismatches(versions: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -277,7 +297,6 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
     local = _local_monitor_snapshot(node)
     local.update({
         "endpoint": "local",
-        "known_endpoints": [],
         "dashboard_url": "/dashboard",
         "is_local": True,
     })
