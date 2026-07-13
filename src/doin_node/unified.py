@@ -482,6 +482,20 @@ class UnifiedNode:
         """Check if a peer with this ID already exists (on any endpoint)."""
         return any(p.peer_id == peer_id for p in self._peers.values())
 
+    def _unique_peer_endpoints(self, *, exclude_address: str | None = None) -> list[str]:
+        """Return one endpoint per logical peer, preserving discovery preference."""
+        endpoints: list[str] = []
+        seen_peer_ids: set[str] = set()
+        for endpoint, peer in self._peers.items():
+            if exclude_address and endpoint.startswith(exclude_address + ":"):
+                continue
+            identity = peer.peer_id or endpoint
+            if identity in seen_peer_ids:
+                continue
+            seen_peer_ids.add(identity)
+            endpoints.append(endpoint)
+        return endpoints
+
     def _is_better(self, domain_id: str, new_perf: float, old_perf: float | None) -> bool:
         """Compare performances respecting higher_is_better setting and acceptance_tolerance."""
         if old_perf is None:
@@ -853,8 +867,12 @@ class UnifiedNode:
             sent = await self.gossip.publish(message)
             logger.info("📤 Broadcast %s → %d peers (gossip mesh)", message.msg_type.value, sent)
         else:
-            await self.transport.broadcast(list(self._peers.keys()), message)
-            logger.info("📤 Broadcast %s → %d peers (flooding)", message.msg_type.value, len(self._peers))
+            # Prevent a locally originated message from being handled again
+            # when it returns through another interface.
+            self.flooding.mark_seen(message)
+            endpoints = self._unique_peer_endpoints()
+            await self.transport.broadcast(endpoints, message)
+            logger.info("📤 Broadcast %s → %d peers (flooding)", message.msg_type.value, len(endpoints))
 
     async def _gossip_send(self, peer_id: str, payload: dict) -> bool:
         """Send a message to a specific peer (callback for GossipSub)."""
@@ -978,7 +996,7 @@ class UnifiedNode:
                 )
                 # Exclude the actual sender endpoint (compare by IP prefix, since
                 # _peers keys are "IP:port" but `sender` is a bare IP string).
-                endpoints = [ep for ep in self._peers if not ep.startswith(sender + ":")]
+                endpoints = self._unique_peer_endpoints(exclude_address=sender)
                 await self.transport.broadcast(endpoints, forward_msg)
 
     # ── Commit-reveal flow ───────────────────────────────────────

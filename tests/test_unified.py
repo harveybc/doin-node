@@ -347,6 +347,32 @@ class TestNodeConfiguration:
         node.add_peer("192.168.1.1", 8470, "peer-1")
         assert len(node._peers) == 1
 
+    @pytest.mark.asyncio
+    async def test_flood_broadcast_uses_one_endpoint_per_logical_peer(self):
+        node = make_node()
+        node.gossip = None
+        node.add_peer("192.168.1.2", 8470, "peer-a")
+        node.add_peer("100.64.0.2", 8470, "peer-a")
+        node.add_peer("192.168.1.3", 8470, "peer-b")
+        captured = {}
+
+        async def fake_broadcast(endpoints, message, exclude=None):
+            captured["endpoints"] = endpoints
+            captured["message"] = message
+            return {endpoint: True for endpoint in endpoints}
+
+        node.transport.broadcast = fake_broadcast
+        message = Message(
+            msg_type=MessageType.CHAMPION_REQUEST,
+            sender_id=node.peer_id,
+            payload={"domain_id": "test-domain", "request_id": "request-1"},
+        )
+
+        await node._broadcast(message)
+
+        assert captured["endpoints"] == ["192.168.1.2:8470", "192.168.1.3:8470"]
+        assert not node.flooding.should_propagate(message)
+
     def test_status_includes_security_info(self):
         node = make_node()
         # The status endpoint exposes security system state

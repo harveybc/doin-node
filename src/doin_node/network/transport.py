@@ -17,13 +17,16 @@ import subprocess
 import time
 from typing import Any, Callable, Coroutine
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientTimeout, TCPConnector, web
 
 from doin_core.protocol.messages import Message
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = ClientTimeout(total=30)
+OUTBOUND_CONNECTION_LIMIT = 64
+OUTBOUND_CONNECTIONS_PER_HOST = 8
+OUTBOUND_KEEPALIVE_SECONDS = 10.0
 
 
 class Transport:
@@ -72,7 +75,12 @@ class Transport:
         """
         self._kill_stale_process_on_port(self.port)
 
-        self._session = ClientSession(timeout=DEFAULT_TIMEOUT)
+        connector = TCPConnector(
+            limit=OUTBOUND_CONNECTION_LIMIT,
+            limit_per_host=OUTBOUND_CONNECTIONS_PER_HOST,
+            keepalive_timeout=OUTBOUND_KEEPALIVE_SECONDS,
+        )
+        self._session = ClientSession(timeout=DEFAULT_TIMEOUT, connector=connector)
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.host, self.port)

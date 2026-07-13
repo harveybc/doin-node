@@ -34,6 +34,23 @@ class TestFloodingProtocol:
         fp.mark_seen(msg)
         assert not fp.should_propagate(msg)
 
+    def test_transport_metadata_does_not_change_logical_message_id(self) -> None:
+        fp = FloodingProtocol()
+        msg = _make_message()
+        fp.mark_seen(msg)
+        forwarded = msg.model_copy(
+            update={
+                "payload": {
+                    **msg.payload,
+                    "_forwarder_id": "peer-2",
+                    "_sender_port": 8471,
+                    "_component_versions": {"doin-node": "abc1234"},
+                    "_plugin_configs": {"domain:optimizer": "plugin"},
+                }
+            }
+        )
+        assert not fp.should_propagate(forwarded)
+
     def test_ttl_zero_dropped(self) -> None:
         fp = FloodingProtocol()
         msg = _make_message(ttl=0)

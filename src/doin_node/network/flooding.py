@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of seen message IDs to cache (LRU eviction)
 MAX_SEEN_CACHE = 10_000
+_TRANSPORT_METADATA_KEYS = {
+    "_component_versions",
+    "_forwarder_id",
+    "_plugin_configs",
+    "_sender_port",
+}
 
 
 @dataclass
@@ -155,12 +161,19 @@ class FloodingProtocol:
     @staticmethod
     def _message_id(message: Message) -> str:
         """Compute a unique ID for dedup purposes."""
+        logical_payload = message.payload
+        if isinstance(logical_payload, dict):
+            logical_payload = {
+                key: value
+                for key, value in logical_payload.items()
+                if key not in _TRANSPORT_METADATA_KEYS
+            }
         payload = json.dumps(
             {
                 "msg_type": message.msg_type.value,
                 "sender_id": message.sender_id,
                 "timestamp": message.timestamp.isoformat(),
-                "payload": message.payload,
+                "payload": logical_payload,
             },
             sort_keys=True,
         )
