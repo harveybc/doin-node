@@ -11,5 +11,7 @@ def test_component_versions_cover_only_active_trading_components(monkeypatch) ->
         "doin-core",
         "doin-node",
         "doin-plugins",
+        "gym-fx",
+        "trading-contracts",
     }
     assert set(versions.values()) == {"abcdef0"}

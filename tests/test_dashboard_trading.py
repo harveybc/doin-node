@@ -53,5 +53,7 @@ def test_dashboard_versions_cover_only_active_trading_components() -> None:
         "doin-core",
         "doin-node",
         "doin-plugins",
+        "gym-fx",
+        "trading-contracts",
     }
     assert "predictor" not in _PACKAGE_VERSIONS

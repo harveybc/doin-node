@@ -37,6 +37,20 @@ _COMPONENTS: dict[str, tuple[str, tuple[Path, ...]]] = {
             Path.home() / "doin-plugins",
         ),
     ),
+    "gym-fx": (
+        "gym-fx",
+        (
+            Path.home() / "Documents" / "GitHub" / "gym-fx",
+            Path.home() / "gym-fx",
+        ),
+    ),
+    "trading-contracts": (
+        "trading-contracts",
+        (
+            Path.home() / "Documents" / "GitHub" / "trading-contracts",
+            Path.home() / "trading-contracts",
+        ),
+    ),
 }
 
 
