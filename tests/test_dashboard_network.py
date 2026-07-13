@@ -60,6 +60,14 @@ def _node(*, peers=None, transport=None):
             "candidate_params": {"large": "not exposed"},
         },
         _domain_best={"trading-domain": ({"secret": "redacted"}, 0.04)},
+        _optimizer_plugins={
+            "trading-domain": SimpleNamespace(
+                get_runtime_statistics=lambda: {
+                    "candidate_evaluations_total": 202,
+                    "candidate_history_source": "/private/history.csv",
+                }
+            )
+        },
         _alerts=[{
             "severity": "warning",
             "category": "local-test",
@@ -80,6 +88,10 @@ def test_local_monitor_is_compact_and_human_labeled() -> None:
     assert snapshot["node_label"] == "omega"
     assert snapshot["chain_height"] == 8
     assert snapshot["candidate"]["candidate_num"] == 3
+    assert snapshot["optimization_history"] == {
+        "candidate_evaluations_total": 202,
+        "domains": {"trading-domain": {"candidate_evaluations_total": 202}},
+    }
     assert "candidate_params" not in snapshot["candidate"]
     assert snapshot["best_performance"] == {"trading-domain": 0.04}
     assert snapshot["alerts_count"] == 1
@@ -279,6 +291,7 @@ async def test_network_overview_falls_back_and_preserves_offline_member() -> Non
         "chain_height": 8,
         "versions": {**_PACKAGE_VERSIONS, "doin-node": "oldrev0"},
         "candidate": {"candidate_num": 7},
+        "optimization_history": {"candidate_evaluations_total": 24},
         "alerts": [{
             "severity": "critical",
             "category": "remote-test",
@@ -308,6 +321,7 @@ async def test_network_overview_falls_back_and_preserves_offline_member() -> Non
         "online_nodes": 2,
         "offline_nodes": 1,
         "active_candidates": 2,
+        "local_candidate_evaluations": 226,
         "alerts_total": 2,
         "alerts_unseen": 2,
         "version_mismatch_nodes": 1,

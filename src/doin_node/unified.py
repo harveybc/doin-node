@@ -3155,8 +3155,12 @@ class UnifiedNode:
                     peers_count=len(node._peers),
                     detail_metrics=detail_metrics,
                 )
-            except Exception as e:
-                logger.debug("Candidate tracking error: %s", e)
+            except Exception:
+                logger.warning(
+                    "Candidate local history/OLAP tracking failed for %s",
+                    domain_id,
+                    exc_info=True,
+                )
 
             # --- Blockchain: create transaction + broadcast to peers ---
             try:

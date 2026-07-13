@@ -274,6 +274,7 @@
                     <div class="network-summary">
                       <div class="network-summary-item"><span class="metric-label">Online nodes</span><span class="network-summary-value text-success" id="networkOnline">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Active candidates</span><span class="network-summary-value text-info" id="networkCandidates">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Local evaluations</span><span class="network-summary-value text-info" id="networkLocalEvaluations">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Committed evaluations</span><span class="network-summary-value text-info" id="networkCommittedEvaluations">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Champion improvements</span><span class="network-summary-value text-success" id="networkChampionImprovements">--</span></div>
                       <div class="network-summary-item"><span class="metric-label">Network alerts</span><span class="network-summary-value" id="networkAlertCount">--</span></div>
@@ -282,8 +283,8 @@
                     </div>
                     <div class="table-responsive">
                       <table class="table table-sm table-striped table-hover network-table" style="font-size:11px">
-                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:80px" title="Evaluations completed by the currently running process">Run evals</th><th style="width:85px" title="Candidate evaluations durably committed to blockchain">On-chain</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
-                        <tbody id="networkNodesBody"><tr><td colspan="11" class="text-center text-muted">Loading network...</td></tr></tbody>
+                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:85px" title="All candidate evaluations in this optimizer's durable local history">Local total</th><th style="width:80px" title="Evaluations completed in the currently resumed optimization segment">Active run</th><th style="width:85px" title="Candidate evaluations durably committed to blockchain">On-chain</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
+                        <tbody id="networkNodesBody"><tr><td colspan="12" class="text-center text-muted">Loading network...</td></tr></tbody>
                       </table>
                     </div>
                     <h6 class="mt-2 mb-1"><i class="fas fa-exclamation-triangle"></i> Recent Network Alerts</h6>
@@ -575,7 +576,7 @@ function colorForNode(label) {
 function renderNetwork(network, metrics) {
   const body = document.getElementById('networkNodesBody');
   if (!network || !network.summary) {
-    body.innerHTML = '<tr><td colspan="11" class="text-center text-danger">Network overview unavailable</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="text-center text-danger">Network overview unavailable</td></tr>';
     return;
   }
 
@@ -595,6 +596,7 @@ function renderNetwork(network, metrics) {
   const summary = network.summary;
   document.getElementById('networkOnline').textContent = `${summary.online_nodes}/${summary.total_nodes}`;
   document.getElementById('networkCandidates').textContent = summary.active_candidates;
+  document.getElementById('networkLocalEvaluations').textContent = summary.local_candidate_evaluations ?? '--';
   document.getElementById('networkCommittedEvaluations').textContent = evaluationHistory ? evaluationHistory.total_committed : '--';
   document.getElementById('networkChampionImprovements').textContent = metrics ? metrics.champion_improvements : '--';
   document.getElementById('networkAlertCount').textContent = summary.alerts_total;
@@ -627,6 +629,7 @@ function renderNetwork(network, metrics) {
     const bestValues = Object.values(member.best_performance || {});
     const best = bestValues.length ? fmt(bestValues[0], 6) : (candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--');
     const runEvaluations = candidate.total_evals != null ? candidate.total_evals : '--';
+    const localEvaluations = (member.optimization_history || {}).candidate_evaluations_total ?? '--';
     const committedEvaluations = committedByPeer[String(member.peer_id || '').substring(0, 12)] || 0;
     const versionText = versionOrder.filter(key => member.versions && member.versions[key]).map(key => `${key}:${member.versions[key]}`).join(' | ');
     const versionHtml = online ?
@@ -639,6 +642,7 @@ function renderNetwork(network, metrics) {
       <td><span class="badge ${healthClass}">${healthLabel}</span>${member.error ? `<span class="network-subtext" title="${esc(member.error)}">route failed</span>` : ''}</td>
       <td>${member.chain_height != null ? esc(member.chain_height) : '--'}</td>
       <td>${candidateHtml}</td>
+      <td><strong>${esc(localEvaluations)}</strong></td>
       <td>${esc(runEvaluations)}</td>
       <td>${esc(committedEvaluations)}</td>
       <td>${best}</td>
@@ -646,7 +650,7 @@ function renderNetwork(network, metrics) {
       <td>${versionHtml}</td>
       <td>${open}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="11" class="text-center text-muted">No nodes discovered</td></tr>';
+  }).join('') || '<tr><td colspan="12" class="text-center text-muted">No nodes discovered</td></tr>';
 
   const alertBody = document.getElementById('networkAlertsBody');
   const networkAlerts = network.alerts || [];

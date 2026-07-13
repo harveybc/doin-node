@@ -143,6 +143,33 @@ def _compact_candidate(candidate: dict[str, Any] | None) -> dict[str, Any]:
     return {key: source[key] for key in keys if source.get(key) is not None}
 
 
+def _local_optimization_history(node: Any) -> dict[str, Any]:
+    """Collect durable candidate totals exposed by optional optimizer adapters."""
+    domains: dict[str, dict[str, Any]] = {}
+    sources: dict[str, int] = {}
+    for domain_id, plugin in getattr(node, "_optimizer_plugins", {}).items():
+        getter = getattr(plugin, "get_runtime_statistics", None)
+        if not callable(getter):
+            continue
+        try:
+            statistics = getter() or {}
+            count = max(0, int(statistics.get("candidate_evaluations_total", 0)))
+            source = str(statistics.get("candidate_history_source") or domain_id)
+            domains[domain_id] = {"candidate_evaluations_total": count}
+            # Multiple domains may deliberately share one append-only history.
+            sources[source] = max(count, sources.get(source, 0))
+        except Exception:
+            logger.warning(
+                "Unable to read local optimizer statistics for %s",
+                domain_id,
+                exc_info=True,
+            )
+    return {
+        "candidate_evaluations_total": sum(sources.values()),
+        "domains": domains,
+    }
+
+
 def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
     hostname = socket.gethostname()
     local_endpoints = [
@@ -169,6 +196,7 @@ def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
         "domains": list(node._domain_roles),
         "versions": dict(_PACKAGE_VERSIONS),
         "candidate": candidate,
+        "optimization_history": _local_optimization_history(node),
         "best_performance": best_performance,
         "alerts": alerts,
         "alerts_count": len(node._alerts),
@@ -311,6 +339,7 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
     online = 0
     version_mismatch_nodes = 0
     active_candidates = 0
+    local_candidate_evaluations = 0
     for member in members:
         member["version_mismatches"] = (
             _version_mismatches(member.get("versions") or {})
@@ -323,6 +352,11 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
                 version_mismatch_nodes += 1
             if member.get("candidate"):
                 active_candidates += 1
+            local_candidate_evaluations += int(
+                (member.get("optimization_history") or {}).get(
+                    "candidate_evaluations_total", 0
+                )
+            )
         for alert in member.get("alerts") or []:
             aggregate_alerts.append({
                 **alert,
@@ -342,6 +376,7 @@ async def _build_network_overview(node: Any) -> dict[str, Any]:
             "online_nodes": online,
             "offline_nodes": len(members) - online,
             "active_candidates": active_candidates,
+            "local_candidate_evaluations": local_candidate_evaluations,
             "alerts_total": sum(int(member.get("alerts_count", 0)) for member in members),
             "alerts_unseen": sum(int(member.get("alerts_unseen", 0)) for member in members),
             "version_mismatch_nodes": version_mismatch_nodes,
