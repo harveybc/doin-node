@@ -142,6 +142,7 @@ class DomainRole:
 class UnifiedNodeConfig:
     """Full configuration for a unified DON node."""
 
+    node_label: str = ""
     host: str = "0.0.0.0"
     port: int = 8470
     data_dir: str = "./doin-data"

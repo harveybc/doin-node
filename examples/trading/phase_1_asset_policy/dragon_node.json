@@ -1,4 +1,5 @@
 {
+  "node_label": "dragon",
   "$doc": "Dragon island for the Phase 1 SOLUSDT 4h SAC asset-policy optimization; joins Omega without restarting it.",
   "host": "0.0.0.0",
   "port": 8470,

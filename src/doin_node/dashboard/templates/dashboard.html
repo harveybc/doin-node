@@ -37,6 +37,14 @@
     .metric-label { color: #aaa; font-size: 11px; text-transform: uppercase; }
     code { font-size: 11px; }
     .status-badge { font-size: 11px; padding: 2px 6px; }
+    .network-summary { display: flex; flex-wrap: wrap; border-bottom: 1px solid #495057; margin-bottom: 8px; }
+    .network-summary-item { min-width: 120px; padding: 4px 14px 7px 0; margin-right: 14px; border-right: 1px solid #495057; }
+    .network-summary-item:last-child { border-right: 0; }
+    .network-summary-value { display: block; font-size: 18px; font-weight: 600; line-height: 1.15; }
+    .network-table { table-layout: fixed; min-width: 1120px; }
+    .network-table td { vertical-align: middle; overflow-wrap: anywhere; }
+    .network-node-name { font-weight: 600; color: #f8f9fa; }
+    .network-subtext { display: block; color: #adb5bd; font-size: 10px; line-height: 1.25; }
     .card-header { padding: 0.5rem 1rem; }
     .main-footer { flex: 0 0 auto; padding: 4px 0; font-size: 11px; }
   </style>
@@ -240,13 +248,14 @@
           </div>
         </div>
 
-        <!-- Tabs: Peers, Evaluations, Events, Plugins, Chain -->
+        <!-- Tabs: Network, Peers, Evaluations, Events, Plugins, Chain -->
         <div class="row tabs-row">
           <div class="col-12">
             <div class="card card-primary card-outline card-outline-tabs">
               <div class="card-header p-0 border-bottom-0">
                 <ul class="nav nav-tabs" role="tablist">
-                  <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tabPeers"><i class="fas fa-server"></i> Peers</a></li>
+                  <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tabNetwork" id="networkTabLink"><i class="fas fa-network-wired"></i> Network <span id="networkBadge" class="badge badge-danger" style="display:none; font-size:10px; vertical-align:top;">0</span></a></li>
+                  <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPeers"><i class="fas fa-server"></i> Peers</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvals"><i class="fas fa-flask"></i> Candidate Evaluations</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabEvents"><i class="fas fa-list"></i> Network Events</a></li>
                   <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tabPlugins"><i class="fas fa-plug"></i> Plugins</a></li>
@@ -259,8 +268,32 @@
               <div class="card-body">
                 <div class="tab-content">
 
+                  <!-- Consolidated Network Tab -->
+                  <div class="tab-pane fade show active" id="tabNetwork">
+                    <div class="network-summary">
+                      <div class="network-summary-item"><span class="metric-label">Online nodes</span><span class="network-summary-value text-success" id="networkOnline">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Active candidates</span><span class="network-summary-value text-info" id="networkCandidates">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Network alerts</span><span class="network-summary-value" id="networkAlertCount">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Version mismatches</span><span class="network-summary-value" id="networkVersionMismatches">--</span></div>
+                      <div class="network-summary-item"><span class="metric-label">Chain range</span><span class="network-summary-value" id="networkChainRange">--</span></div>
+                    </div>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-striped table-hover network-table" style="font-size:11px">
+                        <thead><tr><th style="width:150px">Node</th><th style="width:145px">Endpoint</th><th style="width:85px">Health</th><th style="width:70px">Chain</th><th style="width:220px">Candidate</th><th style="width:100px">Best</th><th style="width:75px">Alerts</th><th>Versions</th><th style="width:42px"></th></tr></thead>
+                        <tbody id="networkNodesBody"><tr><td colspan="9" class="text-center text-muted">Loading network...</td></tr></tbody>
+                      </table>
+                    </div>
+                    <h6 class="mt-2 mb-1"><i class="fas fa-exclamation-triangle"></i> Recent Network Alerts</h6>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-striped" style="font-size:11px">
+                        <thead><tr><th style="width:130px">Node</th><th style="width:75px">Severity</th><th style="width:145px">Category</th><th>Message</th><th style="width:100px">Time</th></tr></thead>
+                        <tbody id="networkAlertsBody"><tr><td colspan="5" class="text-center text-muted"><i class="fas fa-check-circle text-success"></i> No network alerts</td></tr></tbody>
+                      </table>
+                    </div>
+                  </div>
+
                   <!-- Peers Tab -->
-                  <div class="tab-pane fade show active" id="tabPeers">
+                  <div class="tab-pane fade" id="tabPeers">
                     <table class="table table-sm table-striped table-hover">
                       <thead><tr><th>Endpoint</th><th>Peer ID</th><th>Status</th><th>Source</th><th>Domains</th><th>Failures</th></tr></thead>
                       <tbody id="peerTableBody"></tbody>
@@ -491,20 +524,111 @@ async function api(url) {
   try { return await (await fetch(url)).json(); } catch(e) { return null; }
 }
 
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+}
+
+function fmtAge(ts) {
+  if (!ts) return '--';
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (!Number.isFinite(seconds)) return '--';
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ago`;
+}
+
+function renderNetwork(network) {
+  const body = document.getElementById('networkNodesBody');
+  if (!network || !network.summary) {
+    body.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Network overview unavailable</td></tr>';
+    return;
+  }
+
+  const summary = network.summary;
+  document.getElementById('networkOnline').textContent = `${summary.online_nodes}/${summary.total_nodes}`;
+  document.getElementById('networkCandidates').textContent = summary.active_candidates;
+  document.getElementById('networkAlertCount').textContent = summary.alerts_total;
+  document.getElementById('networkAlertCount').className = `network-summary-value ${summary.alerts_total ? 'text-danger' : 'text-success'}`;
+  document.getElementById('networkVersionMismatches').textContent = summary.version_mismatch_nodes;
+  document.getElementById('networkVersionMismatches').className = `network-summary-value ${summary.version_mismatch_nodes ? 'text-danger' : 'text-success'}`;
+  document.getElementById('networkChainRange').textContent = summary.chain_min == null ? '--' : (summary.chain_min === summary.chain_max ? summary.chain_min : `${summary.chain_min}-${summary.chain_max}`);
+
+  const problemCount = summary.offline_nodes + summary.version_mismatch_nodes + summary.alerts_unseen;
+  const networkBadge = document.getElementById('networkBadge');
+  if (problemCount > 0) {
+    networkBadge.textContent = problemCount;
+    networkBadge.style.display = 'inline';
+  } else {
+    networkBadge.style.display = 'none';
+  }
+
+  const versionOrder = ['agent-multi', 'doin-core', 'doin-node', 'doin-plugins', 'gym-fx', 'trading-contracts'];
+  body.innerHTML = (network.members || []).map(member => {
+    const online = member.status === 'online';
+    const mismatches = member.version_mismatches || {};
+    const compatible = online && Object.keys(mismatches).length === 0;
+    const healthClass = !online ? 'badge-danger' : (compatible ? 'badge-success' : 'badge-warning');
+    const healthLabel = !online ? 'Offline' : (compatible ? 'Healthy' : 'Mismatch');
+    const candidate = member.candidate || {};
+    const candidateHtml = Object.keys(candidate).length ?
+      `<strong>${esc(candidate.stage_name || 'stage ' + (candidate.stage ?? '?'))}</strong>` +
+      `<span class="network-subtext">gen ${esc(candidate.gen ?? '?')} | candidate ${esc(candidate.candidate_num ?? '?')}/${esc(candidate.total_candidates ?? '?')} | ${esc(fmtAge(candidate.timestamp))}</span>` :
+      '<span class="text-muted">Idle / waiting</span>';
+    const bestValues = Object.values(member.best_performance || {});
+    const best = bestValues.length ? fmt(bestValues[0], 6) : (candidate.champion_fitness != null ? fmt(candidate.champion_fitness, 6) : '--');
+    const versionText = versionOrder.filter(key => member.versions && member.versions[key]).map(key => `${key}:${member.versions[key]}`).join(' | ');
+    const versionHtml = online ?
+      `<span class="${compatible ? 'text-success' : 'text-warning'}" title="${esc(versionText)}"><i class="fas ${compatible ? 'fa-check-circle' : 'fa-code-branch'}"></i> ${compatible ? 'Exact match' : esc(Object.keys(mismatches).join(', '))}</span>` :
+      '<span class="text-muted">Unavailable</span>';
+    const open = member.dashboard_url ? `<a class="btn btn-xs btn-outline-info" href="${esc(member.dashboard_url)}" target="_blank" rel="noopener" title="Open node dashboard"><i class="fas fa-external-link-alt"></i></a>` : '';
+    return `<tr>
+      <td><span class="network-node-name">${esc(member.node_label || member.peer_id || 'unknown')}</span><span class="network-subtext">${esc((member.peer_id || '').substring(0, 12))}</span></td>
+      <td><code>${esc(member.endpoint || 'local')}</code><span class="network-subtext">${esc(member.hostname || '')}</span></td>
+      <td><span class="badge ${healthClass}">${healthLabel}</span>${member.error ? `<span class="network-subtext" title="${esc(member.error)}">route failed</span>` : ''}</td>
+      <td>${member.chain_height != null ? esc(member.chain_height) : '--'}</td>
+      <td>${candidateHtml}</td>
+      <td>${best}</td>
+      <td><span class="badge ${member.alerts_count ? 'badge-danger' : 'badge-success'}">${esc(member.alerts_count || 0)}</span></td>
+      <td>${versionHtml}</td>
+      <td>${open}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="9" class="text-center text-muted">No nodes discovered</td></tr>';
+
+  const alertBody = document.getElementById('networkAlertsBody');
+  const networkAlerts = network.alerts || [];
+  if (!networkAlerts.length) {
+    alertBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted"><i class="fas fa-check-circle text-success"></i> No network alerts</td></tr>';
+  } else {
+    const severityClass = {critical: 'badge-danger', warning: 'badge-warning', info: 'badge-info'};
+    alertBody.innerHTML = networkAlerts.map(alert => `<tr>
+      <td>${esc(alert.node_label || '--')}</td>
+      <td><span class="badge ${severityClass[alert.severity] || 'badge-secondary'}">${esc(alert.severity || 'unknown')}</span></td>
+      <td>${esc(alert.category || '--')}</td>
+      <td>${esc(alert.message || '')}</td>
+      <td>${esc(fmtTime(alert.timestamp))}</td>
+    </tr>`).join('');
+  }
+}
+
 // ── Refresh ──
 async function refreshAll() {
   document.getElementById('refreshSpin').style.display = 'inline-block';
 
-  const [node, peers, opt, training, evals, metrics, plugins, chain, events, candidate, alerts] = await Promise.all([
-    api('/api/node'), api('/api/peers'), api('/api/optimization'), null,
+  const [network, node, peers, opt, training, evals, metrics, plugins, chain, events, candidate, alerts] = await Promise.all([
+    api('/api/network'), api('/api/node'), api('/api/peers'), api('/api/optimization'), null,
     null, api('/api/metrics?limit=500'), api('/api/plugins'),
     api('/api/chain?limit=30'), api('/api/events?limit=300'), api('/api/candidate'),
     api('/api/alerts?limit=200'),
   ]);
 
+  renderNetwork(network);
+
   // Node
   if (node) {
-    document.getElementById('peerId').textContent = (node.peer_id||'').substring(0,12);
+    document.getElementById('peerId').textContent = node.node_label || (node.peer_id||'').substring(0,12);
+    document.getElementById('peerId').title = node.peer_id || '';
     document.getElementById('nodePort').textContent = node.port;
     document.getElementById('uptime').textContent = fmtUptime(node.uptime_s);
     document.getElementById('chainHeight').textContent = node.chain_height;

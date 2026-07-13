@@ -1,5 +1,6 @@
 {
   "$doc": "Persistent first island for the Phase 1 SOLUSDT 4h SAC asset-policy optimization on Omega.",
+  "node_label": "omega",
   "host": "0.0.0.0",
   "port": 8470,
   "data_dir": "./doin-data-trading-phase1-omega",

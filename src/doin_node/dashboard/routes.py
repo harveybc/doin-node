@@ -9,10 +9,12 @@ Provides real-time monitoring of:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import socket
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +89,12 @@ from doin_node.versioning import compute_component_versions
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+_NETWORK_MONITOR_TIMEOUT_SECONDS = 2.0
+_NETWORK_MONITOR_CACHE_SECONDS = 2.0
+_NETWORK_MONITOR_ALERT_LIMIT = 50
+_NODE_KEY = web.AppKey("doin_node", object)
+_NETWORK_MONITOR_CACHE_KEY = web.AppKey("network_monitor_cache", dict)
+_NETWORK_MONITOR_LOCK_KEY = web.AppKey("network_monitor_lock", asyncio.Lock)
 
 
 # Package versions are computed once per process and used by the dashboard.
@@ -120,13 +128,193 @@ def update_training_state(**kwargs: Any) -> None:
     _training_state.update(kwargs)
 
 
+def _node_label(node: Any) -> str:
+    configured = str(getattr(node.config, "node_label", "") or "").strip()
+    return configured or f"{socket.gethostname()}:{node.config.port}"
+
+
+def _compact_candidate(candidate: dict[str, Any] | None) -> dict[str, Any]:
+    source = candidate or {}
+    keys = (
+        "domain_id", "stage", "total_stages", "stage_name", "gen",
+        "gen_in_stage", "candidate_num", "total_candidates", "total_evals",
+        "fitness", "champion_fitness", "timestamp",
+    )
+    return {key: source[key] for key in keys if source.get(key) is not None}
+
+
+def _local_monitor_snapshot(node: Any) -> dict[str, Any]:
+    hostname = socket.gethostname()
+    candidate = _compact_candidate(node._current_candidate)
+    best_performance = {
+        domain_id: performance
+        for domain_id, (_parameters, performance) in node._domain_best.items()
+        if performance is not None
+    }
+    alerts = [dict(alert) for alert in reversed(node._alerts[-20:])]
+    return {
+        "node_label": _node_label(node),
+        "hostname": hostname,
+        "peer_id": node.identity.peer_id if node.identity else "unknown",
+        "port": node.config.port,
+        "status": "online",
+        "uptime_s": round(time.time() - node._start_time, 1),
+        "chain_height": node.chaindb.height if node.chaindb else 0,
+        "domains": list(node._domain_roles),
+        "versions": dict(_PACKAGE_VERSIONS),
+        "candidate": candidate,
+        "best_performance": best_performance,
+        "alerts": alerts,
+        "alerts_count": len(node._alerts),
+        "alerts_unseen": node._alerts_unseen,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _peer_endpoint_groups(node: Any) -> list[tuple[str, list[str]]]:
+    groups: dict[str, list[str]] = {}
+    for endpoint, peer in node._peers.items():
+        peer_id = peer.peer_id or endpoint
+        if peer_id == node.peer_id:
+            continue
+        groups.setdefault(peer_id, []).append(endpoint)
+    discovery = getattr(node, "discovery", None)
+    for endpoint, peer in getattr(discovery, "_known_peers", {}).items():
+        peer_id = peer.peer_id or endpoint
+        if peer_id == node.peer_id:
+            continue
+        endpoints = groups.setdefault(peer_id, [])
+        if endpoint not in endpoints:
+            endpoints.append(endpoint)
+    return list(groups.items())
+
+
+def _endpoint_http_url(endpoint: str, path: str) -> str:
+    host, separator, port = endpoint.rpartition(":")
+    if not separator or not host or not port:
+        raise ValueError(f"invalid peer endpoint {endpoint!r}")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"http://{host}:{port}{path}"
+
+
+async def _fetch_peer_monitor(
+    node: Any,
+    peer_id: str,
+    endpoints: list[str],
+) -> dict[str, Any]:
+    errors: list[str] = []
+    for endpoint in endpoints:
+        try:
+            payload = await node.transport.get_json(
+                _endpoint_http_url(endpoint, "/api/monitor"),
+                timeout_seconds=_NETWORK_MONITOR_TIMEOUT_SECONDS,
+            )
+            payload["endpoint"] = endpoint
+            payload["known_endpoints"] = endpoints
+            payload["dashboard_url"] = _endpoint_http_url(endpoint, "/dashboard")
+            payload["status"] = "online"
+            return payload
+        except Exception as exc:
+            errors.append(f"{endpoint}: {type(exc).__name__}")
+    return {
+        "node_label": peer_id[:12],
+        "peer_id": peer_id,
+        "status": "offline",
+        "endpoint": endpoints[0] if endpoints else "",
+        "known_endpoints": endpoints,
+        "dashboard_url": "",
+        "versions": {},
+        "candidate": {},
+        "alerts": [],
+        "alerts_count": 0,
+        "alerts_unseen": 0,
+        "error": "; ".join(errors) or "no endpoint",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _version_mismatches(versions: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        component: {"expected": revision, "actual": versions.get(component)}
+        for component, revision in _PACKAGE_VERSIONS.items()
+        if versions.get(component) != revision
+    }
+
+
+async def _build_network_overview(node: Any) -> dict[str, Any]:
+    local = _local_monitor_snapshot(node)
+    local.update({
+        "endpoint": "local",
+        "known_endpoints": [],
+        "dashboard_url": "/dashboard",
+        "is_local": True,
+    })
+    groups = _peer_endpoint_groups(node)
+    remote_members = await asyncio.gather(*(
+        _fetch_peer_monitor(node, peer_id, endpoints)
+        for peer_id, endpoints in groups
+    ))
+    members = [local, *remote_members]
+
+    aggregate_alerts: list[dict[str, Any]] = []
+    online = 0
+    version_mismatch_nodes = 0
+    active_candidates = 0
+    for member in members:
+        member["version_mismatches"] = (
+            _version_mismatches(member.get("versions") or {})
+            if member.get("status") == "online"
+            else {}
+        )
+        if member.get("status") == "online":
+            online += 1
+            if member["version_mismatches"]:
+                version_mismatch_nodes += 1
+            if member.get("candidate"):
+                active_candidates += 1
+        for alert in member.get("alerts") or []:
+            aggregate_alerts.append({
+                **alert,
+                "node_label": member.get("node_label"),
+                "node_endpoint": member.get("endpoint"),
+            })
+
+    aggregate_alerts.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
+    heights = [
+        int(member["chain_height"])
+        for member in members
+        if member.get("status") == "online" and member.get("chain_height") is not None
+    ]
+    return {
+        "summary": {
+            "total_nodes": len(members),
+            "online_nodes": online,
+            "offline_nodes": len(members) - online,
+            "active_candidates": active_candidates,
+            "alerts_total": sum(int(member.get("alerts_count", 0)) for member in members),
+            "alerts_unseen": sum(int(member.get("alerts_unseen", 0)) for member in members),
+            "version_mismatch_nodes": version_mismatch_nodes,
+            "chain_min": min(heights) if heights else None,
+            "chain_max": max(heights) if heights else None,
+        },
+        "members": members,
+        "alerts": aggregate_alerts[:_NETWORK_MONITOR_ALERT_LIMIT],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def setup_dashboard(app: web.Application, node: Any) -> None:
     """Register dashboard routes on *app*."""
-    app["_doin_node"] = node
+    app[_NODE_KEY] = node
+    app[_NETWORK_MONITOR_CACHE_KEY] = {"at": 0.0, "payload": None}
+    app[_NETWORK_MONITOR_LOCK_KEY] = asyncio.Lock()
     # Pages
     app.router.add_get("/dashboard", _dashboard_page)
     # API endpoints
     app.router.add_get("/api/node", _api_node)
+    app.router.add_get("/api/monitor", _api_monitor)
+    app.router.add_get("/api/network", _api_network)
     app.router.add_get("/api/peers", _api_peers)
     app.router.add_get("/api/optimization", _api_optimization)
     app.router.add_get("/api/training", _api_training)
@@ -149,7 +337,7 @@ async def _dashboard_page(request: web.Request) -> web.Response:
 # ── Node Info ────────────────────────────────────────────────
 
 async def _api_node(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     uptime = time.time() - node._start_time
     domains = []
     for did, dr in node._domain_roles.items():
@@ -165,6 +353,8 @@ async def _api_node(request: web.Request) -> web.Response:
             "preprocessor_plugin": oc.get("preprocessor_plugin", ""),
         })
     return web.json_response({
+        "node_label": _node_label(node),
+        "hostname": socket.gethostname(),
         "peer_id": node.identity.peer_id if node.identity else "unknown",
         "port": node.config.port,
         "uptime_s": round(uptime, 1),
@@ -176,10 +366,30 @@ async def _api_node(request: web.Request) -> web.Response:
     }, dumps=_dumps)
 
 
+async def _api_monitor(request: web.Request) -> web.Response:
+    """Return compact local health for decentralized network aggregation."""
+    return web.json_response(_local_monitor_snapshot(request.app[_NODE_KEY]), dumps=_dumps)
+
+
+async def _api_network(request: web.Request) -> web.Response:
+    """Return a fault-tolerant consolidated view from this node's perspective."""
+    cache = request.app[_NETWORK_MONITOR_CACHE_KEY]
+    now = time.monotonic()
+    if cache["payload"] is not None and now - cache["at"] < _NETWORK_MONITOR_CACHE_SECONDS:
+        return web.json_response(cache["payload"], dumps=_dumps)
+
+    async with request.app[_NETWORK_MONITOR_LOCK_KEY]:
+        now = time.monotonic()
+        if cache["payload"] is None or now - cache["at"] >= _NETWORK_MONITOR_CACHE_SECONDS:
+            cache["payload"] = await _build_network_overview(request.app[_NODE_KEY])
+            cache["at"] = time.monotonic()
+    return web.json_response(cache["payload"], dumps=_dumps)
+
+
 # ── Peers ────────────────────────────────────────────────────
 
 async def _api_peers(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     peers = []
     for ep, p in node._peers.items():
         peers.append({
@@ -209,7 +419,7 @@ async def _api_peers(request: web.Request) -> web.Response:
 # ── Optimization Status ─────────────────────────────────────
 
 async def _api_optimization(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     domains = []
 
     # ── Derive champion data from blockchain (single source of truth) ──
@@ -395,7 +605,7 @@ async def _api_training(request: web.Request) -> web.Response:
 # ── Evaluation Requests ──────────────────────────────────────
 
 async def _api_evaluations(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     limit = int(request.query.get("limit", "50"))
 
     pending = []
@@ -427,7 +637,7 @@ async def _api_evaluations(request: web.Request) -> web.Response:
 
 async def _api_metrics(request: web.Request) -> web.Response:
     """Build metrics from blockchain — identical on every synced node."""
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     limit = int(request.query.get("limit", "500"))
     metrics: list[dict] = []
 
@@ -505,7 +715,7 @@ async def _api_metrics(request: web.Request) -> web.Response:
 # ── Plugins ──────────────────────────────────────────────────
 
 async def _api_plugins(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     plugins = []
     for domain_id in node._domain_roles:
         entry: dict[str, Any] = {"domain_id": domain_id}
@@ -523,7 +733,7 @@ async def _api_plugins(request: web.Request) -> web.Response:
 # ── Chain ────────────────────────────────────────────────────
 
 async def _api_chain(request: web.Request) -> web.Response:
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     limit = int(request.query.get("limit", "30"))
     blocks = []
     if node.chaindb:
@@ -561,7 +771,7 @@ async def _api_chain(request: web.Request) -> web.Response:
 
 async def _api_events(request: web.Request) -> web.Response:
     """Return live event log — all events captured in memory (most recent first)."""
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     limit = int(request.query.get("limit", "200"))
 
     events = list(reversed(node._live_events[-limit:]))
@@ -572,7 +782,7 @@ async def _api_events(request: web.Request) -> web.Response:
 
 async def _api_candidate(request: web.Request) -> web.Response:
     """Return current candidate being evaluated (local state, not on blockchain)."""
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     return web.json_response(node._current_candidate or {}, dumps=_dumps)
 
 
@@ -580,7 +790,7 @@ async def _api_candidate(request: web.Request) -> web.Response:
 
 async def _api_alerts(request: web.Request) -> web.Response:
     """Return accumulated alerts (version mismatches, anomalies, etc.)."""
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     limit = int(request.query.get("limit", "200"))
     alerts = list(reversed(node._alerts[-limit:]))
     return web.json_response({
@@ -592,6 +802,6 @@ async def _api_alerts(request: web.Request) -> web.Response:
 
 async def _api_alerts_ack(request: web.Request) -> web.Response:
     """Reset the unseen alerts counter (user acknowledged them)."""
-    node = request.app["_doin_node"]
+    node = request.app[_NODE_KEY]
     node._alerts_unseen = 0
     return web.json_response({"status": "ok"})

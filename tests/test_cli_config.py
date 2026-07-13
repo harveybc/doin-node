@@ -35,6 +35,7 @@ def _write(tmp_path: Path, obj: dict) -> str:
 # A config that sets EVERY top-level field to a non-default value so a dropped
 # field is detectable (a coincidental default match cannot hide it).
 FULL_NODE = {
+    "node_label": "test-node",
     "host": "127.0.0.1",
     "port": 9999,
     "data_dir": "/tmp/xdata",
@@ -115,6 +116,7 @@ FULL_NODE = {
 
 def test_r05_every_top_level_field_materialized(tmp_path):
     cfg = cli.load_config(_write(tmp_path, FULL_NODE), {})
+    assert cfg.node_label == "test-node"
     assert cfg.host == "127.0.0.1"
     assert cfg.port == 9999
     assert cfg.data_dir == "/tmp/xdata"

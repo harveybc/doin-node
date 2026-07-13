@@ -188,6 +188,19 @@ class Transport:
             logger.debug("Failed to send to %s", endpoint, exc_info=True)
             return False
 
+    async def get_json(self, url: str, *, timeout_seconds: float = 2.0) -> dict[str, Any]:
+        """Fetch a small JSON object through the bounded shared client pool."""
+        if not self._session:
+            raise RuntimeError("transport not started")
+
+        timeout = ClientTimeout(total=float(timeout_seconds))
+        async with self._session.get(url, timeout=timeout) as response:
+            response.raise_for_status()
+            payload = await response.json()
+        if not isinstance(payload, dict):
+            raise TypeError(f"expected JSON object from {url}, got {type(payload).__name__}")
+        return payload
+
     async def broadcast(
         self,
         endpoints: list[str],

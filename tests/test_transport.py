@@ -19,5 +19,9 @@ async def test_transport_uses_bounded_outbound_connection_pool(unused_tcp_port: 
         assert connector is not None
         assert connector.limit == OUTBOUND_CONNECTION_LIMIT
         assert connector.limit_per_host == OUTBOUND_CONNECTIONS_PER_HOST
+        payload = await transport.get_json(
+            f"http://127.0.0.1:{unused_tcp_port}/health"
+        )
+        assert payload == {"status": "healthy", "port": unused_tcp_port}
     finally:
         await transport.stop()

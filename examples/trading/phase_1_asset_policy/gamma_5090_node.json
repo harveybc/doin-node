@@ -1,4 +1,5 @@
 {
+  "node_label": "gamma-5090",
   "$doc": "Gamma RTX 5090 eGPU island for Phase 1; second process and dashboard on port 8471.",
   "host": "0.0.0.0",
   "port": 8471,

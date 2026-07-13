@@ -272,6 +272,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
     # guessed literals, so loading {} reproduces UnifiedNodeConfig() exactly.
     defaults = UnifiedNodeConfig()
     return UnifiedNodeConfig(
+        node_label=raw.get("node_label", defaults.node_label),
         host=raw.get("host", defaults.host),
         port=raw.get("port", defaults.port),
         data_dir=raw.get("data_dir", defaults.data_dir),
