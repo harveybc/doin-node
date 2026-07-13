@@ -1391,7 +1391,9 @@ class UnifiedNode:
         # If the announced block is ahead of us, trigger sync
         if ann.block_index >= self._get_height():
             # Find the peer endpoint that sent this
-            peer_endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
+            peer_endpoint = self._find_peer_endpoint(
+                from_peer, message.sender_id, prefer_from_addr=True,
+            )
             if peer_endpoint:
                 # Update peer status
                 self.sync_manager.update_peer_status(peer_endpoint, ChainStatus(
@@ -3865,16 +3867,26 @@ class UnifiedNode:
             if status.chain_height > self._get_height():
                 await self._sync_with_peer(endpoint)
 
-    def _find_peer_endpoint(self, from_addr: str, sender_id: str) -> str | None:
+    def _find_peer_endpoint(
+        self,
+        from_addr: str,
+        sender_id: str,
+        *,
+        prefer_from_addr: bool = False,
+    ) -> str | None:
         """Find the endpoint for a peer based on address or sender ID."""
+        if prefer_from_addr:
+            for endpoint, peer in self._peers.items():
+                if peer.address == from_addr:
+                    return endpoint
         # Try matching by sender_id (peer_id)
         for ep, peer in self._peers.items():
             if peer.peer_id == sender_id:
                 return ep
         # Try matching by address
-        for ep in self._peers:
-            if from_addr in ep:
-                return ep
+        for endpoint, peer in self._peers.items():
+            if peer.address == from_addr:
+                return endpoint
         return None
 
     def _find_peer_endpoint_by_id(self, peer_id: str) -> str | None:

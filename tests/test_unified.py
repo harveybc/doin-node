@@ -60,6 +60,19 @@ def make_node(
     return UnifiedNode(config)
 
 
+def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
+    node = make_node()
+    node.add_peer("192.168.0.109", 8470, peer_id="original-author")
+    node.add_peer("100.99.54.79", 8470, peer_id="direct-forwarder")
+
+    assert node._find_peer_endpoint(
+        "100.99.54.79", "original-author",
+    ) == "192.168.0.109:8470"
+    assert node._find_peer_endpoint(
+        "100.99.54.79", "original-author", prefer_from_addr=True,
+    ) == "100.99.54.79:8470"
+
+
 # ── Test: Commit-Reveal (Hardening #1) ──────────────────────────────
 
 class TestCommitRevealIntegration:
