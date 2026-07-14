@@ -13,6 +13,7 @@ from doin_node.dashboard.routes import (
     _PACKAGE_VERSIONS,
     _blockchain_metrics_payload,
     _build_network_overview,
+    _campaign_progress,
     _deduplicate_monitor_members,
     _endpoint_http_url,
     _local_monitor_snapshot,
@@ -135,6 +136,41 @@ def test_stage_eta_requires_enough_runtime_evidence() -> None:
         "stage_eta_high_seconds": 14880.0,
         "stage_eta_basis": "planned_stage_before_early_stopping",
     }
+
+
+def test_campaign_progress_is_cumulative_across_configured_stages() -> None:
+    progress = _campaign_progress(
+        {
+            "stage": 4,
+            "gen_in_stage": 0,
+            "candidate_num": 12,
+            "total_candidates": 20,
+        },
+        [5, 5, 5, 5],
+    )
+
+    assert progress == {
+        "campaign_candidates_completed": 312,
+        "campaign_candidates_planned": 400,
+        "campaign_candidates_remaining": 88,
+        "campaign_progress_fraction": 0.78,
+        "campaign_progress_basis": "planned_all_stages_before_early_stopping",
+    }
+
+
+def test_campaign_progress_clamps_an_completed_generation_to_its_budget() -> None:
+    progress = _campaign_progress(
+        {
+            "stage": 2,
+            "gen_in_stage": 99,
+            "candidate_num": 99,
+            "total_candidates": 20,
+        },
+        [2, 3],
+    )
+
+    assert progress["campaign_candidates_completed"] == 100
+    assert progress["campaign_progress_fraction"] == 1.0
 
 
 def test_peer_groups_deduplicate_alternate_routes() -> None:

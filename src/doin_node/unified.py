@@ -2032,6 +2032,9 @@ class UnifiedNode:
                 logger.info("🧬 Starting optimization for %s", domain_id)
                 await self._run_full_optimization(domain_id, plugin)
                 logger.info("✅ Optimization complete for %s", domain_id)
+                self._domain_converged.add(domain_id)
+                if self._current_candidate.get("domain_id") == domain_id:
+                    self._current_candidate = {}
                 self._log_event("optimization_complete", domain_id=domain_id)
             except Exception:
                 logger.exception("Optimization error for %s", domain_id)

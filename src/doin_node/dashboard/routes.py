@@ -173,6 +173,49 @@ def _stage_eta(
     }
 
 
+def _campaign_progress(
+    candidate: dict[str, Any],
+    stage_generations: list[int],
+) -> dict[str, Any]:
+    """Return planned progress across every configured optimization stage.
+
+    This deliberately reports progress against the configured candidate budget,
+    rather than pretending that early stopping can be predicted exactly.  A
+    stage may finish sooner through L2 patience, but the displayed percentage
+    must never reset when a later stage starts.
+    """
+    try:
+        population = max(1, int(candidate["total_candidates"]))
+        stage_number = max(1, int(candidate.get("stage", 1)))
+        generation = max(0, int(candidate.get("gen_in_stage", 0)))
+        candidate_number = min(
+            population,
+            max(0, int(candidate.get("candidate_num", 0))),
+        )
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+    generations = [max(1, int(value)) for value in stage_generations]
+    if not generations:
+        return {}
+
+    stage_index = min(len(generations) - 1, stage_number - 1)
+    completed_prior_stages = sum(generations[:stage_index]) * population
+    completed_current_generations = min(generation, generations[stage_index]) * population
+    planned_total = sum(generations) * population
+    completed = min(
+        planned_total,
+        completed_prior_stages + completed_current_generations + candidate_number,
+    )
+    return {
+        "campaign_candidates_completed": completed,
+        "campaign_candidates_planned": planned_total,
+        "campaign_candidates_remaining": planned_total - completed,
+        "campaign_progress_fraction": completed / planned_total,
+        "campaign_progress_basis": "planned_all_stages_before_early_stopping",
+    }
+
+
 def _local_optimization_history(
     node: Any,
     candidate: dict[str, Any] | None = None,
@@ -685,6 +728,10 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["population_size"] = opt_cfg.get("population_size", 20)
         info["total_stages"] = len(stages) if stages else 1
         info["n_generations_stage"] = stages[0].get("generations", info["n_generations"]) if stages else info["n_generations"]
+        info["stage_generations"] = [
+            max(1, int(stage.get("generations", info["n_generations"])))
+            for stage in stages
+        ] or [max(1, int(info["n_generations"]))]
         info["metric_type"] = opt_cfg.get("metric_type", "regression")
         if stages:
             # Priority: chain shared-pop state > live candidate > fallback
@@ -715,6 +762,17 @@ async def _api_optimization(request: web.Request) -> web.Response:
                 info["current_stage"] = cur_stage_idx + 1
                 info["current_stage_name"] = cur_stage_name
                 info["n_generations_stage"] = stages[cur_stage_idx].get("generations", info["n_generations"])
+
+        current_candidate = (
+            node._current_candidate
+            if hasattr(node, "_current_candidate")
+            and node._current_candidate.get("domain_id") == domain_id
+            else {}
+        )
+        info["campaign_progress"] = _campaign_progress(
+            current_candidate,
+            info["stage_generations"],
+        )
 
         domains.append(info)
 

@@ -129,7 +129,7 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-secondary">
-              <div class="inner"><h3 id="progressCard" style="font-size:1.2rem">--</h3><p>Progress</p><span class="summary-detail" id="progressRuntime">Rate and ETA pending</span></div>
+              <div class="inner"><h3 id="progressCard" style="font-size:1.2rem">--</h3><p>Campaign Progress</p><span class="summary-detail" id="progressRuntime">Rate and ETA pending</span></div>
               <div class="icon"><i class="fas fa-chart-pie"></i></div>
             </div>
           </div>
@@ -1055,7 +1055,7 @@ async function refreshAll() {
     }).join('');
   }
 
-  // Top summary cards: Candidates Evaluated, Remaining, Progress
+  // Top summary cards: candidates evaluated, active stage, and full campaign progress.
   // Use events when available, fall back to /api/candidate, then /api/optimization config
   {
     const evList = (events && events.events) ? events.events : [];
@@ -1101,10 +1101,30 @@ async function refreshAll() {
         `G${genInStage}/${nGensStage} P${noImprove}/${optPatience} C${curCand}/${totCand}` +
         stageNameStr;
 
-      // Progress: generation + candidate progress within current stage
-      const genProgress = nGensStage > 0 ? genInStage / nGensStage : 0;
-      const candProgressInGen = totCand > 0 ? curCand / totCand : 0;
-      const overallPct = ((genProgress + candProgressInGen / Math.max(nGensStage, 1)) * 100).toFixed(1);
+      // Progress is intentionally cumulative across every configured stage.
+      // Stage-local details above remain useful, but must not reset the main
+      // percentage when a later stage begins.
+      const campaign = optDom.campaign_progress || {};
+      const stagePlan = Array.isArray(optDom.stage_generations) && optDom.stage_generations.length
+        ? optDom.stage_generations.map(value => Math.max(1, parseInt(value || 1)))
+        : Array(Math.max(totStages, 1)).fill(Math.max(nGensStage, 1));
+      const stageIndex = Math.min(stagePlan.length - 1, Math.max(0, curStage - 1));
+      const plannedSlots = stagePlan.reduce((sum, generations) => sum + generations * Math.max(totCand, 1), 0);
+      const inferredCompleted = Math.min(
+        plannedSlots,
+        stagePlan.slice(0, stageIndex).reduce((sum, generations) => sum + generations * Math.max(totCand, 1), 0) +
+          Math.min(genInStage, stagePlan[stageIndex]) * Math.max(totCand, 1) +
+          Math.min(Math.max(curCand, 0), Math.max(totCand, 1)),
+      );
+      const campaignCompleted = Number.isFinite(Number(campaign.campaign_candidates_completed))
+        ? Number(campaign.campaign_candidates_completed)
+        : inferredCompleted;
+      const campaignPlanned = Number.isFinite(Number(campaign.campaign_candidates_planned))
+        ? Number(campaign.campaign_candidates_planned)
+        : plannedSlots;
+      const overallPct = campaignPlanned > 0
+        ? (100 * Math.min(campaignPlanned, campaignCompleted) / campaignPlanned).toFixed(1)
+        : '0.0';
       document.getElementById('progressCard').innerHTML = `${overallPct}%`;
       const rate = localOptimizationHistory.candidates_per_hour;
       const eta = localOptimizationHistory.stage_eta_seconds;
