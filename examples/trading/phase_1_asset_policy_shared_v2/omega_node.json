@@ -1,0 +1,131 @@
+{
+  "$doc": "Omega bootstrap node for the existing DOIN shared-population protocol. This is a fresh v2 campaign; v1 island data remains untouched.",
+  "node_label": "omega",
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-trading-phase1-shared-v2-omega",
+  "identity_file": "./doin-data-trading-phase1-shared-v2-omega/identity.pem",
+  "bootstrap_peers": [
+    "100.110.215.85:8470",
+    "100.107.204.49:8470",
+    "100.107.204.49:8471"
+  ],
+  "target_block_time": 600,
+  "initial_threshold": -1000000000.0,
+  "acceptance_tolerance": 0.000001,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 1.0,
+  "quorum_tolerance": 0.000001,
+  "optimizer_loop_interval": 30,
+  "eval_poll_interval": 10,
+  "eval_max_concurrent": 1,
+  "storage_backend": "sqlite",
+  "network_protocol": "flooding",
+  "discovery_enabled": true,
+  "dashboard_enabled": true,
+  "fee_market_enabled": false,
+  "reset_chain": false,
+  "require_deterministic_seed": true,
+  "experiment_stats_file": "./doin-data-trading-phase1-shared-v2-omega/experiment_stats.csv",
+  "olap_db_path": "./doin-data-trading-phase1-shared-v2-omega/olap.db",
+  "domains": [
+    {
+      "domain_id": "trading-asset-policy-solusdt-4h-sac-shared-v2",
+      "optimize": true,
+      "evaluate": false,
+      "optimization_plugin": "trading_asset",
+      "inference_plugin": "trading_asset",
+      "synthetic_data_plugin": "trading_scenario",
+      "has_synthetic_data": false,
+      "synthetic_data_validation": false,
+      "higher_is_better": true,
+      "metric_type": "train_validation_l1_score",
+      "optimization_config": {
+        "agent_multi_root": "/home/harveybc/Documents/GitHub/agent-multi",
+        "load_config": "examples/config/phase_1_asset_policy/optimization/phase_1_asset_policy_solusdt_4h_sac_optimization_config.json",
+        "runtime_overlay": "configs/runtime/omega.json",
+        "optimizer_plugin": "default_optimizer",
+        "pipeline_plugin": "rl_pipeline_with_validation",
+        "preprocessor_plugin": "default_preprocessor",
+        "metric_type": "train_validation_l1_score",
+        "optimization_metric": "train_validation_l1_score",
+        "metric_schema": "trading.metrics.v1",
+        "higher_is_better": true,
+        "optimization_resume": false,
+        "optimization_pause_on_resume": false,
+        "shared_population": true,
+        "shared_population_size": 20,
+        "population_size": 20,
+        "initial_candidate_params": {
+          "learning_rate": 0.0001,
+          "batch_size": 256,
+          "gamma": 0.99,
+          "tau": 0.005,
+          "train_freq": 1,
+          "gradient_steps": 1,
+          "continuous_action_threshold": 0.2277750211333599
+        },
+        "ga_seed": 1701,
+        "ga_population": 20,
+        "optimization_patience": 5,
+        "optimization_stages": [
+          {
+            "name": "action_behavior",
+            "params": ["continuous_action_threshold"],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "critic_dynamics",
+            "params": ["gamma", "tau"],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "training_dynamics",
+            "params": ["learning_rate", "batch_size", "train_freq", "gradient_steps"],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "refinement",
+            "params": "all",
+            "generations": 5,
+            "patience": 4
+          }
+        ],
+        "hyperparameter_bounds": {
+          "learning_rate": [0.00001, 0.0005],
+          "batch_size": [128, 512],
+          "gamma": [0.95, 0.999],
+          "tau": [0.001, 0.02],
+          "train_freq": [1, 8],
+          "gradient_steps": [1, 8],
+          "continuous_action_threshold": [0.05, 0.35]
+        }
+      },
+      "param_bounds": {
+        "learning_rate": [0.00001, 0.0005],
+        "batch_size": [128, 512],
+        "gamma": [0.95, 0.999],
+        "tau": [0.001, 0.02],
+        "train_freq": [1, 8],
+        "gradient_steps": [1, 8],
+        "continuous_action_threshold": [0.05, 0.35]
+      },
+      "resource_limits": {
+        "max_training_seconds": 21600,
+        "max_memory_mb": 7000,
+        "max_epochs": 40,
+        "max_batch_size": 512
+      },
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 0.000001,
+        "bonus_threshold": 0.01,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      }
+    }
+  ]
+}
