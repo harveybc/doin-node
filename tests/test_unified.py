@@ -83,6 +83,39 @@ def test_shared_claim_lease_rejects_non_positive_values(field, value) -> None:
         UnifiedNode(config)
 
 
+def test_shared_claim_arbitration_converges_on_smallest_peer_id() -> None:
+    node = make_node(port=8480)
+    domain_id = "test-domain"
+    node._shared_pop_results[domain_id] = {}
+
+    accepted, owner = node._record_shared_claim(domain_id, 3, "peer-z")
+    assert accepted is True
+    assert owner == "peer-z"
+
+    accepted, owner = node._record_shared_claim(domain_id, 3, "peer-a")
+    assert accepted is True
+    assert owner == "peer-a"
+
+    accepted, owner = node._record_shared_claim(domain_id, 3, "peer-z")
+    assert accepted is False
+    assert owner == "peer-a"
+    assert node._shared_pop_claim_owners[domain_id][3] == "peer-a"
+
+
+def test_shared_claim_release_cannot_remove_another_peers_claim() -> None:
+    node = make_node(port=8481)
+    domain_id = "test-domain"
+    node._shared_pop_results[domain_id] = {}
+    node._record_shared_claim(domain_id, 4, "peer-a")
+
+    node._release_shared_claim_if_owned(domain_id, 4, "peer-z")
+    assert 4 in node._shared_pop_claims[domain_id]
+
+    node._release_shared_claim_if_owned(domain_id, 4, "peer-a")
+    assert 4 not in node._shared_pop_claims[domain_id]
+    assert 4 not in node._shared_pop_claim_owners[domain_id]
+
+
 def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     node = make_node()
     node.add_peer("192.168.0.109", 8470, peer_id="original-author")

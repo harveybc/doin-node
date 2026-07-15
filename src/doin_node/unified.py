@@ -338,6 +338,7 @@ class UnifiedNode:
         self._shared_pop_state: dict[str, dict[str, Any]] = {}  # domain_id → shared pop state
         self._shared_pop_results: dict[str, dict[int, dict]] = {}  # domain_id → {candidate_idx → result}
         self._shared_pop_claims: dict[str, set[int]] = {}  # domain_id → set of claimed candidate indices
+        self._shared_pop_claim_owners: dict[str, dict[int, str]] = {}  # domain_id → candidate → peer_id
         self._shared_pop_generation: dict[str, int] = {}  # domain_id → current generation
         self._shared_pop_claim_times: dict[str, dict[int, float]] = {}  # domain_id → {candidate_idx → timestamp}
         self._shared_pop_claim_result_counts: dict[str, dict[int, int]] = {}  # domain_id → {candidate_idx → result_count_at_claim_time}
@@ -1444,18 +1445,11 @@ class UnifiedNode:
             idx = candidate_data.get("candidate_idx")
             cur_gen = self._shared_pop_generation.get(domain_id)
             if gen is not None and idx is not None and gen == cur_gen:
-                claims = self._shared_pop_claims.get(domain_id, set())
-                claims.add(idx)
-                self._shared_pop_claims[domain_id] = claims
-                claim_times = self._shared_pop_claim_times.get(domain_id, {})
-                claim_times[idx] = time.time()
-                self._shared_pop_claim_times[domain_id] = claim_times
-                claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
-                results = self._shared_pop_results.get(domain_id, {})
-                claim_rcounts[idx] = len(results)
-                self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
+                _, owner = self._record_shared_claim(
+                    domain_id, int(idx), message.sender_id,
+                )
                 logger.debug("[SHARED] Peer %s claimed candidate %d gen=%d %s",
-                             message.sender_id[:12], idx, gen, domain_id)
+                             owner[:12], idx, gen, domain_id)
             return
 
         # ── Shared-population result handling ──
@@ -2112,6 +2106,7 @@ class UnifiedNode:
             self._shared_pop_state[domain_id] = pop_state
             self._shared_pop_results[domain_id] = {}
             self._shared_pop_claims[domain_id] = set()
+            self._shared_pop_claim_owners[domain_id] = {}
             self._shared_pop_claim_result_counts[domain_id] = {}
             self._shared_pop_generation[domain_id] = pop_state.get("generation", 0)
 
@@ -2224,6 +2219,7 @@ class UnifiedNode:
                     self._shared_pop_state[domain_id] = chain_pop
                     self._shared_pop_results[domain_id] = {}
                     self._shared_pop_claims[domain_id] = set()
+                    self._shared_pop_claim_owners[domain_id] = {}
                     self._shared_pop_claim_times[domain_id] = {}
                     self._shared_pop_claim_result_counts[domain_id] = {}
                     self._shared_pop_generation[domain_id] = generation
@@ -2256,21 +2252,38 @@ class UnifiedNode:
                     break
 
             if candidate_idx is not None:
-                # Claim locally
-                claims.add(candidate_idx)
-                self._shared_pop_claims[domain_id] = claims
-                claim_times = self._shared_pop_claim_times.get(domain_id, {})
-                claim_times[candidate_idx] = time.time()
-                self._shared_pop_claim_times[domain_id] = claim_times
-                claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
-                claim_rcounts[candidate_idx] = len(gen_results)
-                self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
+                # Claim locally, then resolve simultaneous distributed claims by
+                # the lexicographically smallest peer id before doing GPU work.
+                self._record_shared_claim(domain_id, candidate_idx, self.peer_id)
 
                 # Claim via peer APIs (best-effort)
-                await self._claim_on_peers(domain_id, generation, candidate_idx)
+                claim_won = await self._claim_on_peers(
+                    domain_id, generation, candidate_idx,
+                )
 
                 # Broadcast claim to peers (P2P fallback)
                 await self._broadcast_shared_claim(domain_id, generation, candidate_idx)
+
+                # Give concurrent claims one flooding heartbeat to arrive, then
+                # confirm ownership. A loser releases its local claim and pulls
+                # another candidate instead of evaluating a duplicate.
+                await asyncio.sleep(max(self.config.gossip_heartbeat_interval, 0.25))
+                claim_won = (
+                    claim_won
+                    and self._shared_pop_claim_owners.get(domain_id, {}).get(candidate_idx)
+                    == self.peer_id
+                    and await self._claim_on_peers(domain_id, generation, candidate_idx)
+                )
+                if not claim_won:
+                    self._release_shared_claim_if_owned(
+                        domain_id, candidate_idx, self.peer_id,
+                    )
+                    logger.info(
+                        "[SHARED] Lost claim arbitration for candidate %d gen=%d %s; retrying",
+                        candidate_idx, generation, domain_id,
+                    )
+                    await asyncio.sleep(0.25)
+                    continue
 
                 genome_data = population[candidate_idx]
                 logger.info(
@@ -2498,6 +2511,7 @@ class UnifiedNode:
                     # Clear generation results and retry the same generation
                     self._shared_pop_results[domain_id] = {}
                     self._shared_pop_claims[domain_id] = set()
+                    self._shared_pop_claim_owners[domain_id] = {}
                     self._shared_pop_claim_times[domain_id] = {}
                     self._shared_pop_claim_result_counts[domain_id] = {}
                     gen_results = {}
@@ -2552,6 +2566,7 @@ class UnifiedNode:
                 # Reset per-generation tracking
                 self._shared_pop_results[domain_id] = {}
                 self._shared_pop_claims[domain_id] = set()
+                self._shared_pop_claim_owners[domain_id] = {}
                 self._shared_pop_claim_times[domain_id] = {}
                 self._shared_pop_claim_result_counts[domain_id] = {}
                 self._shared_pop_generation[domain_id] = generation
@@ -2690,8 +2705,8 @@ class UnifiedNode:
 
     async def _claim_on_peers(
         self, domain_id: str, generation: int, candidate_idx: int,
-    ) -> None:
-        """Try to register our claim on all peers via their HTTP API."""
+    ) -> bool:
+        """Register a claim on peers and report deterministic ownership."""
         import aiohttp as _ah
 
         payload = {
@@ -2700,18 +2715,26 @@ class UnifiedNode:
             "generation": generation,
             "peer_id": self.peer_id,
         }
+        won = True
         for url in self._get_peer_api_urls():
             try:
                 async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
                     async with sess.post(f"{url}/api/shared/claim", json=payload) as resp:
                         if resp.status == 409:
                             body = await resp.json()
+                            owner = body.get("owner")
+                            if body.get("status") == "already_evaluated" or owner != self.peer_id:
+                                won = False
                             logger.debug("[SHARED-API] Claim %d rejected by %s: %s",
                                          candidate_idx, url, body.get("status"))
                         elif resp.status == 200:
+                            body = await resp.json()
+                            if body.get("owner", self.peer_id) != self.peer_id:
+                                won = False
                             logger.debug("[SHARED-API] Claim %d accepted by %s", candidate_idx, url)
             except Exception:
                 pass  # Best effort — P2P broadcast is the fallback
+        return won
 
     async def _push_result_to_peers(
         self, domain_id: str, generation: int, candidate_idx: int, result: dict,
@@ -2770,6 +2793,7 @@ class UnifiedNode:
             claims = self._shared_pop_claims.get(domain_id, set())
             results = self._shared_pop_results.get(domain_id, {})
             claim_times = self._shared_pop_claim_times.get(domain_id, {})
+            claim_owners = self._shared_pop_claim_owners.get(domain_id, {})
             updated = False
 
             for c in data.get("candidates", []):
@@ -2778,7 +2802,17 @@ class UnifiedNode:
                 if state == "claimed" and idx not in claims and idx not in results:
                     claims.add(idx)
                     claim_times[idx] = time.time()
+                    owner = c.get("owner")
+                    if owner:
+                        claim_owners[idx] = owner
                     updated = True
+                elif state == "claimed" and idx in claims and idx not in results:
+                    owner = c.get("owner")
+                    current_owner = claim_owners.get(idx)
+                    if owner and (not current_owner or owner < current_owner):
+                        claim_owners[idx] = owner
+                        claim_times[idx] = time.time()
+                        updated = True
                 elif state == "evaluated" and idx not in results:
                     fitness = c.get("fitness")
                     if fitness is not None:
@@ -2791,6 +2825,7 @@ class UnifiedNode:
             if updated:
                 self._shared_pop_claims[domain_id] = claims
                 self._shared_pop_claim_times[domain_id] = claim_times
+                self._shared_pop_claim_owners[domain_id] = claim_owners
                 self._shared_pop_results[domain_id] = results
 
         except Exception:
@@ -4278,6 +4313,47 @@ class UnifiedNode:
 
     # ── Shared-population coordination API ─────────────────────
 
+    def _record_shared_claim(
+        self, domain_id: str, candidate_idx: int, requester: str,
+    ) -> tuple[bool, str]:
+        """Record a claim using deterministic peer-id arbitration.
+
+        Simultaneous claims converge on the lexicographically smallest peer id.
+        The boolean reports whether ``requester`` owns the claim after the update.
+        """
+        if not requester:
+            raise ValueError("shared claim requester must be non-empty")
+        results = self._shared_pop_results.get(domain_id, {})
+        if candidate_idx in results:
+            return False, ""
+
+        claims = self._shared_pop_claims.setdefault(domain_id, set())
+        owners = self._shared_pop_claim_owners.setdefault(domain_id, {})
+        previous_owner = owners.get(candidate_idx)
+        owner = min(previous_owner, requester) if previous_owner else requester
+        claims.add(candidate_idx)
+        owners[candidate_idx] = owner
+
+        if owner != previous_owner or requester == owner:
+            claim_times = self._shared_pop_claim_times.setdefault(domain_id, {})
+            claim_times[candidate_idx] = time.time()
+            claim_rcounts = self._shared_pop_claim_result_counts.setdefault(domain_id, {})
+            claim_rcounts[candidate_idx] = len(results)
+        return owner == requester, owner
+
+    def _release_shared_claim_if_owned(
+        self, domain_id: str, candidate_idx: int, requester: str,
+    ) -> None:
+        owners = self._shared_pop_claim_owners.get(domain_id, {})
+        if owners.get(candidate_idx) != requester:
+            return
+        if candidate_idx in self._shared_pop_results.get(domain_id, {}):
+            return
+        self._shared_pop_claims.get(domain_id, set()).discard(candidate_idx)
+        owners.pop(candidate_idx, None)
+        self._shared_pop_claim_times.get(domain_id, {}).pop(candidate_idx, None)
+        self._shared_pop_claim_result_counts.get(domain_id, {}).pop(candidate_idx, None)
+
     def _expire_stale_claims(self, domain_id: str) -> None:
         """Remove claims that have timed out without a result.
 
@@ -4289,6 +4365,7 @@ class UnifiedNode:
         now = time.time()
         claim_times = self._shared_pop_claim_times.get(domain_id, {})
         claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
+        claim_owners = self._shared_pop_claim_owners.get(domain_id, {})
         claims = self._shared_pop_claims.get(domain_id, set())
         results = self._shared_pop_results.get(domain_id, {})
         current_result_count = len(results)
@@ -4307,12 +4384,14 @@ class UnifiedNode:
             claims.discard(idx)
             claim_times.pop(idx, None)
             claim_rcounts.pop(idx, None)
+            claim_owners.pop(idx, None)
             logger.info("[SHARED] Claim expired for candidate %d in %s (results_since=%d)",
                         idx, domain_id, results_since)
         if expired:
             self._shared_pop_claims[domain_id] = claims
             self._shared_pop_claim_times[domain_id] = claim_times
             self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
+            self._shared_pop_claim_owners[domain_id] = claim_owners
 
     async def _http_shared_candidates(self, request) -> Any:
         """GET /api/shared/candidates?domain_id=X
@@ -4336,6 +4415,7 @@ class UnifiedNode:
         claims = self._shared_pop_claims.get(domain_id, set())
         results = self._shared_pop_results.get(domain_id, {})
         claim_times = self._shared_pop_claim_times.get(domain_id, {})
+        claim_owners = self._shared_pop_claim_owners.get(domain_id, {})
 
         candidates = []
         for i in range(len(population)):
@@ -4352,6 +4432,7 @@ class UnifiedNode:
             }
             if state == "claimed" and i in claim_times:
                 entry["claimed_at"] = claim_times[i]
+                entry["owner"] = claim_owners.get(i)
                 entry["timeout_remaining"] = max(0, self._shared_claim_timeout - (time.time() - claim_times[i]))
                 claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
                 count_at_claim = claim_rcounts.get(i, 0)
@@ -4400,41 +4481,37 @@ class UnifiedNode:
         self._expire_stale_claims(domain_id)
 
         results = self._shared_pop_results.get(domain_id, {})
-        claims = self._shared_pop_claims.get(domain_id, set())
+        pop_state = self._shared_pop_state[domain_id]
+        pop_size = len(pop_state.get("population", []))
+        if candidate_idx < 0 or candidate_idx >= pop_size:
+            return web.json_response({"status": "error", "detail": "candidate_idx out of range"}, status=400)
 
         if candidate_idx in results:
             return web.json_response(
                 {"status": "already_evaluated", "fitness": results[candidate_idx].get("fitness")},
                 status=409,
             )
-        if candidate_idx in claims:
+        accepted, owner = self._record_shared_claim(
+            domain_id, candidate_idx, requester,
+        )
+        if not accepted:
             return web.json_response(
-                {"status": "already_claimed", "detail": f"candidate {candidate_idx} is already claimed"},
+                {
+                    "status": "already_claimed",
+                    "detail": f"candidate {candidate_idx} is owned by {owner}",
+                    "owner": owner,
+                },
                 status=409,
             )
 
-        pop_state = self._shared_pop_state[domain_id]
-        pop_size = len(pop_state.get("population", []))
-        if candidate_idx < 0 or candidate_idx >= pop_size:
-            return web.json_response({"status": "error", "detail": "candidate_idx out of range"}, status=400)
-
-        # Accept the claim
-        claims.add(candidate_idx)
-        self._shared_pop_claims[domain_id] = claims
-        claim_times = self._shared_pop_claim_times.get(domain_id, {})
-        claim_times[candidate_idx] = time.time()
-        self._shared_pop_claim_times[domain_id] = claim_times
-        claim_rcounts = self._shared_pop_claim_result_counts.get(domain_id, {})
-        claim_rcounts[candidate_idx] = len(results)
-        self._shared_pop_claim_result_counts[domain_id] = claim_rcounts
-
         logger.info("[SHARED-API] Candidate %d claimed by %s gen=%d %s",
-                     candidate_idx, requester[:12], gen, domain_id)
+                     candidate_idx, owner[:12], gen, domain_id)
 
         return web.json_response({
             "status": "claimed",
             "candidate_idx": candidate_idx,
             "generation": gen,
+            "owner": owner,
             "timeout_s": self._shared_claim_timeout,
             "result_patience": self._shared_claim_result_patience,
         })
