@@ -60,6 +60,29 @@ def make_node(
     return UnifiedNode(config)
 
 
+def test_shared_claim_lease_uses_configured_values() -> None:
+    node = UnifiedNode(UnifiedNodeConfig(
+        port=8479,
+        data_dir="/tmp/don-test-claim-lease",
+        shared_claim_timeout=3600.0,
+        shared_claim_result_patience=20,
+    ))
+
+    assert node._shared_claim_timeout == 3600.0
+    assert node._shared_claim_result_patience == 20
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("shared_claim_timeout", 0), ("shared_claim_result_patience", 0)],
+)
+def test_shared_claim_lease_rejects_non_positive_values(field, value) -> None:
+    config = UnifiedNodeConfig(port=8479, data_dir="/tmp/don-test-invalid-lease")
+    setattr(config, field, value)
+    with pytest.raises(ValueError, match=field):
+        UnifiedNode(config)
+
+
 def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     node = make_node()
     node.add_peer("192.168.0.109", 8470, peer_id="original-author")

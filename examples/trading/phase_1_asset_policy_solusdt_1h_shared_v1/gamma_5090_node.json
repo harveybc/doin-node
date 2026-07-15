@@ -16,6 +16,8 @@
   "quorum_fraction": 1.0,
   "quorum_tolerance": 1e-06,
   "optimizer_loop_interval": 30,
+  "shared_claim_timeout": 3600,
+  "shared_claim_result_patience": 20,
   "eval_poll_interval": 10,
   "eval_max_concurrent": 1,
   "storage_backend": "sqlite",

@@ -292,6 +292,10 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         eval_poll_interval=raw.get("eval_poll_interval", defaults.eval_poll_interval),
         eval_max_concurrent=raw.get("eval_max_concurrent", defaults.eval_max_concurrent),
         optimizer_loop_interval=raw.get("optimizer_loop_interval", defaults.optimizer_loop_interval),
+        shared_claim_timeout=raw.get("shared_claim_timeout", defaults.shared_claim_timeout),
+        shared_claim_result_patience=raw.get(
+            "shared_claim_result_patience", defaults.shared_claim_result_patience
+        ),
         storage_backend=raw.get("storage_backend", defaults.storage_backend),
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),

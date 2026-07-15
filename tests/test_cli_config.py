@@ -54,6 +54,8 @@ FULL_NODE = {
     "eval_poll_interval": 3.0,
     "eval_max_concurrent": 8,
     "optimizer_loop_interval": 15.0,
+    "shared_claim_timeout": 3600.0,
+    "shared_claim_result_patience": 20,
     "storage_backend": "json",
     "db_path": "/tmp/x/chain.db",
     "snapshot_interval": 42,
@@ -135,6 +137,8 @@ def test_r05_every_top_level_field_materialized(tmp_path):
     assert cfg.eval_poll_interval == 3.0
     assert cfg.eval_max_concurrent == 8
     assert cfg.optimizer_loop_interval == 15.0
+    assert cfg.shared_claim_timeout == 3600.0
+    assert cfg.shared_claim_result_patience == 20
     assert cfg.storage_backend == "json"
     assert cfg.db_path == "/tmp/x/chain.db"
     assert cfg.snapshot_interval == 42
@@ -313,6 +317,7 @@ def test_r05_empty_object_matches_defaults(tmp_path):
         "commit_reveal_max_age", "finality_confirmation_depth",
         "external_anchor_interval", "require_deterministic_seed",
         "eval_poll_interval", "eval_max_concurrent", "optimizer_loop_interval",
+        "shared_claim_timeout", "shared_claim_result_patience",
         "storage_backend", "db_path", "snapshot_interval", "prune_keep_blocks",
         "network_protocol", "gossip_heartbeat_interval", "discovery_enabled",
         "discovery_interval", "dashboard_enabled", "experiment_stats_file",

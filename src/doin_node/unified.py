@@ -173,6 +173,11 @@ class UnifiedNodeConfig:
     # Optimizer loop (when this node optimizes)
     optimizer_loop_interval: float = 30.0
 
+    # Shared-population claim lease. Defaults preserve the historical behavior;
+    # long-running evaluators can raise these values without changing pooling.
+    shared_claim_timeout: float = 600.0
+    shared_claim_result_patience: int = 4
+
     # Storage backend: "sqlite" (production) or "json" (legacy/testing)
     storage_backend: str = "sqlite"
     db_path: str = ""  # Auto-derived from data_dir if empty
@@ -336,8 +341,12 @@ class UnifiedNode:
         self._shared_pop_generation: dict[str, int] = {}  # domain_id → current generation
         self._shared_pop_claim_times: dict[str, dict[int, float]] = {}  # domain_id → {candidate_idx → timestamp}
         self._shared_pop_claim_result_counts: dict[str, dict[int, int]] = {}  # domain_id → {candidate_idx → result_count_at_claim_time}
-        self._shared_claim_timeout: float = 600.0  # 10 min timeout for pending claims
-        self._shared_claim_result_patience: int = 4  # expire claim after N other results arrive
+        self._shared_claim_timeout = float(config.shared_claim_timeout)
+        self._shared_claim_result_patience = int(config.shared_claim_result_patience)
+        if self._shared_claim_timeout <= 0:
+            raise ValueError("shared_claim_timeout must be positive")
+        if self._shared_claim_result_patience <= 0:
+            raise ValueError("shared_claim_result_patience must be positive")
         self._shared_poll_idx: int = 0  # Round-robin index for peer polling
 
         # ── Live event log (for dashboard) ──
