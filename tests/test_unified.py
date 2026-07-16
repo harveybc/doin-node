@@ -172,6 +172,7 @@ def test_shared_claim_generation_mismatch_only_ignores_lagging_peer(
             return {
                 "status": "generation_mismatch",
                 "current_generation": peer_generation,
+                "responder_peer_id": "peer",
             }
 
         async def __aenter__(self):
@@ -212,7 +213,11 @@ def test_shared_claim_counts_current_owner_confirmation(monkeypatch) -> None:
         status = 409
 
         async def json(self):
-            return {"status": "already_claimed", "owner": node.peer_id}
+            return {
+                "status": "already_claimed",
+                "owner": node.peer_id,
+                "responder_peer_id": "peer",
+            }
 
         async def __aenter__(self):
             return self
@@ -232,6 +237,56 @@ def test_shared_claim_counts_current_owner_confirmation(monkeypatch) -> None:
 
         def post(self, *args, **kwargs):
             return Response()
+
+    monkeypatch.setattr("aiohttp.ClientSession", Session)
+    confirmation = asyncio.run(node._claim_on_peers("test-domain", 5, 0))
+    assert confirmation.won is True
+    assert confirmation.ready_peers == 1
+    assert confirmation.contacted_peers == 1
+
+
+def test_shared_claim_skips_route_served_by_wrong_peer(monkeypatch) -> None:
+    node = make_node(port=8488)
+    node._get_peer_api_targets = lambda: [
+        ("peer-a", ["http://wrong", "http://right"]),
+    ]
+    node._shared_pop_state["test-domain"] = {
+        "generation": 5,
+        "population": [{"id": 0}],
+    }
+
+    class Response:
+        status = 409
+
+        def __init__(self, responder_peer_id):
+            self.responder_peer_id = responder_peer_id
+
+        async def json(self):
+            return {
+                "status": "already_claimed",
+                "owner": node.peer_id,
+                "responder_peer_id": self.responder_peer_id,
+            }
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class Session:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, url, **kwargs):
+            responder = "peer-z" if url == "http://wrong/api/shared/claim" else "peer-a"
+            return Response(responder)
 
     monkeypatch.setattr("aiohttp.ClientSession", Session)
     confirmation = asyncio.run(node._claim_on_peers("test-domain", 5, 0))

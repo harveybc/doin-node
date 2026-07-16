@@ -2965,7 +2965,8 @@ class UnifiedNode:
                                 continue
                             data = await resp.json()
                         if (
-                            data.get("generation") == generation
+                            data.get("peer_id") == peer_id
+                            and data.get("generation") == generation
                             and data.get("generation_fingerprint")
                             == expected_fingerprint
                         ):
@@ -3030,14 +3031,22 @@ class UnifiedNode:
         contacted_peers = 0
         timeout = _ah.ClientTimeout(total=5)
         async with _ah.ClientSession(timeout=timeout) as sess:
-            for _, urls in self._get_peer_api_targets():
+            for target_peer_id, urls in self._get_peer_api_targets():
                 response: tuple[int, dict[str, Any], str] | None = None
                 for url in urls:
                     try:
                         async with sess.post(
                             f"{url}/api/shared/claim", json=payload,
                         ) as resp:
-                            response = (resp.status, await resp.json(), url)
+                            body = await resp.json()
+                            if body.get("responder_peer_id") != target_peer_id:
+                                logger.warning(
+                                    "[SHARED-API] Ignoring route %s for peer %s; responder is %s",
+                                    url, target_peer_id[:12],
+                                    str(body.get("responder_peer_id") or "unknown")[:12],
+                                )
+                                continue
+                            response = (resp.status, body, url)
                         break
                     except Exception:
                         continue
@@ -4869,6 +4878,7 @@ class UnifiedNode:
 
         return web.json_response({
             "domain_id": domain_id,
+            "peer_id": self.peer_id,
             "generation": gen,
             "pop_size": len(population),
             "bootstrap_seed": pop_state.get("bootstrap_seed"),
@@ -4900,7 +4910,11 @@ class UnifiedNode:
 
         cur_gen = self._shared_pop_generation.get(domain_id)
         if cur_gen is None or domain_id not in self._shared_pop_state:
-            return web.json_response({"status": "error", "detail": "no active shared population"}, status=404)
+            return web.json_response({
+                "status": "error",
+                "detail": "no active shared population",
+                "responder_peer_id": self.peer_id,
+            }, status=404)
         if gen != cur_gen:
             return web.json_response(
                 {
@@ -4908,6 +4922,7 @@ class UnifiedNode:
                     "detail": f"generation mismatch: current={cur_gen}, requested={gen}",
                     "current_generation": cur_gen,
                     "requested_generation": gen,
+                    "responder_peer_id": self.peer_id,
                 },
                 status=409,
             )
@@ -4921,6 +4936,7 @@ class UnifiedNode:
                     "status": "population_mismatch",
                     "detail": "generation population fingerprint mismatch",
                     "generation_fingerprint": local_fingerprint,
+                    "responder_peer_id": self.peer_id,
                 },
                 status=409,
             )
@@ -4931,11 +4947,19 @@ class UnifiedNode:
         pop_state = self._shared_pop_state[domain_id]
         pop_size = len(pop_state.get("population", []))
         if candidate_idx < 0 or candidate_idx >= pop_size:
-            return web.json_response({"status": "error", "detail": "candidate_idx out of range"}, status=400)
+            return web.json_response({
+                "status": "error",
+                "detail": "candidate_idx out of range",
+                "responder_peer_id": self.peer_id,
+            }, status=400)
 
         if candidate_idx in results:
             return web.json_response(
-                {"status": "already_evaluated", "fitness": results[candidate_idx].get("fitness")},
+                {
+                    "status": "already_evaluated",
+                    "fitness": results[candidate_idx].get("fitness"),
+                    "responder_peer_id": self.peer_id,
+                },
                 status=409,
             )
         owners = self._shared_pop_claim_owners.get(domain_id, {})
@@ -4950,6 +4974,7 @@ class UnifiedNode:
                     "detail": f"peer already owns candidate {active_candidate}",
                     "active_candidate": active_candidate,
                     "owner": requester,
+                    "responder_peer_id": self.peer_id,
                 },
                 status=409,
             )
@@ -4963,6 +4988,7 @@ class UnifiedNode:
                     "status": "already_claimed",
                     "detail": f"candidate {candidate_idx} is owned by {owner}",
                     "owner": owner,
+                    "responder_peer_id": self.peer_id,
                 },
                 status=409,
             )
@@ -4975,6 +5001,7 @@ class UnifiedNode:
             "candidate_idx": candidate_idx,
             "generation": gen,
             "owner": owner,
+            "responder_peer_id": self.peer_id,
             "generation_fingerprint": local_fingerprint,
             "timeout_s": self._shared_claim_timeout,
             "result_patience": self._shared_claim_result_patience,
