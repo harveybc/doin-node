@@ -2874,6 +2874,45 @@ class UnifiedNode:
         """Get one HTTP base URL per verified logical peer."""
         return [urls[0] for _, urls in self._get_peer_api_targets() if urls]
 
+    async def _resolve_peer_api_identities(self) -> int:
+        """Resolve endpoint placeholders to stable peer IDs via the HTTP API."""
+        import aiohttp as _ah
+
+        unresolved = [
+            (endpoint, peer)
+            for endpoint, peer in list(self._peers.items())
+            if peer.peer_id == endpoint or peer.peer_id.startswith("lan-")
+        ]
+        if not unresolved:
+            return 0
+
+        resolved = 0
+        timeout = _ah.ClientTimeout(total=3)
+        async with _ah.ClientSession(timeout=timeout) as sess:
+            for endpoint, peer in unresolved:
+                try:
+                    async with sess.get(
+                        f"http://{peer.address}:{peer.port}/peers",
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                    peer_id = str(data.get("self", {}).get("peer_id") or "")
+                    if not peer_id or peer_id == self.peer_id:
+                        continue
+                    old_id = peer.peer_id
+                    peer.peer_id = peer_id
+                    if self.gossip:
+                        self.gossip.rename_peer(old_id, peer_id)
+                    logger.info(
+                        "[SHARED] Resolved peer route %s: %s -> %s",
+                        endpoint, old_id, peer_id[:12],
+                    )
+                    resolved += 1
+                except Exception:
+                    continue
+        return resolved
+
     async def _wait_for_shared_peer_count(self) -> bool:
         """Wait until the configured number of verified peers is discovered."""
         required = self._shared_min_peers
@@ -2884,6 +2923,7 @@ class UnifiedNode:
         last_warning = time.monotonic()
         last_count = -1
         while self._running:
+            await self._resolve_peer_api_identities()
             count = len(self._get_peer_api_targets())
             if count >= required:
                 logger.info("[SHARED] Verified peer membership ready: %d/%d", count, required)
@@ -2946,6 +2986,7 @@ class UnifiedNode:
         last_warning = time.monotonic()
         last_count = -1
         while self._running:
+            await self._resolve_peer_api_identities()
             ready = await self._probe_shared_generation_peers(domain_id, generation)
             count = len(ready)
             if count >= required:

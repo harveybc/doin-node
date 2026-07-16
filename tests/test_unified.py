@@ -253,6 +253,43 @@ def test_peer_api_targets_require_identity_and_deduplicate_paths() -> None:
     ]
 
 
+def test_shared_peer_placeholder_is_resolved_via_api(monkeypatch) -> None:
+    node = make_node(port=8487)
+    peer = node.add_peer("100.64.0.2", 8470)
+
+    class Response:
+        status = 200
+
+        async def json(self):
+            return {"self": {"peer_id": "peer-a", "port": 8470}}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class Session:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("aiohttp.ClientSession", Session)
+    assert asyncio.run(node._resolve_peer_api_identities()) == 1
+    assert peer.peer_id == "peer-a"
+    assert node._get_peer_api_targets() == [
+        ("peer-a", ["http://100.64.0.2:8470"]),
+    ]
+
+
 def test_polled_shared_claim_preserves_remote_lease_age() -> None:
     node = make_node(port=8482)
     domain_id = "test-domain"
