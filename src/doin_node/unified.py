@@ -1477,6 +1477,16 @@ class UnifiedNode:
                              owner[:12], idx, gen, domain_id)
             return
 
+        if candidate_data.get("_shared_release"):
+            gen = candidate_data.get("generation")
+            idx = candidate_data.get("candidate_idx")
+            cur_gen = self._shared_pop_generation.get(domain_id)
+            if gen is not None and idx is not None and gen == cur_gen:
+                self._release_shared_claim_if_owned(
+                    domain_id, int(idx), message.sender_id,
+                )
+            return
+
         # ── Shared-population result handling ──
         if candidate_data.get("_shared_result"):
             gen = candidate_data.get("generation")
@@ -2305,6 +2315,12 @@ class UnifiedNode:
                     self._release_shared_claim_if_owned(
                         domain_id, candidate_idx, self.peer_id,
                     )
+                    await self._release_claim_on_peers(
+                        domain_id, generation, candidate_idx,
+                    )
+                    await self._broadcast_shared_release(
+                        domain_id, generation, candidate_idx,
+                    )
                     logger.info(
                         "[SHARED] Lost claim arbitration for candidate %d gen=%d %s; retrying",
                         candidate_idx, generation, domain_id,
@@ -2701,6 +2717,26 @@ class UnifiedNode:
         )
         await self._broadcast(msg)
 
+    async def _broadcast_shared_release(
+        self, domain_id: str, generation: int, candidate_idx: int,
+    ) -> None:
+        """Broadcast release of a claim this node no longer owns."""
+        msg = Message(
+            msg_type=MessageType.CANDIDATE_EVALUATION,
+            sender_id=self.peer_id,
+            payload={
+                "tx_id": f"release:{domain_id}:{generation}:{candidate_idx}:{self.peer_id}",
+                "domain_id": domain_id,
+                "peer_id": self.peer_id,
+                "candidate_data": {
+                    "_shared_release": True,
+                    "generation": generation,
+                    "candidate_idx": candidate_idx,
+                },
+            },
+        )
+        await self._broadcast(msg)
+
     async def _broadcast_shared_result(
         self, domain_id: str, generation: int, candidate_idx: int,
         result: dict,
@@ -2760,11 +2796,29 @@ class UnifiedNode:
                     async with sess.post(f"{url}/api/shared/claim", json=payload) as resp:
                         if resp.status == 409:
                             body = await resp.json()
+                            status = body.get("status")
                             owner = body.get("owner")
-                            if body.get("status") == "already_evaluated" or owner != self.peer_id:
+                            if status == "generation_mismatch":
+                                peer_generation = body.get("current_generation")
+                                # A lagging peer has not installed this generation yet;
+                                # it must not make the first current-generation worker
+                                # abandon a valid lease. An ahead peer means our work is
+                                # stale and must stop.
+                                try:
+                                    peer_generation = int(peer_generation)
+                                except (TypeError, ValueError):
+                                    peer_generation = generation
+                                if peer_generation >= generation:
+                                    won = False
+                            elif status in {"already_evaluated", "owner_busy"}:
+                                won = False
+                            elif status == "already_claimed":
+                                if owner != self.peer_id:
+                                    won = False
+                            else:
                                 won = False
                             logger.debug("[SHARED-API] Claim %d rejected by %s: %s",
-                                         candidate_idx, url, body.get("status"))
+                                         candidate_idx, url, status)
                         elif resp.status == 200:
                             body = await resp.json()
                             if body.get("owner", self.peer_id) != self.peer_id:
@@ -2773,6 +2827,26 @@ class UnifiedNode:
             except Exception:
                 pass  # Best effort — P2P broadcast is the fallback
         return won
+
+    async def _release_claim_on_peers(
+        self, domain_id: str, generation: int, candidate_idx: int,
+    ) -> None:
+        """Release this node's candidate lease on directly reachable peers."""
+        import aiohttp as _ah
+
+        payload = {
+            "domain_id": domain_id,
+            "candidate_idx": candidate_idx,
+            "generation": generation,
+            "peer_id": self.peer_id,
+        }
+        for url in self._get_peer_api_urls():
+            try:
+                async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
+                    async with sess.post(f"{url}/api/shared/release", json=payload):
+                        pass
+            except Exception:
+                pass  # P2P release and lease expiry remain as fallbacks
 
     async def _push_result_to_peers(
         self, domain_id: str, generation: int, candidate_idx: int, result: dict,
@@ -4180,6 +4254,7 @@ class UnifiedNode:
         # Shared-population coordination API
         app.router.add_get("/api/shared/candidates", self._http_shared_candidates)
         app.router.add_post("/api/shared/claim", self._http_shared_claim)
+        app.router.add_post("/api/shared/release", self._http_shared_release)
         app.router.add_post("/api/shared/result", self._http_shared_result)
 
         # Web dashboard
@@ -4412,6 +4487,18 @@ class UnifiedNode:
         claims = self._shared_pop_claims.setdefault(domain_id, set())
         owners = self._shared_pop_claim_owners.setdefault(domain_id, {})
         previous_owner = owners.get(candidate_idx)
+
+        # A worker evaluates synchronously and therefore can own only one
+        # unresolved candidate in a generation. Rejecting additional leases
+        # prevents a temporarily leading node from reserving the whole pool
+        # while other peers are still installing the new generation.
+        active_candidate = next((
+            idx for idx, owner in owners.items()
+            if owner == requester and idx != candidate_idx and idx not in results
+        ), None)
+        if active_candidate is not None:
+            return False, previous_owner or ""
+
         owner = min(previous_owner, requester) if previous_owner else requester
         claims.add(candidate_idx)
         owners[candidate_idx] = owner
@@ -4558,7 +4645,12 @@ class UnifiedNode:
             return web.json_response({"status": "error", "detail": "no active shared population"}, status=404)
         if gen != cur_gen:
             return web.json_response(
-                {"status": "error", "detail": f"generation mismatch: current={cur_gen}, requested={gen}"},
+                {
+                    "status": "generation_mismatch",
+                    "detail": f"generation mismatch: current={cur_gen}, requested={gen}",
+                    "current_generation": cur_gen,
+                    "requested_generation": gen,
+                },
                 status=409,
             )
 
@@ -4575,6 +4667,22 @@ class UnifiedNode:
                 {"status": "already_evaluated", "fitness": results[candidate_idx].get("fitness")},
                 status=409,
             )
+        owners = self._shared_pop_claim_owners.get(domain_id, {})
+        active_candidate = next((
+            idx for idx, owner in owners.items()
+            if owner == requester and idx != candidate_idx and idx not in results
+        ), None)
+        if active_candidate is not None:
+            return web.json_response(
+                {
+                    "status": "owner_busy",
+                    "detail": f"peer already owns candidate {active_candidate}",
+                    "active_candidate": active_candidate,
+                    "owner": requester,
+                },
+                status=409,
+            )
+
         accepted, owner = self._record_shared_claim(
             domain_id, candidate_idx, requester,
         )
@@ -4598,6 +4706,40 @@ class UnifiedNode:
             "owner": owner,
             "timeout_s": self._shared_claim_timeout,
             "result_patience": self._shared_claim_result_patience,
+        })
+
+    async def _http_shared_release(self, request) -> Any:
+        """POST /api/shared/release releases only the requester's own lease."""
+        from aiohttp import web
+        try:
+            data = await request.json()
+            domain_id = data["domain_id"]
+            candidate_idx = int(data["candidate_idx"])
+            gen = int(data["generation"])
+            requester = data["peer_id"]
+        except (KeyError, json.JSONDecodeError, ValueError):
+            return web.json_response(
+                {"status": "error", "detail": "domain_id, candidate_idx, generation, peer_id required"},
+                status=400,
+            )
+
+        cur_gen = self._shared_pop_generation.get(domain_id)
+        if cur_gen is None or domain_id not in self._shared_pop_state:
+            return web.json_response({"status": "not_active"}, status=404)
+        if gen != cur_gen:
+            return web.json_response({
+                "status": "generation_mismatch",
+                "current_generation": cur_gen,
+                "requested_generation": gen,
+            }, status=409)
+
+        owner_before = self._shared_pop_claim_owners.get(domain_id, {}).get(candidate_idx)
+        self._release_shared_claim_if_owned(domain_id, candidate_idx, requester)
+        released = owner_before == requester and candidate_idx not in self._shared_pop_results.get(domain_id, {})
+        return web.json_response({
+            "status": "released" if released else "not_owner",
+            "candidate_idx": candidate_idx,
+            "generation": gen,
         })
 
     async def _http_shared_result(self, request) -> Any:

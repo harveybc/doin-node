@@ -116,6 +116,68 @@ def test_shared_claim_release_cannot_remove_another_peers_claim() -> None:
     assert 4 not in node._shared_pop_claim_owners[domain_id]
 
 
+def test_shared_claim_owner_cannot_reserve_multiple_candidates() -> None:
+    node = make_node(port=8483)
+    domain_id = "test-domain"
+    node._shared_pop_results[domain_id] = {}
+
+    accepted, owner = node._record_shared_claim(domain_id, 1, "peer-a")
+    assert accepted is True
+    assert owner == "peer-a"
+
+    accepted, owner = node._record_shared_claim(domain_id, 2, "peer-a")
+    assert accepted is False
+    assert owner == ""
+    assert node._shared_pop_claims[domain_id] == {1}
+
+    node._release_shared_claim_if_owned(domain_id, 1, "peer-a")
+    accepted, owner = node._record_shared_claim(domain_id, 2, "peer-a")
+    assert accepted is True
+    assert owner == "peer-a"
+
+
+@pytest.mark.parametrize(
+    ("peer_generation", "expected"),
+    [(4, True), (5, False), (6, False), (None, False)],
+)
+def test_shared_claim_generation_mismatch_only_ignores_lagging_peer(
+    monkeypatch, peer_generation, expected,
+) -> None:
+    node = make_node(port=8484)
+    node._get_peer_api_urls = lambda: ["http://peer"]
+
+    class Response:
+        status = 409
+
+        async def json(self):
+            return {
+                "status": "generation_mismatch",
+                "current_generation": peer_generation,
+            }
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class Session:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("aiohttp.ClientSession", Session)
+    assert asyncio.run(node._claim_on_peers("test-domain", 5, 0)) is expected
+
+
 def test_polled_shared_claim_preserves_remote_lease_age() -> None:
     node = make_node(port=8482)
     domain_id = "test-domain"
