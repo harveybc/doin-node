@@ -24,6 +24,7 @@ Security systems wired in:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -96,6 +97,30 @@ from doin_node.stats.experiment_tracker import ExperimentTracker
 from doin_node.storage.chaindb import ChainDB
 
 logger = logging.getLogger(__name__)
+
+
+def _shared_population_seed(domain_id: str, optimization_config: dict[str, Any]) -> int:
+    configured = optimization_config.get(
+        "shared_population_seed", optimization_config.get("ga_seed")
+    )
+    if configured is None:
+        configured = int.from_bytes(
+            hashlib.sha256(domain_id.encode()).digest()[:4], "big"
+        )
+    seed = int(configured)
+    if not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("shared-population seed must fit uint32")
+    return seed
+
+
+def _shared_population_fingerprint(population_state: dict[str, Any]) -> str:
+    payload = json.dumps(
+        population_state,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 # ── Configuration ────────────────────────────────────────────────────
@@ -2078,6 +2103,7 @@ class UnifiedNode:
             opt_cfg = role.optimization_config
             shared_pop_size = opt_cfg.get("shared_population_size", 60)
             shared_patience = opt_cfg.get("optimization_patience", 5)
+            bootstrap_seed = _shared_population_seed(domain_id, opt_cfg)
 
             # Setup plugin environment
             if hasattr(plugin, "setup_shared_mode"):
@@ -2089,13 +2115,14 @@ class UnifiedNode:
                 # First node to start — create genesis population
                 logger.info("[SHARED] Creating genesis population (%d genomes) for %s",
                             shared_pop_size, domain_id)
-                seed = int.from_bytes(
-                    _hl.sha256(domain_id.encode()).digest()[:4], "big"
+                pop_state = plugin.create_shared_population(
+                    shared_pop_size, seed=bootstrap_seed
                 )
-                pop_state = plugin.create_shared_population(shared_pop_size, seed=seed)
                 pop_state["generation"] = 0
                 pop_state["stage_idx"] = 0
                 pop_state["no_improve_count"] = 0
+                pop_state["bootstrap_seed"] = bootstrap_seed
+                pop_state["bootstrap_domain_id"] = domain_id
                 _hib = getattr(role, 'higher_is_better', False)
                 pop_state["best_fitness_ever"] = None  # None = no champion yet (worst fitness)
 
@@ -2557,6 +2584,11 @@ class UnifiedNode:
                     "innovation_tracker": innovation_tracker_data,
                     "stage_schedule": stage_schedule,
                     "param_defaults": param_defaults,
+                    "bootstrap_seed": pop_state.get(
+                        "bootstrap_seed",
+                        _shared_population_seed(domain_id, role.optimization_config),
+                    ),
+                    "bootstrap_domain_id": domain_id,
                 }
                 await self._store_shared_population_in_chain(domain_id, new_pop_state)
 
@@ -2614,15 +2646,21 @@ class UnifiedNode:
         from datetime import datetime, timezone
         import hashlib as _hl
 
+        population_fingerprint = _shared_population_fingerprint(pop_state)
         tx = Transaction(
             id=_hl.sha256(
-                f"shared_pop:{domain_id}:{pop_state.get('generation', 0)}:{time.time()}".encode()
+                (
+                    f"shared_pop:{domain_id}:{pop_state.get('generation', 0)}:"
+                    f"{population_fingerprint}"
+                ).encode()
             ).hexdigest(),
             tx_type=TransactionType.OPTIMAE_ACCEPTED,
             domain_id=domain_id,
             peer_id=self.peer_id,
             payload={
                 "_shared_population": pop_state,
+                "_shared_population_fingerprint": population_fingerprint,
+                "_shared_population_seed": pop_state.get("bootstrap_seed"),
                 "performance": pop_state.get("best_fitness_ever", 0.0),
                 "increment": 0.01,
             },
@@ -4490,6 +4528,8 @@ class UnifiedNode:
             "domain_id": domain_id,
             "generation": gen,
             "pop_size": len(population),
+            "bootstrap_seed": pop_state.get("bootstrap_seed"),
+            "population_fingerprint": _shared_population_fingerprint(pop_state),
             "evaluated": len(results),
             "claimed": len(claims - set(results.keys())),
             "free": len(population) - len(claims) - len(set(results.keys()) - claims),
