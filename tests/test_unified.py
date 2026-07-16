@@ -66,15 +66,30 @@ def test_shared_claim_lease_uses_configured_values() -> None:
         data_dir="/tmp/don-test-claim-lease",
         shared_claim_timeout=3600.0,
         shared_claim_result_patience=20,
+        shared_min_peers=3,
+        shared_peer_wait_timeout=45.0,
+        shared_claim_settle_seconds=2.0,
+        shared_claim_confirmation_rounds=3,
     ))
 
     assert node._shared_claim_timeout == 3600.0
     assert node._shared_claim_result_patience == 20
+    assert node._shared_min_peers == 3
+    assert node._shared_peer_wait_timeout == 45.0
+    assert node._shared_claim_settle_seconds == 2.0
+    assert node._shared_claim_confirmation_rounds == 3
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("shared_claim_timeout", 0), ("shared_claim_result_patience", 0)],
+    [
+        ("shared_claim_timeout", 0),
+        ("shared_claim_result_patience", 0),
+        ("shared_min_peers", -1),
+        ("shared_peer_wait_timeout", 0),
+        ("shared_claim_settle_seconds", 0),
+        ("shared_claim_confirmation_rounds", 0),
+    ],
 )
 def test_shared_claim_lease_rejects_non_positive_values(field, value) -> None:
     config = UnifiedNodeConfig(port=8479, data_dir="/tmp/don-test-invalid-lease")
@@ -144,7 +159,11 @@ def test_shared_claim_generation_mismatch_only_ignores_lagging_peer(
     monkeypatch, peer_generation, expected,
 ) -> None:
     node = make_node(port=8484)
-    node._get_peer_api_urls = lambda: ["http://peer"]
+    node._get_peer_api_targets = lambda: [("peer", ["http://peer"])]
+    node._shared_pop_state["test-domain"] = {
+        "generation": 5,
+        "population": [{"id": 0}],
+    }
 
     class Response:
         status = 409
@@ -175,7 +194,63 @@ def test_shared_claim_generation_mismatch_only_ignores_lagging_peer(
             return Response()
 
     monkeypatch.setattr("aiohttp.ClientSession", Session)
-    assert asyncio.run(node._claim_on_peers("test-domain", 5, 0)) is expected
+    confirmation = asyncio.run(node._claim_on_peers("test-domain", 5, 0))
+    assert confirmation.won is expected
+    assert confirmation.ready_peers == 0
+    assert confirmation.contacted_peers == 1
+
+
+def test_shared_claim_counts_current_owner_confirmation(monkeypatch) -> None:
+    node = make_node(port=8485)
+    node._get_peer_api_targets = lambda: [("peer", ["http://peer"])]
+    node._shared_pop_state["test-domain"] = {
+        "generation": 5,
+        "population": [{"id": 0}],
+    }
+
+    class Response:
+        status = 409
+
+        async def json(self):
+            return {"status": "already_claimed", "owner": node.peer_id}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class Session:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("aiohttp.ClientSession", Session)
+    confirmation = asyncio.run(node._claim_on_peers("test-domain", 5, 0))
+    assert confirmation.won is True
+    assert confirmation.ready_peers == 1
+    assert confirmation.contacted_peers == 1
+
+
+def test_peer_api_targets_require_identity_and_deduplicate_paths() -> None:
+    node = make_node(port=8486)
+    node.add_peer("10.0.0.1", 8470)
+    node.add_peer("10.0.0.2", 8470, peer_id="peer-a")
+    node.add_peer("100.64.0.2", 8470, peer_id="peer-a")
+    node.add_peer("10.0.0.3", 8470, peer_id="peer-b")
+
+    assert node._get_peer_api_targets() == [
+        ("peer-a", ["http://10.0.0.2:8470", "http://100.64.0.2:8470"]),
+        ("peer-b", ["http://10.0.0.3:8470"]),
+    ]
 
 
 def test_polled_shared_claim_preserves_remote_lease_age() -> None:

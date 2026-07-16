@@ -296,6 +296,17 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         shared_claim_result_patience=raw.get(
             "shared_claim_result_patience", defaults.shared_claim_result_patience
         ),
+        shared_min_peers=raw.get("shared_min_peers", defaults.shared_min_peers),
+        shared_peer_wait_timeout=raw.get(
+            "shared_peer_wait_timeout", defaults.shared_peer_wait_timeout
+        ),
+        shared_claim_settle_seconds=raw.get(
+            "shared_claim_settle_seconds", defaults.shared_claim_settle_seconds
+        ),
+        shared_claim_confirmation_rounds=raw.get(
+            "shared_claim_confirmation_rounds",
+            defaults.shared_claim_confirmation_rounds,
+        ),
         storage_backend=raw.get("storage_backend", defaults.storage_backend),
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),

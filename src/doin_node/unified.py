@@ -123,6 +123,29 @@ def _shared_population_fingerprint(population_state: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _shared_generation_fingerprint(population_state: dict[str, Any]) -> str:
+    """Identify one immutable generation while ignoring live fitness updates."""
+    population = []
+    for genome in population_state.get("population", []):
+        if isinstance(genome, dict):
+            population.append({k: v for k, v in genome.items() if k != "fitness"})
+        else:
+            population.append(genome)
+    payload = json.dumps(
+        {
+            "generation": population_state.get("generation", 0),
+            "stage_idx": population_state.get("stage_idx", 0),
+            "bootstrap_seed": population_state.get("bootstrap_seed"),
+            "bootstrap_domain_id": population_state.get("bootstrap_domain_id"),
+            "population": population,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 # ── Configuration ────────────────────────────────────────────────────
 
 @dataclass
@@ -202,6 +225,13 @@ class UnifiedNodeConfig:
     # long-running evaluators can raise these values without changing pooling.
     shared_claim_timeout: float = 600.0
     shared_claim_result_patience: int = 4
+    # Strict shared swarms can require every other worker to be reachable and
+    # synchronized before any candidate consumes compute. Zero preserves
+    # single-node and historical deployments.
+    shared_min_peers: int = 0
+    shared_peer_wait_timeout: float = 120.0
+    shared_claim_settle_seconds: float = 1.0
+    shared_claim_confirmation_rounds: int = 2
 
     # Storage backend: "sqlite" (production) or "json" (legacy/testing)
     storage_backend: str = "sqlite"
@@ -232,6 +262,15 @@ class UnifiedNodeConfig:
     # Fee market
     fee_market_enabled: bool = True
     fee_config: FeeConfig = field(default_factory=FeeConfig)
+
+
+@dataclass(frozen=True)
+class SharedClaimConfirmation:
+    """Distributed ownership result for one candidate claim round."""
+
+    won: bool
+    ready_peers: int
+    contacted_peers: int
 
 
 # ── Unified Node ─────────────────────────────────────────────────────
@@ -369,10 +408,24 @@ class UnifiedNode:
         self._shared_pop_claim_result_counts: dict[str, dict[int, int]] = {}  # domain_id → {candidate_idx → result_count_at_claim_time}
         self._shared_claim_timeout = float(config.shared_claim_timeout)
         self._shared_claim_result_patience = int(config.shared_claim_result_patience)
+        self._shared_min_peers = int(config.shared_min_peers)
+        self._shared_peer_wait_timeout = float(config.shared_peer_wait_timeout)
+        self._shared_claim_settle_seconds = float(config.shared_claim_settle_seconds)
+        self._shared_claim_confirmation_rounds = int(
+            config.shared_claim_confirmation_rounds
+        )
         if self._shared_claim_timeout <= 0:
             raise ValueError("shared_claim_timeout must be positive")
         if self._shared_claim_result_patience <= 0:
             raise ValueError("shared_claim_result_patience must be positive")
+        if self._shared_min_peers < 0:
+            raise ValueError("shared_min_peers must be non-negative")
+        if self._shared_peer_wait_timeout <= 0:
+            raise ValueError("shared_peer_wait_timeout must be positive")
+        if self._shared_claim_settle_seconds <= 0:
+            raise ValueError("shared_claim_settle_seconds must be positive")
+        if self._shared_claim_confirmation_rounds <= 0:
+            raise ValueError("shared_claim_confirmation_rounds must be positive")
         self._shared_poll_idx: int = 0  # Round-robin index for peer polling
 
         # ── Live event log (for dashboard) ──
@@ -2090,14 +2143,8 @@ class UnifiedNode:
         """
         import hashlib as _hl
 
-        # Wait for peers
-        logger.info("[SHARED] Waiting for peer discovery...")
-        for i in range(30):
-            await asyncio.sleep(1)
-            if self._peers:
-                logger.info("[SHARED] Peers found (%d) after %ds", len(self._peers), i + 1)
-                await asyncio.sleep(3)
-                break
+        if not await self._wait_for_shared_peer_count():
+            return
 
         for domain_id in self.optimizer_domains:
             if domain_id in self._domain_converged:
@@ -2190,6 +2237,7 @@ class UnifiedNode:
         stage_schedule = pop_state.get("stage_schedule", [])
         param_defaults = pop_state.get("param_defaults", {})
         total_evals_counter = 0  # Running count of candidates evaluated by this node
+        ready_generation: int | None = None
 
         # Per-stage patience override: if current stage defines its own patience, use it
         if stage_schedule and stage_idx < len(stage_schedule):
@@ -2268,6 +2316,16 @@ class UnifiedNode:
                         domain_id,
                     )
 
+            # A generation is eligible for compute only after the configured
+            # swarm membership reports the same immutable population. This is
+            # a decentralized barrier: no node is privileged as coordinator.
+            if ready_generation != generation:
+                if not await self._wait_for_shared_generation_peers(
+                    domain_id, generation,
+                ):
+                    return
+                ready_generation = generation
+
             pop_size = len(population)
             gen_results = self._shared_pop_results.get(domain_id, {})
             claims = self._shared_pop_claims.get(domain_id, set())
@@ -2291,25 +2349,47 @@ class UnifiedNode:
             if candidate_idx is not None:
                 # Claim locally, then resolve simultaneous distributed claims by
                 # the lexicographically smallest peer id before doing GPU work.
-                self._record_shared_claim(domain_id, candidate_idx, self.peer_id)
-
-                # Claim via peer APIs (best-effort)
-                claim_won = await self._claim_on_peers(
-                    domain_id, generation, candidate_idx,
+                accepted, _ = self._record_shared_claim(
+                    domain_id, candidate_idx, self.peer_id,
                 )
+                if not accepted:
+                    await asyncio.sleep(0.25)
+                    continue
 
                 # Broadcast claim to peers (P2P fallback)
                 await self._broadcast_shared_claim(domain_id, generation, candidate_idx)
 
-                # Give concurrent claims one flooding heartbeat to arrive, then
-                # confirm ownership. A loser releases its local claim and pulls
-                # another candidate instead of evaluating a duplicate.
-                await asyncio.sleep(max(self.config.gossip_heartbeat_interval, 0.25))
+                # Require multiple stable rounds in which every configured peer
+                # confirms this owner. One heartbeat is insufficient during a
+                # cold start because membership and claims propagate separately.
+                confirmed_rounds = 0
+                claim_won = True
+                for _ in range(self._shared_claim_confirmation_rounds):
+                    await asyncio.sleep(self._shared_claim_settle_seconds)
+                    confirmation = await self._claim_on_peers(
+                        domain_id, generation, candidate_idx,
+                    )
+                    local_owner = self._shared_pop_claim_owners.get(
+                        domain_id, {},
+                    ).get(candidate_idx)
+                    if not confirmation.won or local_owner != self.peer_id:
+                        claim_won = False
+                        break
+                    if confirmation.ready_peers < self._shared_min_peers:
+                        claim_won = False
+                        logger.info(
+                            "[SHARED] Claim %d gen=%d has %d/%d synchronized peer confirmations",
+                            candidate_idx, generation, confirmation.ready_peers,
+                            self._shared_min_peers,
+                        )
+                        break
+                    confirmed_rounds += 1
+                    await self._broadcast_shared_claim(
+                        domain_id, generation, candidate_idx,
+                    )
                 claim_won = (
                     claim_won
-                    and self._shared_pop_claim_owners.get(domain_id, {}).get(candidate_idx)
-                    == self.peer_id
-                    and await self._claim_on_peers(domain_id, generation, candidate_idx)
+                    and confirmed_rounds == self._shared_claim_confirmation_rounds
                 )
                 if not claim_won:
                     self._release_shared_claim_if_owned(
@@ -2770,63 +2850,198 @@ class UnifiedNode:
         )
         await self._broadcast(msg)
 
+    def _get_peer_api_targets(self) -> list[tuple[str, list[str]]]:
+        """Return reachable alternatives grouped by verified logical peer ID."""
+        grouped: dict[str, list[str]] = {}
+        for endpoint, peer in self._peers.items():
+            peer_id = peer.peer_id
+            # Bootstrap and LAN placeholders are endpoints, not authenticated
+            # logical members. They cannot satisfy a strict swarm barrier.
+            if (
+                not peer_id
+                or peer_id == self.peer_id
+                or peer_id == endpoint
+                or peer_id.startswith("lan-")
+            ):
+                continue
+            url = f"http://{peer.address}:{peer.port}"
+            urls = grouped.setdefault(peer_id, [])
+            if url not in urls:
+                urls.append(url)
+        return [(peer_id, grouped[peer_id]) for peer_id in sorted(grouped)]
+
     def _get_peer_api_urls(self) -> list[str]:
-        """Get HTTP base URLs for all connected peers."""
-        urls = []
-        for ep, peer in self._peers.items():
-            urls.append(f"http://{peer.address}:{peer.port}")
-        return urls
+        """Get one HTTP base URL per verified logical peer."""
+        return [urls[0] for _, urls in self._get_peer_api_targets() if urls]
+
+    async def _wait_for_shared_peer_count(self) -> bool:
+        """Wait until the configured number of verified peers is discovered."""
+        required = self._shared_min_peers
+        if required == 0:
+            return True
+
+        logger.info("[SHARED] Waiting for %d verified peers...", required)
+        last_warning = time.monotonic()
+        last_count = -1
+        while self._running:
+            count = len(self._get_peer_api_targets())
+            if count >= required:
+                logger.info("[SHARED] Verified peer membership ready: %d/%d", count, required)
+                return True
+            if count != last_count:
+                logger.info("[SHARED] Verified peer membership: %d/%d", count, required)
+                last_count = count
+            now = time.monotonic()
+            if now - last_warning >= self._shared_peer_wait_timeout:
+                logger.warning(
+                    "[SHARED] Still waiting for verified peers: %d/%d; compute remains paused",
+                    count, required,
+                )
+                last_warning = now
+            await asyncio.sleep(max(self.config.gossip_heartbeat_interval, 0.5))
+        return False
+
+    async def _probe_shared_generation_peers(
+        self, domain_id: str, generation: int,
+    ) -> set[str]:
+        """Return peers serving the same generation and immutable population."""
+        import aiohttp as _ah
+
+        pop_state = self._shared_pop_state.get(domain_id)
+        if pop_state is None:
+            return set()
+        expected_fingerprint = _shared_generation_fingerprint(pop_state)
+        ready: set[str] = set()
+        timeout = _ah.ClientTimeout(total=5)
+        async with _ah.ClientSession(timeout=timeout) as sess:
+            for peer_id, urls in self._get_peer_api_targets():
+                for url in urls:
+                    try:
+                        async with sess.get(
+                            f"{url}/api/shared/candidates",
+                            params={"domain_id": domain_id},
+                        ) as resp:
+                            if resp.status != 200:
+                                continue
+                            data = await resp.json()
+                        if (
+                            data.get("generation") == generation
+                            and data.get("generation_fingerprint")
+                            == expected_fingerprint
+                        ):
+                            ready.add(peer_id)
+                        break
+                    except Exception:
+                        continue
+        return ready
+
+    async def _wait_for_shared_generation_peers(
+        self, domain_id: str, generation: int,
+    ) -> bool:
+        """Hold compute until enough peers expose the exact same generation."""
+        required = self._shared_min_peers
+        if required == 0:
+            return True
+
+        last_warning = time.monotonic()
+        last_count = -1
+        while self._running:
+            ready = await self._probe_shared_generation_peers(domain_id, generation)
+            count = len(ready)
+            if count >= required:
+                logger.info(
+                    "[SHARED] Generation barrier ready for %s gen=%d: %d/%d peers",
+                    domain_id, generation, count, required,
+                )
+                return True
+            if count != last_count:
+                logger.info(
+                    "[SHARED] Generation barrier for %s gen=%d: %d/%d peers",
+                    domain_id, generation, count, required,
+                )
+                last_count = count
+            now = time.monotonic()
+            if now - last_warning >= self._shared_peer_wait_timeout:
+                logger.warning(
+                    "[SHARED] Generation barrier waiting for %s gen=%d: %d/%d peers; compute remains paused",
+                    domain_id, generation, count, required,
+                )
+                last_warning = now
+            await asyncio.sleep(max(self.config.gossip_heartbeat_interval, 0.5))
+        return False
 
     async def _claim_on_peers(
         self, domain_id: str, generation: int, candidate_idx: int,
-    ) -> bool:
-        """Register a claim on peers and report deterministic ownership."""
+    ) -> SharedClaimConfirmation:
+        """Register a claim and count synchronized ownership confirmations."""
         import aiohttp as _ah
 
+        pop_state = self._shared_pop_state.get(domain_id, {})
         payload = {
             "domain_id": domain_id,
             "candidate_idx": candidate_idx,
             "generation": generation,
             "peer_id": self.peer_id,
+            "generation_fingerprint": _shared_generation_fingerprint(pop_state),
         }
         won = True
-        for url in self._get_peer_api_urls():
-            try:
-                async with _ah.ClientSession(timeout=_ah.ClientTimeout(total=5)) as sess:
-                    async with sess.post(f"{url}/api/shared/claim", json=payload) as resp:
-                        if resp.status == 409:
-                            body = await resp.json()
-                            status = body.get("status")
-                            owner = body.get("owner")
-                            if status == "generation_mismatch":
-                                peer_generation = body.get("current_generation")
-                                # A lagging peer has not installed this generation yet;
-                                # it must not make the first current-generation worker
-                                # abandon a valid lease. An ahead peer means our work is
-                                # stale and must stop.
-                                try:
-                                    peer_generation = int(peer_generation)
-                                except (TypeError, ValueError):
-                                    peer_generation = generation
-                                if peer_generation >= generation:
-                                    won = False
-                            elif status in {"already_evaluated", "owner_busy"}:
-                                won = False
-                            elif status == "already_claimed":
-                                if owner != self.peer_id:
-                                    won = False
-                            else:
-                                won = False
-                            logger.debug("[SHARED-API] Claim %d rejected by %s: %s",
-                                         candidate_idx, url, status)
-                        elif resp.status == 200:
-                            body = await resp.json()
-                            if body.get("owner", self.peer_id) != self.peer_id:
-                                won = False
-                            logger.debug("[SHARED-API] Claim %d accepted by %s", candidate_idx, url)
-            except Exception:
-                pass  # Best effort — P2P broadcast is the fallback
-        return won
+        ready_peers = 0
+        contacted_peers = 0
+        timeout = _ah.ClientTimeout(total=5)
+        async with _ah.ClientSession(timeout=timeout) as sess:
+            for _, urls in self._get_peer_api_targets():
+                response: tuple[int, dict[str, Any], str] | None = None
+                for url in urls:
+                    try:
+                        async with sess.post(
+                            f"{url}/api/shared/claim", json=payload,
+                        ) as resp:
+                            response = (resp.status, await resp.json(), url)
+                        break
+                    except Exception:
+                        continue
+                if response is None:
+                    continue
+
+                contacted_peers += 1
+                response_status, body, url = response
+                status = body.get("status")
+                owner = body.get("owner")
+                if response_status == 200:
+                    if owner == self.peer_id:
+                        ready_peers += 1
+                    else:
+                        won = False
+                    logger.debug("[SHARED-API] Claim %d accepted by %s", candidate_idx, url)
+                    continue
+
+                if response_status == 409:
+                    if status == "generation_mismatch":
+                        peer_generation = body.get("current_generation")
+                        try:
+                            peer_generation = int(peer_generation)
+                        except (TypeError, ValueError):
+                            peer_generation = generation
+                        # Lagging peers are not ready, but an ahead/current
+                        # rejection proves this work cannot proceed.
+                        if peer_generation >= generation:
+                            won = False
+                    elif status == "already_claimed" and owner == self.peer_id:
+                        ready_peers += 1
+                    else:
+                        won = False
+                    logger.debug(
+                        "[SHARED-API] Claim %d rejected by %s: %s",
+                        candidate_idx, url, status,
+                    )
+                else:
+                    won = False
+
+        return SharedClaimConfirmation(
+            won=won,
+            ready_peers=ready_peers,
+            contacted_peers=contacted_peers,
+        )
 
     async def _release_claim_on_peers(
         self, domain_id: str, generation: int, candidate_idx: int,
@@ -4617,6 +4832,7 @@ class UnifiedNode:
             "pop_size": len(population),
             "bootstrap_seed": pop_state.get("bootstrap_seed"),
             "population_fingerprint": _shared_population_fingerprint(pop_state),
+            "generation_fingerprint": _shared_generation_fingerprint(pop_state),
             "evaluated": len(results),
             "claimed": len(claims - set(results.keys())),
             "free": len(population) - len(claims) - len(set(results.keys()) - claims),
@@ -4634,6 +4850,7 @@ class UnifiedNode:
             candidate_idx = int(data["candidate_idx"])
             gen = int(data["generation"])
             requester = data.get("peer_id", "api")
+            requested_fingerprint = data.get("generation_fingerprint")
         except (KeyError, json.JSONDecodeError, ValueError):
             return web.json_response(
                 {"status": "error", "detail": "domain_id, candidate_idx, generation required"},
@@ -4650,6 +4867,19 @@ class UnifiedNode:
                     "detail": f"generation mismatch: current={cur_gen}, requested={gen}",
                     "current_generation": cur_gen,
                     "requested_generation": gen,
+                },
+                status=409,
+            )
+
+        local_fingerprint = _shared_generation_fingerprint(
+            self._shared_pop_state[domain_id]
+        )
+        if requested_fingerprint and requested_fingerprint != local_fingerprint:
+            return web.json_response(
+                {
+                    "status": "population_mismatch",
+                    "detail": "generation population fingerprint mismatch",
+                    "generation_fingerprint": local_fingerprint,
                 },
                 status=409,
             )
@@ -4704,6 +4934,7 @@ class UnifiedNode:
             "candidate_idx": candidate_idx,
             "generation": gen,
             "owner": owner,
+            "generation_fingerprint": local_fingerprint,
             "timeout_s": self._shared_claim_timeout,
             "result_patience": self._shared_claim_result_patience,
         })
