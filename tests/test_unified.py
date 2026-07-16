@@ -116,6 +116,50 @@ def test_shared_claim_release_cannot_remove_another_peers_claim() -> None:
     assert 4 not in node._shared_pop_claim_owners[domain_id]
 
 
+def test_polled_shared_claim_preserves_remote_lease_age() -> None:
+    node = make_node(port=8482)
+    domain_id = "test-domain"
+    node._shared_pop_results[domain_id] = {
+        idx: {"fitness": float(idx)} for idx in range(8)
+    }
+    claimed_at = time.time() - 590.0
+
+    updated = node._merge_polled_shared_claim(
+        domain_id,
+        {
+            "index": 9,
+            "state": "claimed",
+            "owner": "peer-a",
+            "claimed_at": claimed_at,
+            "results_since_claim": 3,
+        },
+        current_result_count=8,
+    )
+
+    assert updated is True
+    assert node._shared_pop_claim_times[domain_id][9] == claimed_at
+    assert node._shared_pop_claim_result_counts[domain_id][9] == 5
+
+    # Observing the same claim again is replication, not a lease renewal.
+    assert node._merge_polled_shared_claim(
+        domain_id,
+        {
+            "index": 9,
+            "state": "claimed",
+            "owner": "peer-a",
+            "claimed_at": time.time(),
+            "results_since_claim": 0,
+        },
+        current_result_count=8,
+    ) is False
+    assert node._shared_pop_claim_times[domain_id][9] == claimed_at
+
+    node._shared_claim_timeout = 600.0
+    node._shared_pop_claim_times[domain_id][9] = time.time() - 601.0
+    node._expire_stale_claims(domain_id)
+    assert 9 not in node._shared_pop_claims[domain_id]
+
+
 def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     node = make_node()
     node.add_peer("192.168.0.109", 8470, peer_id="original-author")

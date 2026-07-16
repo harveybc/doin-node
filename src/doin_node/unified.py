@@ -2766,6 +2766,59 @@ class UnifiedNode:
             except Exception:
                 pass  # Best effort
 
+    def _merge_polled_shared_claim(
+        self,
+        domain_id: str,
+        candidate: dict,
+        current_result_count: int,
+    ) -> bool:
+        """Merge a peer-observed claim without extending its lease.
+
+        Polling is replication, not a heartbeat. Replacing ``claimed_at`` with
+        the local observation time lets expired claims circulate forever: each
+        peer can resurrect the lease just after another peer expires it.
+        Explicit claim messages from the owner remain the only operation that
+        renews a lease.
+        """
+        idx = int(candidate["index"])
+        if idx in self._shared_pop_results.get(domain_id, {}):
+            return False
+
+        claims = self._shared_pop_claims.setdefault(domain_id, set())
+        claim_times = self._shared_pop_claim_times.setdefault(domain_id, {})
+        claim_owners = self._shared_pop_claim_owners.setdefault(domain_id, {})
+        claim_rcounts = self._shared_pop_claim_result_counts.setdefault(domain_id, {})
+
+        owner = candidate.get("owner")
+        current_owner = claim_owners.get(idx)
+        is_new = idx not in claims
+        owner_changed = bool(owner and (not current_owner or owner < current_owner))
+        if not is_new and not owner_changed:
+            return False
+
+        remote_claimed_at = candidate.get("claimed_at")
+        try:
+            claimed_at = float(remote_claimed_at)
+        except (TypeError, ValueError):
+            timeout_remaining = candidate.get("timeout_remaining")
+            try:
+                elapsed = max(0.0, self._shared_claim_timeout - float(timeout_remaining))
+                claimed_at = time.time() - elapsed
+            except (TypeError, ValueError):
+                claimed_at = time.time()
+
+        try:
+            results_since_claim = max(0, int(candidate.get("results_since_claim", 0)))
+        except (TypeError, ValueError):
+            results_since_claim = 0
+
+        claims.add(idx)
+        claim_times[idx] = claimed_at
+        claim_rcounts[idx] = max(0, current_result_count - results_since_claim)
+        if owner:
+            claim_owners[idx] = owner
+        return True
+
     async def _poll_peer_shared_state(self, domain_id: str, generation: int) -> None:
         """Poll one peer's /api/shared/candidates to discover claims/results we missed."""
         import aiohttp as _ah
@@ -2792,27 +2845,20 @@ class UnifiedNode:
 
             claims = self._shared_pop_claims.get(domain_id, set())
             results = self._shared_pop_results.get(domain_id, {})
-            claim_times = self._shared_pop_claim_times.get(domain_id, {})
-            claim_owners = self._shared_pop_claim_owners.get(domain_id, {})
             updated = False
 
             for c in data.get("candidates", []):
                 idx = c["index"]
                 state = c["state"]
-                if state == "claimed" and idx not in claims and idx not in results:
-                    claims.add(idx)
-                    claim_times[idx] = time.time()
-                    owner = c.get("owner")
-                    if owner:
-                        claim_owners[idx] = owner
-                    updated = True
-                elif state == "claimed" and idx in claims and idx not in results:
-                    owner = c.get("owner")
-                    current_owner = claim_owners.get(idx)
-                    if owner and (not current_owner or owner < current_owner):
-                        claim_owners[idx] = owner
-                        claim_times[idx] = time.time()
-                        updated = True
+                if state == "claimed" and idx not in results:
+                    updated = (
+                        self._merge_polled_shared_claim(
+                            domain_id,
+                            c,
+                            current_result_count=len(results),
+                        )
+                        or updated
+                    )
                 elif state == "evaluated" and idx not in results:
                     fitness = c.get("fitness")
                     if fitness is not None:
@@ -2824,8 +2870,6 @@ class UnifiedNode:
 
             if updated:
                 self._shared_pop_claims[domain_id] = claims
-                self._shared_pop_claim_times[domain_id] = claim_times
-                self._shared_pop_claim_owners[domain_id] = claim_owners
                 self._shared_pop_results[domain_id] = results
 
         except Exception:
