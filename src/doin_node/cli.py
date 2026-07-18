@@ -297,6 +297,10 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
             "shared_claim_result_patience", defaults.shared_claim_result_patience
         ),
         shared_min_peers=raw.get("shared_min_peers", defaults.shared_min_peers),
+        shared_initialize_before_peers=raw.get(
+            "shared_initialize_before_peers",
+            defaults.shared_initialize_before_peers,
+        ),
         shared_peer_wait_timeout=raw.get(
             "shared_peer_wait_timeout", defaults.shared_peer_wait_timeout
         ),

@@ -67,6 +67,7 @@ def test_shared_claim_lease_uses_configured_values() -> None:
         shared_claim_timeout=3600.0,
         shared_claim_result_patience=20,
         shared_min_peers=3,
+        shared_initialize_before_peers=True,
         shared_peer_wait_timeout=45.0,
         shared_claim_settle_seconds=2.0,
         shared_claim_confirmation_rounds=3,
@@ -75,6 +76,7 @@ def test_shared_claim_lease_uses_configured_values() -> None:
     assert node._shared_claim_timeout == 3600.0
     assert node._shared_claim_result_patience == 20
     assert node._shared_min_peers == 3
+    assert node._shared_initialize_before_peers is True
     assert node._shared_peer_wait_timeout == 45.0
     assert node._shared_claim_settle_seconds == 2.0
     assert node._shared_claim_confirmation_rounds == 3
@@ -96,6 +98,56 @@ def test_shared_claim_lease_rejects_non_positive_values(field, value) -> None:
     setattr(config, field, value)
     with pytest.raises(ValueError, match=field):
         UnifiedNode(config)
+
+
+@pytest.mark.asyncio
+async def test_ordered_shared_initialization_precedes_compute_peer_barrier() -> None:
+    domain_id = "ordered-shared-domain"
+    role = DomainRole(
+        domain_id=domain_id,
+        optimize=True,
+        higher_is_better=True,
+        optimization_config={
+            "shared_population": True,
+            "shared_population_size": 2,
+            "optimization_patience": 1,
+            "ga_seed": 7,
+        },
+    )
+    node = UnifiedNode(UnifiedNodeConfig(
+        port=8489,
+        data_dir="/tmp/don-test-ordered-shared-init",
+        domains=[role],
+        shared_min_peers=3,
+        shared_initialize_before_peers=True,
+    ))
+    events = []
+
+    class Plugin:
+        def create_shared_population(self, size, seed):
+            events.append(("create", size, seed))
+            return {"population": [{"id": 0}, {"id": 1}]}
+
+    node.register_optimizer_plugin(domain_id, Plugin())
+    node._recover_shared_state_from_chain = lambda _domain_id: None
+
+    async def store(_domain_id, _population):
+        events.append("store")
+
+    async def wait_for_peers():
+        events.append("wait")
+        return True
+
+    async def run(_domain_id, _plugin, _population, _patience):
+        events.append("run")
+
+    node._store_shared_population_in_chain = store
+    node._wait_for_shared_peer_count = wait_for_peers
+    node._run_shared_optimization = run
+
+    await node._shared_optimizer_loop()
+
+    assert events == [("create", 2, 7), "store", "wait", "run"]
 
 
 def test_shared_claim_arbitration_converges_on_smallest_peer_id() -> None:

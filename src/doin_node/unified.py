@@ -229,6 +229,10 @@ class UnifiedNodeConfig:
     # synchronized before any candidate consumes compute. Zero preserves
     # single-node and historical deployments.
     shared_min_peers: int = 0
+    # Ordered supervisors may need each worker to publish/recover generation
+    # zero before later workers are launched. This moves only initialization
+    # ahead of the peer barrier; candidate claiming still waits for all peers.
+    shared_initialize_before_peers: bool = False
     shared_peer_wait_timeout: float = 120.0
     shared_claim_settle_seconds: float = 1.0
     shared_claim_confirmation_rounds: int = 2
@@ -409,6 +413,9 @@ class UnifiedNode:
         self._shared_claim_timeout = float(config.shared_claim_timeout)
         self._shared_claim_result_patience = int(config.shared_claim_result_patience)
         self._shared_min_peers = int(config.shared_min_peers)
+        self._shared_initialize_before_peers = bool(
+            config.shared_initialize_before_peers
+        )
         self._shared_peer_wait_timeout = float(config.shared_peer_wait_timeout)
         self._shared_claim_settle_seconds = float(config.shared_claim_settle_seconds)
         self._shared_claim_confirmation_rounds = int(
@@ -2148,8 +2155,11 @@ class UnifiedNode:
         """
         import hashlib as _hl
 
-        if not await self._wait_for_shared_peer_count():
-            return
+        peer_barrier_ready = False
+        if not self._shared_initialize_before_peers:
+            if not await self._wait_for_shared_peer_count():
+                return
+            peer_barrier_ready = True
 
         for domain_id in self.optimizer_domains:
             if domain_id in self._domain_converged:
@@ -2198,6 +2208,11 @@ class UnifiedNode:
             self._shared_pop_claim_owners[domain_id] = {}
             self._shared_pop_claim_result_counts[domain_id] = {}
             self._shared_pop_generation[domain_id] = pop_state.get("generation", 0)
+
+            if not peer_barrier_ready:
+                if not await self._wait_for_shared_peer_count():
+                    return
+                peer_barrier_ready = True
 
             logger.info(
                 "[SHARED] Starting shared optimization for %s: gen=%d pop_size=%d stage=%d",

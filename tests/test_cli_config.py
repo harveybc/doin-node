@@ -57,6 +57,7 @@ FULL_NODE = {
     "shared_claim_timeout": 3600.0,
     "shared_claim_result_patience": 20,
     "shared_min_peers": 3,
+    "shared_initialize_before_peers": True,
     "shared_peer_wait_timeout": 45.0,
     "shared_claim_settle_seconds": 2.0,
     "shared_claim_confirmation_rounds": 3,
@@ -144,6 +145,7 @@ def test_r05_every_top_level_field_materialized(tmp_path):
     assert cfg.shared_claim_timeout == 3600.0
     assert cfg.shared_claim_result_patience == 20
     assert cfg.shared_min_peers == 3
+    assert cfg.shared_initialize_before_peers is True
     assert cfg.shared_peer_wait_timeout == 45.0
     assert cfg.shared_claim_settle_seconds == 2.0
     assert cfg.shared_claim_confirmation_rounds == 3
@@ -284,6 +286,25 @@ def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_confi
         },
     }
     assert set(cfg.bootstrap_peers) == expected_routes[worker_config]
+
+
+@pytest.mark.parametrize(
+    "campaign",
+    [
+        "phase_1_asset_policy_btcusdt_1h_shared_v2",
+        "phase_1_asset_policy_adausdt_1h_shared_v2",
+        "phase_1_asset_policy_eurusd_4h_shared_v2",
+        "phase_1_asset_policy_dogeusdt_4h_shared_v2",
+    ],
+)
+@pytest.mark.parametrize(
+    "worker_config",
+    ["omega_node.json", "dragon_node.json", "gamma_5070ti_node.json", "gamma_5090_node.json"],
+)
+def test_phase_1_v2_fleet_initializes_before_full_compute_barrier(campaign, worker_config):
+    cfg = cli.load_config(str(EXAMPLES / "trading" / campaign / worker_config), {})
+    assert cfg.shared_initialize_before_peers is True
+    assert cfg.shared_min_peers == 3
 
 
 def test_r09_r10_absent_new_subtrees_default_empty(tmp_path):
