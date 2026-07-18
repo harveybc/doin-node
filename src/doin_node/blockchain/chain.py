@@ -78,6 +78,14 @@ class Chain:
             return []
         return self._blocks[from_index:to_index + 1]
 
+    def has_transaction(self, tx_id: str) -> bool:
+        """Return whether a transaction is already present in the chain."""
+        return any(
+            tx.id == tx_id
+            for block in self._blocks
+            for tx in block.transactions
+        )
+
     def find_common_ancestor(self, their_tip_hash: str) -> int:
         """Find the highest block index that exists in both chains.
 

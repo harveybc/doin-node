@@ -306,6 +306,15 @@ class ChainDB:
         ).fetchall()
         return [self._row_to_transaction(row) for row in rows]
 
+    def has_transaction(self, tx_id: str) -> bool:
+        """Return whether a transaction is already present in the chain."""
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT 1 FROM transactions WHERE tx_id = ? LIMIT 1",
+            (tx_id,),
+        ).fetchone()
+        return row is not None
+
     def get_transactions_by_peer(
         self, peer_id: str, limit: int = 100
     ) -> list[Transaction]:

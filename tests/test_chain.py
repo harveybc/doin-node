@@ -52,6 +52,8 @@ class TestChain:
         block = _make_block(genesis, 1)
         chain.append_block(block)
         assert chain.height == 2
+        assert chain.has_transaction(block.transactions[0].id)
+        assert not chain.has_transaction("missing-transaction")
 
     def test_append_wrong_index_fails(self) -> None:
         chain = Chain()

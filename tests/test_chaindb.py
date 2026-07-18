@@ -107,6 +107,8 @@ class TestAppendBlock:
         b1 = make_block(1, genesis.hash)
         db.append_block(b1)
         assert db.height == 2
+        assert db.has_transaction(b1.transactions[0].id)
+        assert not db.has_transaction("missing-transaction")
 
     def test_wrong_index_raises(self, db):
         db.initialize()

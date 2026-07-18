@@ -884,6 +884,11 @@ class UnifiedNode:
             return self.chaindb.get_blocks_range(from_idx, to_idx)
         return self.chain.get_blocks_range(from_idx, to_idx)
 
+    def _has_transaction(self, tx_id: str) -> bool:
+        if self.chaindb:
+            return self.chaindb.has_transaction(tx_id)
+        return self.chain.has_transaction(tx_id)
+
     def _append_block(self, block: Block) -> None:
         if self.chaindb:
             self.chaindb.append_block(block)
@@ -2762,6 +2767,24 @@ class UnifiedNode:
             },
             timestamp=datetime.now(timezone.utc),
         )
+
+        if self._has_transaction(tx.id):
+            logger.info(
+                "[SHARED] Gen %d population already committed for %s; skipping duplicate",
+                pop_state.get("generation", 0), domain_id,
+            )
+            return
+
+        if any(
+            pending.id == tx.id
+            for pending in self.consensus.state.pending_transactions
+        ):
+            logger.info(
+                "[SHARED] Gen %d population already pending for %s; skipping duplicate",
+                pop_state.get("generation", 0), domain_id,
+            )
+            return
+
         self.consensus.record_transaction(tx)
 
         # Accumulate increment so block generation threshold can be met

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+from types import SimpleNamespace
+
+import pytest
+
 from doin_node.unified import (
+    UnifiedNode,
     _shared_generation_fingerprint,
     _shared_population_fingerprint,
     _shared_population_seed,
@@ -44,3 +50,43 @@ def test_shared_generation_fingerprint_ignores_live_fitness_only() -> None:
     assert _shared_generation_fingerprint(left) == _shared_generation_fingerprint(right)
     right["population"][1]["x"] = 3
     assert _shared_generation_fingerprint(left) != _shared_generation_fingerprint(right)
+
+
+@pytest.mark.asyncio
+async def test_shared_population_store_is_idempotent_after_peer_commit() -> None:
+    node = SimpleNamespace(
+        peer_id="peer-a",
+        _has_transaction=lambda _tx_id: True,
+    )
+    await UnifiedNode._store_shared_population_in_chain(
+        node,
+        "domain-a",
+        {"generation": 3, "population": [{"x": 1}]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_shared_population_store_is_idempotent_while_pending() -> None:
+    pop_state = {"generation": 3, "population": [{"x": 1}]}
+    fingerprint = _shared_population_fingerprint(pop_state)
+
+    from doin_core.models.transaction import Transaction, TransactionType
+
+    pending = Transaction(
+        id=hashlib.sha256(
+            f"shared_pop:domain-a:3:{fingerprint}".encode()
+        ).hexdigest(),
+        tx_type=TransactionType.OPTIMAE_ACCEPTED,
+        domain_id="domain-a",
+        peer_id="peer-a",
+        payload={},
+    )
+    node = SimpleNamespace(
+        peer_id="peer-a",
+        _has_transaction=lambda _tx_id: False,
+        consensus=SimpleNamespace(
+            state=SimpleNamespace(pending_transactions=[pending]),
+        ),
+    )
+
+    await UnifiedNode._store_shared_population_in_chain(node, "domain-a", pop_state)
