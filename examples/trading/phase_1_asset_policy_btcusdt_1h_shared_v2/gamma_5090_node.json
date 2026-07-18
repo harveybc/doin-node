@@ -1,0 +1,189 @@
+{
+  "$doc": "Generated shared-population worker gamma-5090 for trading-asset-policy-btcusdt-1h-sac-shared-v2. All workers share one semantic domain and use isolated runtime state.",
+  "node_label": "gamma-5090",
+  "host": "0.0.0.0",
+  "port": 8471,
+  "data_dir": "./doin-data-btcusdt-1h-sac-shared-v2-gamma-5090",
+  "identity_file": "./doin-data-btcusdt-1h-sac-shared-v2-gamma-5090/identity.pem",
+  "bootstrap_peers": [
+    "127.0.0.1:8470",
+    "100.99.54.79:8470",
+    "100.110.215.85:8470"
+  ],
+  "target_block_time": 600,
+  "initial_threshold": -1000000000.0,
+  "acceptance_tolerance": 1e-06,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 1.0,
+  "quorum_tolerance": 1e-06,
+  "optimizer_loop_interval": 30,
+  "shared_claim_timeout": 3600,
+  "shared_claim_result_patience": 20,
+  "shared_min_peers": 3,
+  "shared_peer_wait_timeout": 60,
+  "shared_claim_settle_seconds": 2,
+  "shared_claim_confirmation_rounds": 2,
+  "eval_poll_interval": 10,
+  "eval_max_concurrent": 1,
+  "storage_backend": "sqlite",
+  "network_protocol": "flooding",
+  "discovery_enabled": true,
+  "dashboard_enabled": true,
+  "fee_market_enabled": false,
+  "reset_chain": false,
+  "require_deterministic_seed": true,
+  "experiment_stats_file": "./doin-data-btcusdt-1h-sac-shared-v2-gamma-5090/experiment_stats.csv",
+  "olap_db_path": "./doin-data-btcusdt-1h-sac-shared-v2-gamma-5090/olap.db",
+  "domains": [
+    {
+      "domain_id": "trading-asset-policy-btcusdt-1h-sac-shared-v2",
+      "optimize": true,
+      "evaluate": false,
+      "optimization_plugin": "trading_asset",
+      "inference_plugin": "trading_asset",
+      "synthetic_data_plugin": "trading_scenario",
+      "has_synthetic_data": false,
+      "synthetic_data_validation": false,
+      "higher_is_better": true,
+      "metric_type": "train_validation_l1_score",
+      "optimization_config": {
+        "agent_multi_root": "/home/harveybc/Documents/GitHub/agent-multi",
+        "load_config": "examples/config/phase_1_asset_policy/optimization/phase_1_asset_policy_btcusdt_1h_sac_optimization_config.json",
+        "runtime_overlay": "configs/runtime/gamma_5090.json",
+        "optimizer_plugin": "default_optimizer",
+        "pipeline_plugin": "rl_pipeline_with_validation",
+        "preprocessor_plugin": "default_preprocessor",
+        "metric_type": "train_validation_l1_score",
+        "optimization_metric": "train_validation_l1_score",
+        "metric_schema": "trading.metrics.v1",
+        "higher_is_better": true,
+        "optimization_resume": false,
+        "optimization_pause_on_resume": false,
+        "shared_population": true,
+        "shared_population_size": 20,
+        "population_size": 20,
+        "initial_candidate_params": {
+          "learning_rate": 0.00035593553866490607,
+          "batch_size": 256,
+          "gamma": 0.957651059044391,
+          "tau": 0.001547040562484868,
+          "train_freq": 1,
+          "gradient_steps": 8,
+          "continuous_action_threshold": 0.18798110300070983
+        },
+        "ga_seed": 1701,
+        "ga_population": 20,
+        "optimization_patience": 5,
+        "optimization_stages": [
+          {
+            "name": "action_behavior",
+            "params": [
+              "continuous_action_threshold"
+            ],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "critic_dynamics",
+            "params": [
+              "gamma",
+              "tau"
+            ],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "training_dynamics",
+            "params": [
+              "learning_rate",
+              "batch_size",
+              "train_freq",
+              "gradient_steps"
+            ],
+            "generations": 5,
+            "patience": 3
+          },
+          {
+            "name": "refinement",
+            "params": "all",
+            "generations": 5,
+            "patience": 4
+          }
+        ],
+        "hyperparameter_bounds": {
+          "learning_rate": [
+            1e-05,
+            0.0005
+          ],
+          "batch_size": [
+            128,
+            512
+          ],
+          "gamma": [
+            0.95,
+            0.999
+          ],
+          "tau": [
+            0.001,
+            0.02
+          ],
+          "train_freq": [
+            1,
+            8
+          ],
+          "gradient_steps": [
+            1,
+            8
+          ],
+          "continuous_action_threshold": [
+            0.05,
+            0.35
+          ]
+        }
+      },
+      "param_bounds": {
+        "learning_rate": [
+          1e-05,
+          0.0005
+        ],
+        "batch_size": [
+          128,
+          512
+        ],
+        "gamma": [
+          0.95,
+          0.999
+        ],
+        "tau": [
+          0.001,
+          0.02
+        ],
+        "train_freq": [
+          1,
+          8
+        ],
+        "gradient_steps": [
+          1,
+          8
+        ],
+        "continuous_action_threshold": [
+          0.05,
+          0.35
+        ]
+      },
+      "resource_limits": {
+        "max_training_seconds": 21600,
+        "max_memory_mb": 30000,
+        "max_epochs": 40,
+        "max_batch_size": 512
+      },
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 1e-06,
+        "bonus_threshold": 0.01,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      }
+    }
+  ]
+}
