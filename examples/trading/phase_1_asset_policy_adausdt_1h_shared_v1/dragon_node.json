@@ -6,7 +6,9 @@
   "data_dir": "./doin-data-adausdt-1h-sac-shared-v1-dragon",
   "identity_file": "./doin-data-adausdt-1h-sac-shared-v1-dragon/identity.pem",
   "bootstrap_peers": [
-    "100.99.54.79:8470"
+    "100.99.54.79:8470",
+    "100.107.204.49:8470",
+    "100.107.204.49:8471"
   ],
   "target_block_time": 600,
   "initial_threshold": -1000000000.0,

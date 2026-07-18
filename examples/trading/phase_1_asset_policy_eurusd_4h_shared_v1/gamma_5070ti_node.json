@@ -6,7 +6,9 @@
   "data_dir": "./doin-data-eurusd-4h-sac-shared-v1-gamma-5070ti",
   "identity_file": "./doin-data-eurusd-4h-sac-shared-v1-gamma-5070ti/identity.pem",
   "bootstrap_peers": [
-    "100.99.54.79:8470"
+    "100.99.54.79:8470",
+    "100.110.215.85:8470",
+    "127.0.0.1:8471"
   ],
   "target_block_time": 600,
   "initial_threshold": -1000000000.0,

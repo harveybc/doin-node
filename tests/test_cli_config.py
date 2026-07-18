@@ -261,6 +261,29 @@ def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_confi
     assert cfg.shared_peer_wait_timeout == 60
     assert cfg.shared_claim_settle_seconds == 2
     assert cfg.shared_claim_confirmation_rounds == 2
+    expected_routes = {
+        "omega_node.json": {
+            "100.110.215.85:8470",
+            "100.107.204.49:8470",
+            "100.107.204.49:8471",
+        },
+        "dragon_node.json": {
+            "100.99.54.79:8470",
+            "100.107.204.49:8470",
+            "100.107.204.49:8471",
+        },
+        "gamma_5070ti_node.json": {
+            "100.99.54.79:8470",
+            "100.110.215.85:8470",
+            "127.0.0.1:8471",
+        },
+        "gamma_5090_node.json": {
+            "127.0.0.1:8470",
+            "100.99.54.79:8470",
+            "100.110.215.85:8470",
+        },
+    }
+    assert set(cfg.bootstrap_peers) == expected_routes[worker_config]
 
 
 def test_r09_r10_absent_new_subtrees_default_empty(tmp_path):
