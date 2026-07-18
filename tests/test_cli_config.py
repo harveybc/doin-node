@@ -242,6 +242,27 @@ def test_r13_gamma_example_three_distinct_subtrees():
     assert "shared_population" not in role.inference_config
 
 
+@pytest.mark.parametrize(
+    "campaign",
+    [
+        "phase_1_asset_policy_btcusdt_1h_shared_v1",
+        "phase_1_asset_policy_adausdt_1h_shared_v1",
+        "phase_1_asset_policy_eurusd_4h_shared_v1",
+        "phase_1_asset_policy_dogeusdt_4h_shared_v1",
+    ],
+)
+@pytest.mark.parametrize(
+    "worker_config",
+    ["omega_node.json", "dragon_node.json", "gamma_5070ti_node.json", "gamma_5090_node.json"],
+)
+def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_config):
+    cfg = cli.load_config(str(EXAMPLES / "trading" / campaign / worker_config), {})
+    assert cfg.shared_min_peers == 3
+    assert cfg.shared_peer_wait_timeout == 60
+    assert cfg.shared_claim_settle_seconds == 2
+    assert cfg.shared_claim_confirmation_rounds == 2
+
+
 def test_r09_r10_absent_new_subtrees_default_empty(tmp_path):
     obj = {
         "domains": [
