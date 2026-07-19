@@ -176,6 +176,8 @@ def _stage_eta(
 def _campaign_progress(
     candidate: dict[str, Any],
     stage_generations: list[int],
+    *,
+    evaluated_in_generation: int = 0,
 ) -> dict[str, Any]:
     """Return planned progress across every configured optimization stage.
 
@@ -188,10 +190,7 @@ def _campaign_progress(
         population = max(1, int(candidate["total_candidates"]))
         stage_number = max(1, int(candidate.get("stage", 1)))
         generation = max(0, int(candidate.get("gen_in_stage", 0)))
-        candidate_number = min(
-            population,
-            max(0, int(candidate.get("candidate_num", 0))),
-        )
+        evaluated = min(population, max(0, int(evaluated_in_generation)))
     except (KeyError, TypeError, ValueError):
         return {}
 
@@ -205,14 +204,18 @@ def _campaign_progress(
     planned_total = sum(generations) * population
     completed = min(
         planned_total,
-        completed_prior_stages + completed_current_generations + candidate_number,
+        completed_prior_stages + completed_current_generations + evaluated,
     )
     return {
         "campaign_candidates_completed": completed,
         "campaign_candidates_planned": planned_total,
         "campaign_candidates_remaining": planned_total - completed,
         "campaign_progress_fraction": completed / planned_total,
-        "campaign_progress_basis": "planned_all_stages_before_early_stopping",
+        "current_generation_candidates_evaluated": evaluated,
+        "current_generation_candidates_total": population,
+        "campaign_progress_basis": (
+            "planned_all_stages_with_shared_evaluations_before_early_stopping"
+        ),
     }
 
 
@@ -772,6 +775,9 @@ async def _api_optimization(request: web.Request) -> web.Response:
         info["campaign_progress"] = _campaign_progress(
             current_candidate,
             info["stage_generations"],
+            evaluated_in_generation=len(
+                getattr(node, "_shared_pop_results", {}).get(domain_id, {})
+            ),
         )
 
         domains.append(info)

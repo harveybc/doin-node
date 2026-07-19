@@ -147,6 +147,7 @@ def test_campaign_progress_is_cumulative_across_configured_stages() -> None:
             "total_candidates": 20,
         },
         [5, 5, 5, 5],
+        evaluated_in_generation=12,
     )
 
     assert progress == {
@@ -154,7 +155,11 @@ def test_campaign_progress_is_cumulative_across_configured_stages() -> None:
         "campaign_candidates_planned": 400,
         "campaign_candidates_remaining": 88,
         "campaign_progress_fraction": 0.78,
-        "campaign_progress_basis": "planned_all_stages_before_early_stopping",
+        "current_generation_candidates_evaluated": 12,
+        "current_generation_candidates_total": 20,
+        "campaign_progress_basis": (
+            "planned_all_stages_with_shared_evaluations_before_early_stopping"
+        ),
     }
 
 
@@ -167,10 +172,27 @@ def test_campaign_progress_clamps_an_completed_generation_to_its_budget() -> Non
             "total_candidates": 20,
         },
         [2, 3],
+        evaluated_in_generation=99,
     )
 
     assert progress["campaign_candidates_completed"] == 100
     assert progress["campaign_progress_fraction"] == 1.0
+
+
+def test_campaign_progress_does_not_treat_candidate_index_as_completed_work() -> None:
+    progress = _campaign_progress(
+        {
+            "stage": 1,
+            "gen_in_stage": 0,
+            "candidate_num": 17,
+            "total_candidates": 20,
+        },
+        [5, 5, 5, 5],
+        evaluated_in_generation=0,
+    )
+
+    assert progress["campaign_candidates_completed"] == 0
+    assert progress["campaign_progress_fraction"] == 0.0
 
 
 def test_peer_groups_deduplicate_alternate_routes() -> None:

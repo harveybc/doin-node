@@ -1105,6 +1105,9 @@ async function refreshAll() {
       // Stage-local details above remain useful, but must not reset the main
       // percentage when a later stage begins.
       const campaign = optDom.campaign_progress || {};
+      const generationEvaluated = Number.isFinite(Number(campaign.current_generation_candidates_evaluated))
+        ? Number(campaign.current_generation_candidates_evaluated)
+        : 0;
       const stagePlan = Array.isArray(optDom.stage_generations) && optDom.stage_generations.length
         ? optDom.stage_generations.map(value => Math.max(1, parseInt(value || 1)))
         : Array(Math.max(totStages, 1)).fill(Math.max(nGensStage, 1));
@@ -1114,7 +1117,7 @@ async function refreshAll() {
         plannedSlots,
         stagePlan.slice(0, stageIndex).reduce((sum, generations) => sum + generations * Math.max(totCand, 1), 0) +
           Math.min(genInStage, stagePlan[stageIndex]) * Math.max(totCand, 1) +
-          Math.min(Math.max(curCand, 0), Math.max(totCand, 1)),
+          Math.min(Math.max(generationEvaluated, 0), Math.max(totCand, 1)),
       );
       const campaignCompleted = Number.isFinite(Number(campaign.campaign_candidates_completed))
         ? Number(campaign.campaign_candidates_completed)
