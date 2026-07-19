@@ -441,6 +441,49 @@ def test_polled_shared_claim_preserves_remote_lease_age() -> None:
     assert 9 not in node._shared_pop_claims[domain_id]
 
 
+@pytest.mark.asyncio
+async def test_active_evaluation_renews_shared_claim_lease(monkeypatch) -> None:
+    node = make_node(port=8488)
+    domain_id = "test-domain"
+    candidate_idx = 2
+    original_claimed_at = time.time() - 10.0
+    node._running = True
+    node._shared_claim_timeout = 0.3
+    node._shared_min_peers = 1
+    node._shared_pop_claims[domain_id] = {candidate_idx}
+    node._shared_pop_claim_owners[domain_id] = {candidate_idx: node.peer_id}
+    node._shared_pop_claim_times[domain_id] = {candidate_idx: original_claimed_at}
+    node._shared_pop_claim_result_counts[domain_id] = {candidate_idx: 0}
+    node._shared_pop_results[domain_id] = {}
+    node._current_candidate = {"candidate_num": candidate_idx + 1}
+
+    async def confirm(*args, **kwargs):
+        return type("Confirmation", (), {
+            "won": True,
+            "ready_peers": 1,
+            "contacted_peers": 1,
+        })()
+
+    async def broadcast(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(node, "_claim_on_peers", confirm)
+    monkeypatch.setattr(node, "_broadcast_shared_claim", broadcast)
+
+    stop = asyncio.Event()
+    task = asyncio.create_task(node._maintain_shared_claim_lease(
+        domain_id, 0, candidate_idx, stop,
+    ))
+    await asyncio.sleep(0.15)
+    stop.set()
+    await task
+
+    assert node._shared_pop_claim_times[domain_id][candidate_idx] > original_claimed_at
+    assert node._current_candidate["lease_status"] == "renewed"
+    assert node._current_candidate["lease_ready_peers"] == 1
+    assert node._current_candidate["lease_required_peers"] == 1
+
+
 def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     node = make_node()
     node.add_peer("192.168.0.109", 8470, peer_id="original-author")

@@ -31,7 +31,7 @@ import math
 import secrets
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -2468,7 +2468,19 @@ class UnifiedNode:
                     "timestamp": datetime.utcnow().isoformat() + "Z",
                 }
 
-                # Evaluate in executor thread (blocking GPU work)
+                # Evaluate in an executor thread while the event loop renews
+                # this candidate's distributed lease. Candidate evaluation can
+                # legitimately outlive shared_claim_timeout; without an owner
+                # heartbeat another peer could reclaim and duplicate the work.
+                lease_stop = asyncio.Event()
+                lease_task = asyncio.create_task(
+                    self._maintain_shared_claim_lease(
+                        domain_id,
+                        generation,
+                        candidate_idx,
+                        lease_stop,
+                    )
+                )
                 try:
                     result = await asyncio.get_event_loop().run_in_executor(
                         None,
@@ -2481,6 +2493,9 @@ class UnifiedNode:
                     )
                     # Record penalty so generation can still complete
                     result = {"fitness": _worst_fitness, "_eval_error": str(_eval_err)}
+                finally:
+                    lease_stop.set()
+                    await lease_task
 
                 fitness = result.get("fitness", _worst_fitness)
                 rejection_reason = _candidate_rejection_reason(result)
@@ -3205,6 +3220,81 @@ class UnifiedNode:
                         pass
             except Exception:
                 pass  # P2P release and lease expiry remain as fallbacks
+
+    async def _maintain_shared_claim_lease(
+        self,
+        domain_id: str,
+        generation: int,
+        candidate_idx: int,
+        stop: asyncio.Event,
+    ) -> None:
+        """Renew an active candidate lease while its evaluation is running."""
+        interval = max(0.1, min(60.0, self._shared_claim_timeout / 3.0))
+        while self._running and not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            try:
+                accepted, owner = self._record_shared_claim(
+                    domain_id, candidate_idx, self.peer_id,
+                )
+                if not accepted or owner != self.peer_id:
+                    logger.error(
+                        "[SHARED] Lease heartbeat lost ownership of candidate %d "
+                        "gen=%d %s to %s",
+                        candidate_idx,
+                        generation,
+                        domain_id,
+                        owner or "unknown",
+                    )
+                    if self._current_candidate:
+                        self._current_candidate["lease_status"] = "ownership_lost"
+                    return
+
+                confirmation = await self._claim_on_peers(
+                    domain_id, generation, candidate_idx,
+                )
+                await self._broadcast_shared_claim(
+                    domain_id, generation, candidate_idx,
+                )
+                healthy = (
+                    confirmation.won
+                    and confirmation.ready_peers >= self._shared_min_peers
+                )
+                if self._current_candidate:
+                    self._current_candidate.update({
+                        "lease_status": "renewed" if healthy else "degraded",
+                        "lease_last_renewed_at": datetime.now(timezone.utc).isoformat(),
+                        "lease_heartbeat_interval_seconds": interval,
+                        "lease_ready_peers": confirmation.ready_peers,
+                        "lease_required_peers": self._shared_min_peers,
+                    })
+                if not healthy:
+                    logger.warning(
+                        "[SHARED] Lease heartbeat for candidate %d gen=%d %s "
+                        "confirmed by %d/%d peers",
+                        candidate_idx,
+                        generation,
+                        domain_id,
+                        confirmation.ready_peers,
+                        self._shared_min_peers,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[SHARED] Lease heartbeat failed for candidate %d gen=%d %s: %s",
+                    candidate_idx,
+                    generation,
+                    domain_id,
+                    exc,
+                )
+                if self._current_candidate:
+                    self._current_candidate.update({
+                        "lease_status": "error",
+                        "lease_error": str(exc),
+                    })
 
     async def _push_result_to_peers(
         self, domain_id: str, generation: int, candidate_idx: int, result: dict,
