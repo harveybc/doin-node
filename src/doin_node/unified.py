@@ -99,6 +99,16 @@ from doin_node.storage.chaindb import ChainDB
 logger = logging.getLogger(__name__)
 
 
+def _candidate_rejection_reason(result: dict[str, Any]) -> str | None:
+    """Return why a candidate must not be accepted as a champion."""
+    reason = result.get("candidate_rejected_reason")
+    if reason is not None and str(reason).strip():
+        return str(reason).strip()
+    if result.get("candidate_rejected") is True:
+        return "candidate_rejected"
+    return None
+
+
 def _shared_population_seed(domain_id: str, optimization_config: dict[str, Any]) -> int:
     configured = optimization_config.get(
         "shared_population_seed", optimization_config.get("ga_seed")
@@ -1565,6 +1575,10 @@ class UnifiedNode:
                     _worst_peer = float("-inf") if _hib_peer else float("inf")
                     results[idx] = {
                         "fitness": candidate_data.get("fitness", _worst_peer),
+                        "candidate_rejected": candidate_data.get("candidate_rejected", False),
+                        "candidate_rejected_reason": candidate_data.get(
+                            "candidate_rejected_reason"
+                        ),
                         "val_mae": candidate_data.get("val_mae"),
                         "train_mae": candidate_data.get("train_mae"),
                         "val_naive_mae": candidate_data.get("val_naive_mae"),
@@ -2469,6 +2483,15 @@ class UnifiedNode:
                     result = {"fitness": _worst_fitness, "_eval_error": str(_eval_err)}
 
                 fitness = result.get("fitness", _worst_fitness)
+                rejection_reason = _candidate_rejection_reason(result)
+                if rejection_reason:
+                    result["candidate_rejected"] = True
+                    result["candidate_rejected_reason"] = rejection_reason
+                    logger.warning(
+                        "[SHARED] Candidate %d/%d rejected gen=%d %s: %s",
+                        candidate_idx + 1, pop_size, generation, domain_id,
+                        rejection_reason,
+                    )
                 # Sanitize: non-finite fitness (inf/nan from worker failures) → worst
                 if not math.isfinite(fitness):
                     fitness = _worst_fitness
@@ -2498,6 +2521,8 @@ class UnifiedNode:
                     "stage_name": stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
                     "total_evals": total_evals_counter,
                     "fitness": fitness,
+                    "candidate_rejected": bool(rejection_reason),
+                    "candidate_rejected_reason": rejection_reason,
                     "val_mae": result.get("val_mae"),
                     "train_mae": result.get("train_mae"),
                     "val_naive_mae": result.get("val_naive_mae"),
@@ -2525,6 +2550,8 @@ class UnifiedNode:
                     stage_name=stage_schedule[stage_idx]["name"] if stage_idx < len(stage_schedule) else "",
                     total_evals=total_evals_counter,
                     fitness=fitness,
+                    candidate_rejected=bool(rejection_reason),
+                    candidate_rejected_reason=rejection_reason,
                     val_mae=result.get("val_mae"),
                     train_mae=result.get("train_mae"),
                     val_naive_mae=result.get("val_naive_mae"),
@@ -2550,7 +2577,7 @@ class UnifiedNode:
                 # Update live champion tracking (dashboard/broadcast only — NOT best_fitness_ever,
                 # which is only updated at generation end from gen_best across ALL results)
                 _cur_best = self._domain_best.get(domain_id, (None, _worst_fitness))[1]
-                if self._is_better(domain_id, fitness, _cur_best):
+                if not rejection_reason and self._is_better(domain_id, fitness, _cur_best):
                     self._domain_best[domain_id] = (result.get("hyper_dict", {}), fitness)
                     self._domain_champion_metrics[domain_id] = {
                         "round": generation,
@@ -2592,16 +2619,40 @@ class UnifiedNode:
                     population[idx]["fitness"] = res.get("fitness", _worst_fitness)
 
                 # Check improvement for patience
+                eligible_results = [
+                    r for r in gen_results.values()
+                    if _candidate_rejection_reason(r) is None
+                ]
                 gen_fitnesses = [r.get("fitness", _worst_fitness) for r in gen_results.values()]
+                eligible_fitnesses = [
+                    r.get("fitness", _worst_fitness) for r in eligible_results
+                ]
+                # Rejected candidates remain evaluated for deterministic
+                # reproduction, but cannot advance accepted champion state.
                 gen_best = max(gen_fitnesses) if _hib else min(gen_fitnesses)
                 avg_fitness = sum(r.get("fitness", 0) for r in gen_results.values()) / max(len(gen_results), 1)
                 prev_best = best_fitness_ever
-                _gen_improved = (gen_best > best_fitness_ever) if _hib else (gen_best < best_fitness_ever)
+                eligible_best = (
+                    (max(eligible_fitnesses) if _hib else min(eligible_fitnesses))
+                    if eligible_fitnesses else None
+                )
+                _gen_improved = (
+                    eligible_best is not None
+                    and (
+                        (eligible_best > best_fitness_ever)
+                        if _hib else (eligible_best < best_fitness_ever)
+                    )
+                )
                 if _gen_improved:
-                    best_fitness_ever = gen_best
+                    best_fitness_ever = eligible_best
                     no_improve_count = 0
                 else:
                     no_improve_count += 1
+                if not eligible_results:
+                    logger.error(
+                        "[SHARED] Generation %d has no champion-eligible candidates for %s",
+                        generation, domain_id,
+                    )
 
                 # Get champion metrics for generation_end event
                 champ_metrics = self._domain_champion_metrics.get(domain_id, {})
@@ -2621,7 +2672,9 @@ class UnifiedNode:
                                 n_generations_stage=n_generations_stage,
                                 gen_in_stage=generation - stage_start_gen,
                                 no_improve_counter=no_improve_count,
-                                optimization_patience=patience)
+                                optimization_patience=patience,
+                                eligible_candidates=len(eligible_results),
+                                rejected_candidates=len(gen_results) - len(eligible_results))
 
                 self._domain_round_count[domain_id] = generation + 1
 
@@ -2877,6 +2930,8 @@ class UnifiedNode:
                     "generation": generation,
                     "candidate_idx": candidate_idx,
                     "fitness": result.get("fitness", _worst_bc),
+                    "candidate_rejected": bool(_candidate_rejection_reason(result)),
+                    "candidate_rejected_reason": _candidate_rejection_reason(result),
                     "val_mae": result.get("val_mae"),
                     "train_mae": result.get("train_mae"),
                     "val_naive_mae": result.get("val_naive_mae"),
@@ -3165,6 +3220,8 @@ class UnifiedNode:
             "candidate_idx": candidate_idx,
             "generation": generation,
             "fitness": result.get("fitness", _worst_push),
+            "candidate_rejected": bool(_candidate_rejection_reason(result)),
+            "candidate_rejected_reason": _candidate_rejection_reason(result),
             "val_mae": result.get("val_mae"),
             "train_mae": result.get("train_mae"),
             "val_naive_mae": result.get("val_naive_mae"),
@@ -3277,7 +3334,13 @@ class UnifiedNode:
                 elif state == "evaluated" and idx not in results:
                     fitness = c.get("fitness")
                     if fitness is not None:
-                        results[idx] = {"fitness": fitness}
+                        results[idx] = {
+                            "fitness": fitness,
+                            "candidate_rejected": c.get("candidate_rejected", False),
+                            "candidate_rejected_reason": c.get(
+                                "candidate_rejected_reason"
+                            ),
+                        }
                         pop_state = self._shared_pop_state.get(domain_id)
                         if pop_state and idx < len(pop_state.get("population", [])):
                             pop_state["population"][idx]["fitness"] = fitness
@@ -4912,6 +4975,12 @@ class UnifiedNode:
                 entry["result_patience"] = self._shared_claim_result_patience
             if state == "evaluated":
                 entry["fitness"] = results[i].get("fitness")
+                entry["candidate_rejected"] = bool(
+                    _candidate_rejection_reason(results[i])
+                )
+                entry["candidate_rejected_reason"] = _candidate_rejection_reason(
+                    results[i]
+                )
             candidates.append(entry)
 
         return web.json_response({
@@ -5115,6 +5184,8 @@ class UnifiedNode:
         # Accept the result
         result_dict = {
             "fitness": fitness,
+            "candidate_rejected": data.get("candidate_rejected", False),
+            "candidate_rejected_reason": data.get("candidate_rejected_reason"),
             "val_mae": data.get("val_mae"),
             "train_mae": data.get("train_mae"),
             "val_naive_mae": data.get("val_naive_mae"),

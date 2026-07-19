@@ -7,10 +7,23 @@ import pytest
 
 from doin_node.unified import (
     UnifiedNode,
+    _candidate_rejection_reason,
     _shared_generation_fingerprint,
     _shared_population_fingerprint,
     _shared_population_seed,
 )
+
+
+def test_candidate_rejection_reason_is_explicit_and_fail_closed() -> None:
+    assert _candidate_rejection_reason({"fitness": 1.0}) is None
+    assert _candidate_rejection_reason({"candidate_rejected": True}) == "candidate_rejected"
+    assert _candidate_rejection_reason({
+        "candidate_rejected_reason": "policy_action_collapse",
+    }) == "policy_action_collapse"
+    assert _candidate_rejection_reason({
+        "candidate_rejected": False,
+        "candidate_rejected_reason": "  collapse  ",
+    }) == "collapse"
 
 
 def test_shared_population_seed_prefers_explicit_campaign_seed() -> None:
