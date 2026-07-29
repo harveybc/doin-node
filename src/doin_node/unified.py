@@ -1591,6 +1591,7 @@ class UnifiedNode:
                     pop_state = self._shared_pop_state.get(domain_id)
                     if pop_state and idx < len(pop_state.get("population", [])):
                         pop_state["population"][idx]["fitness"] = candidate_data.get("fitness", _worst_peer)
+                    self._persist_shared_results(domain_id)
                     logger.info(
                         "[SHARED] Peer %s result: candidate %d/%s gen=%d fitness=%.6f %s",
                         message.sender_id[:12], idx,
@@ -2222,6 +2223,7 @@ class UnifiedNode:
             self._shared_pop_claim_owners[domain_id] = {}
             self._shared_pop_claim_result_counts[domain_id] = {}
             self._shared_pop_generation[domain_id] = pop_state.get("generation", 0)
+            self._restore_shared_results(domain_id)
 
             if not peer_barrier_ready:
                 if not await self._wait_for_shared_peer_count():
@@ -2342,6 +2344,7 @@ class UnifiedNode:
                     self._shared_pop_claim_times[domain_id] = {}
                     self._shared_pop_claim_result_counts[domain_id] = {}
                     self._shared_pop_generation[domain_id] = generation
+                    self._persist_shared_results(domain_id)
 
                     logger.info(
                         "[SHARED] Fast-forwarded to gen=%d stage=%d (%s) for %s",
@@ -2520,6 +2523,7 @@ class UnifiedNode:
                 # Store result locally
                 gen_results[candidate_idx] = result
                 self._shared_pop_results[domain_id] = gen_results
+                self._persist_shared_results(domain_id)
 
                 # Update genome with fitness for later reproduction
                 if "fitness" not in population[candidate_idx]:
@@ -2727,6 +2731,7 @@ class UnifiedNode:
                     self._shared_pop_claim_result_counts[domain_id] = {}
                     gen_results = {}
                     claims = set()
+                    self._persist_shared_results(domain_id)
                     await asyncio.sleep(5)
                     continue
 
@@ -2788,6 +2793,7 @@ class UnifiedNode:
                 self._shared_pop_generation[domain_id] = generation
                 gen_results = {}
                 claims = set()
+                self._persist_shared_results(domain_id)
 
                 logger.info(
                     "[SHARED] Generation %d started: %d candidates, stage=%d, patience=%d/%d",
@@ -3439,6 +3445,7 @@ class UnifiedNode:
             if updated:
                 self._shared_pop_claims[domain_id] = claims
                 self._shared_pop_results[domain_id] = results
+                self._persist_shared_results(domain_id)
 
         except Exception:
             pass  # Network issues are expected
@@ -4926,6 +4933,128 @@ class UnifiedNode:
 
     # ── Shared-population coordination API ─────────────────────
 
+    def _shared_results_path(self, domain_id: str) -> Path:
+        domain_key = hashlib.sha256(domain_id.encode()).hexdigest()[:16]
+        return Path(self.config.data_dir) / f"shared-results-{domain_key}.json"
+
+    @staticmethod
+    def _shared_result_snapshot(result: dict[str, Any]) -> dict[str, Any]:
+        fitness = float(result["fitness"])
+        if not math.isfinite(fitness):
+            raise ValueError("shared result fitness must be finite")
+        snapshot: dict[str, Any] = {
+            "fitness": fitness,
+            "candidate_rejected": bool(
+                result.get("candidate_rejected", False)
+            ),
+            "candidate_rejected_reason": result.get(
+                "candidate_rejected_reason"
+            ),
+        }
+        for key in (
+            "val_mae",
+            "train_mae",
+            "val_naive_mae",
+            "train_naive_mae",
+            "test_mae",
+            "test_naive_mae",
+        ):
+            value = result.get(key)
+            if value is None:
+                snapshot[key] = None
+                continue
+            numeric = float(value)
+            snapshot[key] = numeric if math.isfinite(numeric) else None
+        return snapshot
+
+    def _persist_shared_results(self, domain_id: str) -> None:
+        pop_state = self._shared_pop_state.get(domain_id)
+        generation = self._shared_pop_generation.get(domain_id)
+        if pop_state is None or generation is None:
+            return
+        try:
+            results = {
+                str(index): self._shared_result_snapshot(result)
+                for index, result in sorted(
+                    self._shared_pop_results.get(domain_id, {}).items()
+                )
+            }
+            payload = {
+                "schema_version": "doin.shared_results.v1",
+                "domain_id": domain_id,
+                "generation": int(generation),
+                "generation_fingerprint": _shared_generation_fingerprint(
+                    pop_state
+                ),
+                "results": results,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            path = self._shared_results_path(domain_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning(
+                "[SHARED] Could not persist generation results for %s: %s",
+                domain_id,
+                exc,
+            )
+
+    def _restore_shared_results(self, domain_id: str) -> int:
+        pop_state = self._shared_pop_state.get(domain_id)
+        generation = self._shared_pop_generation.get(domain_id)
+        if pop_state is None or generation is None:
+            return 0
+        path = self._shared_results_path(domain_id)
+        if not path.is_file():
+            return 0
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("schema_version") != "doin.shared_results.v1":
+                raise ValueError("unsupported shared-results schema")
+            if payload.get("domain_id") != domain_id:
+                raise ValueError("shared-results domain mismatch")
+            if int(payload.get("generation", -1)) != int(generation):
+                return 0
+            expected = _shared_generation_fingerprint(pop_state)
+            if payload.get("generation_fingerprint") != expected:
+                raise ValueError("shared-results population fingerprint mismatch")
+
+            population = pop_state.get("population", [])
+            restored: dict[int, dict[str, Any]] = {}
+            for raw_index, raw_result in (payload.get("results") or {}).items():
+                index = int(raw_index)
+                if index < 0 or index >= len(population):
+                    raise ValueError(
+                        f"shared-results candidate index {index} out of range"
+                    )
+                result = self._shared_result_snapshot(dict(raw_result))
+                restored[index] = result
+                population[index]["fitness"] = result["fitness"]
+
+            self._shared_pop_results[domain_id] = restored
+            claims = self._shared_pop_claims.setdefault(domain_id, set())
+            claims.difference_update(restored)
+            logger.info(
+                "[SHARED] Restored %d persisted results for generation %d %s",
+                len(restored),
+                generation,
+                domain_id,
+            )
+            return len(restored)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "[SHARED] Ignoring invalid persisted results for %s: %s",
+                domain_id,
+                exc,
+            )
+            return 0
+
     def _record_shared_claim(
         self, domain_id: str, candidate_idx: int, requester: str,
     ) -> tuple[bool, str]:
@@ -5290,6 +5419,7 @@ class UnifiedNode:
         pop_state = self._shared_pop_state.get(domain_id)
         if pop_state and candidate_idx < len(pop_state.get("population", [])):
             pop_state["population"][candidate_idx]["fitness"] = fitness
+        self._persist_shared_results(domain_id)
 
         logger.info("[SHARED-API] Result for candidate %d gen=%d fitness=%.6f %s",
                      candidate_idx, gen, fitness, domain_id)
