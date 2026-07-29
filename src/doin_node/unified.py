@@ -1498,8 +1498,17 @@ class UnifiedNode:
 
         logger.info("Block #%d announced by %s", ann.block_index, from_peer[:12] if from_peer else "?")
 
-        # If the announced block is ahead of us, trigger sync
-        if ann.block_index >= self._get_height():
+        # Sync an ahead block and also resolve a competing tip at our current
+        # height. Equal-height forks are expected when nodes assemble a block
+        # concurrently; ForkChoiceRule must make their choice deterministic.
+        our_height = self._get_height()
+        our_tip = self._get_tip()
+        competing_tip = bool(
+            ann.block_index == our_height - 1
+            and our_tip is not None
+            and ann.block_hash != our_tip.hash
+        )
+        if ann.block_index >= our_height or competing_tip:
             # Find the peer endpoint that sent this
             peer_endpoint = self._find_peer_endpoint(
                 from_peer, message.sender_id, prefer_from_addr=True,
@@ -4455,12 +4464,147 @@ class UnifiedNode:
         )
         return True
 
+    @staticmethod
+    def _fork_choice_block(block: Block) -> dict[str, Any]:
+        payload = json.loads(block.model_dump_json())
+        payload["height"] = block.header.index
+        payload["hash"] = block.hash
+        return payload
+
+    async def _resolve_equal_height_fork(
+        self, session, endpoint: str
+    ) -> bool:
+        """Apply the configured heaviest-chain rule to competing equal tips."""
+        if not self.chaindb:
+            logger.warning("Equal-height fork resolution requires chaindb")
+            return False
+
+        state = self.sync_manager.peers.get(endpoint)
+        our_height = self._get_height()
+        our_tip = self._get_tip()
+        if (
+            state is None
+            or our_tip is None
+            or state.their_height != our_height
+            or not state.their_tip_hash
+            or state.their_tip_hash == our_tip.hash
+        ):
+            return False
+
+        common = await self._find_common_ancestor(
+            session, endpoint, our_height
+        )
+        if common < self.finality.finalized_height:
+            logger.warning(
+                "Cannot resolve equal-height fork past finalized height %d "
+                "(common ancestor %d)",
+                self.finality.finalized_height,
+                common,
+            )
+            return False
+
+        branch_start = common + 1
+        branch_end = our_height - 1
+        local_blocks = self._get_blocks_range(branch_start, branch_end)
+        peer_blocks = await fetch_blocks(
+            session, endpoint, branch_start, branch_end
+        )
+        expected_count = branch_end - branch_start + 1
+        if (
+            len(local_blocks) != expected_count
+            or len(peer_blocks) != expected_count
+            or peer_blocks[-1].hash != state.their_tip_hash
+        ):
+            logger.warning(
+                "Incomplete equal-height fork data from %s: local=%d peer=%d "
+                "expected=%d",
+                endpoint,
+                len(local_blocks),
+                len(peer_blocks),
+                expected_count,
+            )
+            return False
+
+        self.fork_choice.clear()
+        checkpoint = self.finality.latest_checkpoint
+        finalized_hash = checkpoint.block_hash if checkpoint else None
+        self.fork_choice.score_chain(
+            our_tip.hash,
+            our_height,
+            [self._fork_choice_block(block) for block in local_blocks],
+            self.finality.finalized_height,
+            finalized_hash,
+        )
+        self.fork_choice.score_chain(
+            state.their_tip_hash,
+            state.their_height,
+            [self._fork_choice_block(block) for block in peer_blocks],
+            self.finality.finalized_height,
+            finalized_hash,
+        )
+        selected = self.fork_choice.select_best()
+        if selected is None or selected.tip_hash == our_tip.hash:
+            logger.info(
+                "Equal-height fork resolved in favor of local tip %s",
+                our_tip.hash[:16],
+            )
+            return False
+
+        logger.info(
+            "Equal-height fork selected peer %s tip %s over local %s; "
+            "rolling back to index %d",
+            endpoint,
+            state.their_tip_hash[:16],
+            our_tip.hash[:16],
+            common,
+        )
+        self.chaindb.rollback_to(common)
+        appended = self._validate_and_append_blocks(peer_blocks)
+        if appended != len(peer_blocks):
+            logger.error(
+                "Peer fork append failed after %d/%d blocks; restoring local "
+                "branch",
+                appended,
+                len(peer_blocks),
+            )
+            self.chaindb.rollback_to(common)
+            restored = self._validate_and_append_blocks(local_blocks)
+            if restored != len(local_blocks):
+                raise RuntimeError(
+                    "failed to restore local chain after fork-choice append"
+                )
+            return False
+
+        tip = self._get_tip()
+        self.sync_manager.update_our_state(
+            self._get_height(),
+            tip.hash if tip else "",
+            self.finality.finalized_height,
+        )
+        logger.info(
+            "Equal-height fork converged to %s at height %d",
+            tip.hash[:16] if tip else "",
+            self._get_height(),
+        )
+        return True
+
     async def _sync_with_peer(self, endpoint: str) -> None:
         """Sync our chain with a peer that's ahead of us.
 
         Fetches blocks in batches and validates them before appending.
         """
-        if not self.sync_manager.needs_sync(endpoint):
+        state = self.sync_manager.peers.get(endpoint)
+        our_tip = self._get_tip()
+        equal_height_fork = bool(
+            state is not None
+            and our_tip is not None
+            and state.their_height == self._get_height()
+            and state.their_tip_hash
+            and state.their_tip_hash != our_tip.hash
+        )
+        if not self.sync_manager.needs_sync(endpoint) and not equal_height_fork:
+            return
+        if state is not None and state.syncing:
             return
 
         self.sync_manager.mark_syncing(endpoint)
@@ -4470,6 +4614,15 @@ class UnifiedNode:
             return
 
         try:
+            if equal_height_fork:
+                await self._resolve_equal_height_fork(session, endpoint)
+                self._update_domain_best_from_chain()
+                self._save_chain()
+                self.sync_manager.record_sync_success(
+                    endpoint, self._get_height()
+                )
+                return
+
             reorg_attempts = 0
             while True:
                 needed = self.sync_manager.compute_blocks_needed(endpoint)
@@ -4551,6 +4704,13 @@ class UnifiedNode:
 
             self.sync_manager.update_peer_status(endpoint, status)
             if status.chain_height > self._get_height():
+                await self._sync_with_peer(endpoint)
+            elif (
+                status.chain_height == self._get_height()
+                and status.tip_hash
+                and status.tip_hash
+                != (self._get_tip().hash if self._get_tip() else "")
+            ):
                 await self._sync_with_peer(endpoint)
 
     def _find_peer_endpoint(

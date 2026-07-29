@@ -13,7 +13,10 @@ import time
 
 import pytest
 
+from doin_core.crypto.hashing import compute_merkle_root
 from doin_core.models import (
+    Block,
+    BlockHeader,
     Commitment,
     Reveal,
     Task,
@@ -23,7 +26,9 @@ from doin_core.models import (
     compute_commitment,
 )
 from doin_core.models.reputation import MIN_REPUTATION_FOR_CONSENSUS
+from doin_core.models.transaction import Transaction, TransactionType
 from doin_core.protocol.messages import (
+    ChainStatus,
     Message,
     MessageType,
     OptimaeCommit,
@@ -740,6 +745,66 @@ class TestForkChoiceIntegration:
         ], finalized_height=5, finalized_hash="correct")
 
         assert node.fork_choice.select_best().tip_hash == "good"
+
+    @pytest.mark.asyncio
+    async def test_equal_height_fork_converges_to_heavier_peer(
+        self, tmp_path, monkeypatch
+    ):
+        config = UnifiedNodeConfig(
+            port=8497,
+            data_dir=str(tmp_path),
+            discovery_enabled=False,
+        )
+        node = UnifiedNode(config)
+        node.chaindb.open()
+        genesis = node.chaindb.initialize("genesis")
+
+        def branch_block(generator, increment):
+            transaction = Transaction(
+                tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                domain_id="test-domain",
+                peer_id=generator,
+                payload={"effective_increment": increment},
+            )
+            header = BlockHeader(
+                index=1,
+                previous_hash=genesis.hash,
+                merkle_root=compute_merkle_root([transaction.id]),
+                generator_id=generator,
+                weighted_performance_sum=increment,
+                threshold=0.0,
+            )
+            return Block(header=header, transactions=[transaction])
+
+        local_block = branch_block("local", 1.0)
+        peer_block = branch_block("peer", 2.0)
+        node.chaindb.append_block(local_block)
+        node.sync_manager.update_our_state(2, local_block.hash)
+        node.sync_manager.update_peer_status(
+            "peer:8498",
+            ChainStatus(
+                chain_height=2,
+                tip_hash=peer_block.hash,
+                tip_index=1,
+            ),
+        )
+
+        async def peer_blocks(_session, _endpoint, from_index, to_index):
+            assert from_index == to_index == 1
+            return [peer_block]
+
+        monkeypatch.setattr(
+            "doin_node.unified.fetch_blocks", peer_blocks
+        )
+
+        try:
+            assert await node._resolve_equal_height_fork(
+                object(), "peer:8498"
+            )
+            assert node.chaindb.tip_hash == peer_block.hash
+            assert node.chaindb.height == 2
+        finally:
+            node.chaindb.close()
 
 
 # ── Test: Deterministic Seed (Hardening #10) ────────────────────────
