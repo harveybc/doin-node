@@ -1277,7 +1277,7 @@ class UnifiedNode:
         # ── Full synthetic data verification path ──────────────────
         if role and not role.has_synthetic_data:
             logger.warning(
-                "Domain %s has no synthetic data — optimae will have zero consensus weight",
+                "Domain %s has no synthetic data — optimae use reduced consensus weight",
                 data.domain_id,
             )
 

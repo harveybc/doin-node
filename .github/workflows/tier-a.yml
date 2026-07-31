@@ -1,0 +1,46 @@
+name: Tier A
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  node-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: harveybc/doin-core
+          ref: e05a3325625a9ad497b56866485c7606024e3681
+          path: .ci/doin-core
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: harveybc/doin-plugins
+          ref: f5fedf8a44656f4fccd36d8f453609fa62a94fe2
+          path: .ci/doin-plugins
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: Record dependency and component identity
+        run: |
+          sha256sum pyproject.toml requirements-ci.txt
+          git -C .ci/doin-core rev-parse HEAD
+          git -C .ci/doin-plugins rev-parse HEAD
+      - name: Install hash-locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-ci.txt
+          python -m pip install --no-deps -e .ci/doin-core
+          python -m pip install --no-deps -e .ci/doin-plugins
+          python -m pip install --no-deps -e .
+      - name: Compile package
+        run: python -m compileall -q src
+      - name: Run node contracts
+        run: pytest -q

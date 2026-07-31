@@ -221,9 +221,11 @@ class TestControlMessages:
     @pytest.mark.asyncio
     async def test_graft_rejected_when_full(self, populated_gs):
         gs = populated_gs
-        # Fill mesh to d_high
-        for i in range(gs.d_high):
-            gs._topics["blocks"].mesh.add(f"fill-{i}")
+        # Use an exact-capacity mesh that does not already contain the peer
+        # requesting admission.
+        gs._topics["blocks"].mesh = {
+            f"fill-{i}" for i in range(gs.d_high)
+        }
         await gs.handle_control("peer-0", "GRAFT", "blocks")
         assert "peer-0" not in gs._topics["blocks"].mesh
         # Should have sent PRUNE back

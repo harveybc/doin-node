@@ -1,0 +1,8 @@
+aiohttp>=3.9
+aiosqlite>=0.20
+cryptography>=41.0
+numpy>=1.26,<3
+psutil>=5.9
+pydantic>=2.0
+pytest>=7.0,<10
+pytest-asyncio>=0.21

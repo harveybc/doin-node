@@ -842,12 +842,12 @@ class TestVUWIntegration:
         weights = node.vuw.compute_weights()
         assert weights["test-domain"] > 0
 
-    def test_domain_without_synthetic_zero_weight(self):
+    def test_domain_without_synthetic_has_reduced_weight(self):
         node = make_node(domains=[
             DomainRole(domain_id="no-synth", has_synthetic_data=False),
         ])
         weights = node.vuw.compute_weights()
-        assert weights["no-synth"] == 0.0
+        assert weights["no-synth"] == pytest.approx(0.5)
 
     def test_effective_increment_uses_reputation(self):
         node = make_node()
@@ -990,10 +990,10 @@ class TestFullFlow:
         rep_after = node.reputation.get_score("bad-optimizer")
         assert rep_after < rep_before
 
-    def test_no_synthetic_means_zero_effective_increment(self):
-        """Domain without synthetic data gets zero consensus weight."""
+    def test_no_synthetic_means_reduced_effective_increment(self):
+        """A domain without synthetic data remains usable at reduced trust."""
         node = make_node(domains=[
             DomainRole(domain_id="no-synth", has_synthetic_data=False),
         ])
         eff = node.vuw.get_effective_increment("no-synth", 1.0, 10.0)
-        assert eff == 0.0
+        assert eff == pytest.approx(0.5)
