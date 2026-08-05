@@ -100,12 +100,32 @@ logger = logging.getLogger(__name__)
 
 
 def _candidate_rejection_reason(result: dict[str, Any]) -> str | None:
-    """Return why a candidate must not be accepted as a champion."""
+    """Return why a candidate must not be accepted as a champion.
+
+    AUD-F1-20260805-109: DOIN rejects independently of plugin
+    convenience flags. Any failure evidence — an evaluation error, a
+    missing/non-finite fitness, or the worst penalty sentinel — makes
+    the candidate ineligible even when ``candidate_rejected`` was never
+    set. A finite worst sentinel is never champion-eligible.
+    """
     reason = result.get("candidate_rejected_reason")
     if reason is not None and str(reason).strip():
         return str(reason).strip()
     if result.get("candidate_rejected") is True:
         return "candidate_rejected"
+    for key in ("_eval_error", "evaluation_error", "simulator_error"):
+        detail = result.get(key)
+        if detail is not None and str(detail).strip():
+            return f"{key}: {str(detail).strip()}"
+    fitness = result.get("fitness")
+    try:
+        fitness_value = float(fitness)
+    except (TypeError, ValueError):
+        return f"fitness_not_numeric: {fitness!r}"
+    if not math.isfinite(fitness_value):
+        return f"fitness_not_finite: {fitness_value!r}"
+    if fitness_value <= -1.0e9:
+        return "worst_sentinel_fitness"
     return None
 
 
@@ -2503,8 +2523,17 @@ class UnifiedNode:
                         "[SHARED] Candidate %d/%d CRASHED gen=%d %s: %s",
                         candidate_idx + 1, pop_size, generation, domain_id, _eval_err,
                     )
-                    # Record penalty so generation can still complete
-                    result = {"fitness": _worst_fitness, "_eval_error": str(_eval_err)}
+                    # Record an explicitly REJECTED result so the
+                    # generation can complete without ever making the
+                    # crash champion-eligible (AUD-F1-20260805-109).
+                    result = {
+                        "fitness": _worst_fitness,
+                        "_eval_error": str(_eval_err),
+                        "candidate_rejected": True,
+                        "candidate_rejected_reason": (
+                            f"_eval_error: {_eval_err}"
+                        ),
+                    }
                 finally:
                     lease_stop.set()
                     await lease_task
@@ -2677,9 +2706,30 @@ class UnifiedNode:
                 else:
                     no_improve_count += 1
                 if not eligible_results:
+                    # AUD-F1-20260805-109: a generation with zero
+                    # eligible candidates aborts OBSERVABLY. It must not
+                    # mint a champion block and must not silently evolve
+                    # error sentinels into the next population.
                     logger.error(
-                        "[SHARED] Generation %d has no champion-eligible candidates for %s",
+                        "[SHARED] Generation %d has no champion-eligible candidates for %s"
+                        " — aborting domain optimization",
                         generation, domain_id,
+                    )
+                    self._log_event(
+                        "generation_aborted_no_eligible",
+                        domain_id=domain_id, gen=generation,
+                        generation=generation,
+                        rejected_candidates=len(gen_results),
+                        rejection_reasons=[
+                            _candidate_rejection_reason(r)
+                            for r in gen_results.values()
+                        ],
+                    )
+                    raise RuntimeError(
+                        f"generation {generation} of {domain_id} produced"
+                        " zero champion-eligible candidates; optimization"
+                        " aborted (see generation_aborted_no_eligible"
+                        " event)"
                     )
 
                 # Get champion metrics for generation_end event
@@ -3953,6 +4003,15 @@ class UnifiedNode:
         metrics: dict, gen: int, stage_info: dict,
     ) -> None:
         """Broadcast a new local champion to the DOIN network (commit→reveal)."""
+        rejection = _candidate_rejection_reason(dict(metrics or {}))
+        if rejection is not None:
+            # AUD-F1-20260805-109: a rejected/failed result must never be
+            # announced as a champion, whatever its numeric fitness.
+            logger.error(
+                "[SHARED] Refusing champion broadcast for rejected "
+                "candidate (%s): %s", domain_id, rejection,
+            )
+            return
         performance = fitness  # Use raw fitness; comparison respects higher_is_better per domain
         metrics = dict(metrics or {})
 
@@ -4505,11 +4564,40 @@ class UnifiedNode:
 
         branch_start = common + 1
         branch_end = our_height - 1
+        if branch_start > branch_end:
+            # AUD-F1-20260805-111: an empty divergent range means the
+            # peer state is stale or changed during ancestor search
+            # (tips differ but the common ancestor IS the tip index).
+            # Retry on the next sync round instead of indexing an empty
+            # branch fetch.
+            logger.warning(
+                "Equal-height fork with empty divergent range from %s "
+                "(common=%d height=%d); peer state stale — will retry",
+                endpoint, common, our_height,
+            )
+            return False
         local_blocks = self._get_blocks_range(branch_start, branch_end)
-        peer_blocks = await fetch_blocks(
-            session, endpoint, branch_start, branch_end
-        )
         expected_count = branch_end - branch_start + 1
+        peer_blocks: list[Block] = []
+        for attempt in range(2):
+            peer_blocks = await fetch_blocks(
+                session, endpoint, branch_start, branch_end
+            )
+            if (
+                len(peer_blocks) == expected_count
+                and peer_blocks[-1].hash == state.their_tip_hash
+            ):
+                break
+            # Bounded retry (AUD-F1-20260805-111): the peer may have
+            # rolled back or advanced while we fetched; one refetch is
+            # allowed, then defer to the next sync round.
+            logger.warning(
+                "Equal-height fork fetch attempt %d from %s inconsistent"
+                " (peer=%d expected=%d tip_match=%s)",
+                attempt + 1, endpoint, len(peer_blocks), expected_count,
+                bool(peer_blocks)
+                and peer_blocks[-1].hash == state.their_tip_hash,
+            )
         if (
             len(local_blocks) != expected_count
             or len(peer_blocks) != expected_count
