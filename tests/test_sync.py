@@ -15,7 +15,13 @@ from doin_core.crypto.hashing import compute_merkle_root
 from doin_core.protocol.messages import ChainStatus
 
 from doin_node.blockchain.chain import Chain, ChainError
-from doin_node.network.sync import SyncManager, SyncState, MAX_BLOCKS_PER_REQUEST
+from doin_node.network.sync import (
+    BLOCK_SYNC_TIMEOUT,
+    MAX_BLOCKS_PER_REQUEST,
+    SYNC_TIMEOUT,
+    SyncManager,
+    SyncState,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -128,6 +134,10 @@ class TestChainFindCommonAncestor:
 # ── SyncManager ──────────────────────────────────────────────────────
 
 class TestSyncManager:
+
+    def test_block_transfer_timeout_allows_large_champion_artifacts(self):
+        assert BLOCK_SYNC_TIMEOUT.total == 120
+        assert BLOCK_SYNC_TIMEOUT.total > SYNC_TIMEOUT.total
 
     def test_get_our_status(self):
         sm = SyncManager(our_height=10, our_tip_hash="abc", finalized_height=5)

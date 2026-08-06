@@ -34,6 +34,10 @@ MAX_BLOCKS_PER_REQUEST = 50
 
 # Timeout for sync HTTP requests
 SYNC_TIMEOUT = ClientTimeout(total=30)
+# Champion artifacts can make a single optimization block tens of megabytes.
+# Keep status polling bounded tightly, but allow block transfer and JSON
+# validation enough time to complete over the slowest fleet link.
+BLOCK_SYNC_TIMEOUT = ClientTimeout(total=120)
 
 
 @dataclass
@@ -224,7 +228,9 @@ async def fetch_blocks(
     url = f"http://{endpoint}/chain/blocks"
     params = {"from": str(from_index), "to": str(to_index)}
     try:
-        async with session.get(url, params=params, timeout=SYNC_TIMEOUT) as resp:
+        async with session.get(
+            url, params=params, timeout=BLOCK_SYNC_TIMEOUT
+        ) as resp:
             if resp.status != 200:
                 logger.warning("Block fetch from %s returned %d", endpoint, resp.status)
                 return []
