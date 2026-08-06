@@ -1,0 +1,423 @@
+{
+  "$doc": "Generated shared-population worker dragon for trading-asset-policy-eth-4h-anchored-full-v1. All workers share one semantic domain and use isolated runtime state.",
+  "node_label": "dragon",
+  "host": "0.0.0.0",
+  "port": 8470,
+  "data_dir": "./doin-data-eth-anchored-full-v1-dragon",
+  "identity_file": "./doin-data-eth-anchored-full-v1-dragon/identity.pem",
+  "bootstrap_peers": [
+    "100.99.54.79:8470",
+    "100.107.204.49:8470",
+    "100.107.204.49:8471"
+  ],
+  "target_block_time": 600,
+  "initial_threshold": -1000000000.0,
+  "acceptance_tolerance": 1e-06,
+  "quorum_min_evaluators": 1,
+  "quorum_fraction": 1.0,
+  "quorum_tolerance": 1e-06,
+  "optimizer_loop_interval": 30,
+  "shared_claim_timeout": 3600,
+  "shared_claim_result_patience": 20,
+  "shared_min_peers": 2,
+  "shared_initialize_before_peers": true,
+  "shared_peer_wait_timeout": 60,
+  "shared_claim_settle_seconds": 2,
+  "shared_claim_confirmation_rounds": 2,
+  "eval_poll_interval": 10,
+  "eval_max_concurrent": 1,
+  "storage_backend": "sqlite",
+  "network_protocol": "flooding",
+  "discovery_enabled": true,
+  "dashboard_enabled": true,
+  "fee_market_enabled": false,
+  "reset_chain": false,
+  "require_deterministic_seed": true,
+  "experiment_stats_file": "./doin-data-eth-anchored-full-v1-dragon/experiment_stats.csv",
+  "olap_db_path": "./doin-data-eth-anchored-full-v1-dragon/olap.db",
+  "domains": [
+    {
+      "domain_id": "trading-asset-policy-eth-4h-anchored-full-v1",
+      "optimize": true,
+      "evaluate": false,
+      "optimization_plugin": "trading_asset",
+      "inference_plugin": "trading_asset",
+      "synthetic_data_plugin": "trading_scenario",
+      "has_synthetic_data": false,
+      "synthetic_data_validation": false,
+      "higher_is_better": true,
+      "metric_type": "lexicographic_weekly_v1",
+      "optimization_config": {
+        "agent_multi_root": "/home/harveybc/Documents/GitHub/agent-multi",
+        "load_config": "/home/harveybc/Documents/GitHub/agent-multi/examples/config/phase_2_eth_anchored/optimization/phase_2_eth_anchored_full_v1.json",
+        "runtime_overlay": "configs/runtime/dragon.json",
+        "optimizer_plugin": "project3_full_genome_optimizer",
+        "pipeline_plugin": "rl_pipeline_with_solvency_curriculum",
+        "preprocessor_plugin": "feature_window_preprocessor",
+        "metric_type": "lexicographic_weekly_v1",
+        "optimization_metric": "lexicographic_weekly_v1",
+        "metric_schema": "trading.metrics.v1",
+        "higher_is_better": true,
+        "optimization_resume": false,
+        "optimization_pause_on_resume": false,
+        "shared_population": true,
+        "shared_population_size": 20,
+        "population_size": 20,
+        "initial_candidate_params": {
+          "learning_rate_gene": -4.0,
+          "batch_size_gene": 1,
+          "buffer_size_gene": 1,
+          "learning_starts_gene": 0,
+          "gamma_gene": 0.99,
+          "tau_gene": -2.3010299956639813,
+          "train_freq_gene": 0,
+          "gradient_steps_gene": 0,
+          "entropy_gene": 4,
+          "action_threshold_gene": 0.1,
+          "relative_volume_gene": 0.05,
+          "stop_loss_atr_gene": 2.0,
+          "take_profit_atr_gene": 3.0,
+          "entry_order_mode_gene": 0,
+          "market_urgency_threshold_gene": 0.75,
+          "market_max_spread_bps_gene": 2,
+          "stop_breakout_threshold_gene": 0.65,
+          "limit_offset_atr_gene": 0.05,
+          "stop_offset_atr_gene": 0.05
+        },
+        "ga_seed": 2703,
+        "ga_population": 20,
+        "optimization_patience": 5,
+        "optimization_stages": [
+          {
+            "name": "model_training",
+            "params": [
+              "learning_rate_gene",
+              "batch_size_gene",
+              "buffer_size_gene",
+              "learning_starts_gene",
+              "gamma_gene",
+              "tau_gene",
+              "train_freq_gene",
+              "gradient_steps_gene",
+              "entropy_gene"
+            ],
+            "generations": 8,
+            "patience": 5
+          },
+          {
+            "name": "execution_risk",
+            "params": [
+              "action_threshold_gene",
+              "relative_volume_gene",
+              "stop_loss_atr_gene",
+              "take_profit_atr_gene",
+              "entry_order_mode_gene",
+              "market_urgency_threshold_gene",
+              "market_max_spread_bps_gene",
+              "stop_breakout_threshold_gene",
+              "limit_offset_atr_gene",
+              "stop_offset_atr_gene"
+            ],
+            "generations": 4,
+            "patience": 3
+          },
+          {
+            "name": "joint_refinement",
+            "params": "all",
+            "generations": 6,
+            "patience": 5
+          }
+        ],
+        "hyperparameter_bounds": {
+          "learning_rate_gene": [
+            -5.0,
+            -3.0
+          ],
+          "batch_size_gene": [
+            0.0,
+            2.0
+          ],
+          "buffer_size_gene": [
+            0.0,
+            2.0
+          ],
+          "learning_starts_gene": [
+            0.0,
+            3.0
+          ],
+          "gamma_gene": [
+            0.94,
+            0.9995
+          ],
+          "tau_gene": [
+            -3.3010299956639813,
+            -1.6989700043360187
+          ],
+          "train_freq_gene": [
+            0.0,
+            3.0
+          ],
+          "gradient_steps_gene": [
+            0.0,
+            3.0
+          ],
+          "entropy_gene": [
+            0.0,
+            4.0
+          ],
+          "action_threshold_gene": [
+            0.03,
+            0.4
+          ],
+          "relative_volume_gene": [
+            0.01,
+            0.25
+          ],
+          "stop_loss_atr_gene": [
+            0.75,
+            5.0
+          ],
+          "take_profit_atr_gene": [
+            1.0,
+            8.0
+          ],
+          "entry_order_mode_gene": [
+            0.0,
+            3.0
+          ],
+          "market_urgency_threshold_gene": [
+            0.55,
+            0.9
+          ],
+          "market_max_spread_bps_gene": [
+            0.0,
+            3.0
+          ],
+          "stop_breakout_threshold_gene": [
+            0.35,
+            0.85
+          ],
+          "limit_offset_atr_gene": [
+            0.01,
+            0.25
+          ],
+          "stop_offset_atr_gene": [
+            0.01,
+            0.25
+          ]
+        },
+        "env_plugin": "gym_fx_env",
+        "agent_plugin": "project3_sac_actor_critic_agent",
+        "mixed_genome_schema_version": "agent_multi.project3_full_genome.v1",
+        "mixed_genome_schema_hash": "7ab40e1e456409376f567f0a27c7012e91afe5e76b5ddaab6f32a4a3b2b3a2cd",
+        "mixed_genome_parameter_schema": [
+          [
+            "learning_rate_gene",
+            -5.0,
+            -3.0,
+            "float"
+          ],
+          [
+            "batch_size_gene",
+            0.0,
+            2.0,
+            "int"
+          ],
+          [
+            "buffer_size_gene",
+            0.0,
+            2.0,
+            "int"
+          ],
+          [
+            "learning_starts_gene",
+            0.0,
+            3.0,
+            "int"
+          ],
+          [
+            "gamma_gene",
+            0.94,
+            0.9995,
+            "float"
+          ],
+          [
+            "tau_gene",
+            -3.3010299956639813,
+            -1.6989700043360187,
+            "float"
+          ],
+          [
+            "train_freq_gene",
+            0.0,
+            3.0,
+            "int"
+          ],
+          [
+            "gradient_steps_gene",
+            0.0,
+            3.0,
+            "int"
+          ],
+          [
+            "entropy_gene",
+            0.0,
+            4.0,
+            "int"
+          ],
+          [
+            "action_threshold_gene",
+            0.03,
+            0.4,
+            "float"
+          ],
+          [
+            "relative_volume_gene",
+            0.01,
+            0.25,
+            "float"
+          ],
+          [
+            "stop_loss_atr_gene",
+            0.75,
+            5.0,
+            "float"
+          ],
+          [
+            "take_profit_atr_gene",
+            1.0,
+            8.0,
+            "float"
+          ],
+          [
+            "entry_order_mode_gene",
+            0.0,
+            3.0,
+            "int"
+          ],
+          [
+            "market_urgency_threshold_gene",
+            0.55,
+            0.9,
+            "float"
+          ],
+          [
+            "market_max_spread_bps_gene",
+            0.0,
+            3.0,
+            "int"
+          ],
+          [
+            "stop_breakout_threshold_gene",
+            0.35,
+            0.85,
+            "float"
+          ],
+          [
+            "limit_offset_atr_gene",
+            0.01,
+            0.25,
+            "float"
+          ],
+          [
+            "stop_offset_atr_gene",
+            0.01,
+            0.25,
+            "float"
+          ]
+        ]
+      },
+      "param_bounds": {
+        "learning_rate_gene": [
+          -5.0,
+          -3.0
+        ],
+        "batch_size_gene": [
+          0.0,
+          2.0
+        ],
+        "buffer_size_gene": [
+          0.0,
+          2.0
+        ],
+        "learning_starts_gene": [
+          0.0,
+          3.0
+        ],
+        "gamma_gene": [
+          0.94,
+          0.9995
+        ],
+        "tau_gene": [
+          -3.3010299956639813,
+          -1.6989700043360187
+        ],
+        "train_freq_gene": [
+          0.0,
+          3.0
+        ],
+        "gradient_steps_gene": [
+          0.0,
+          3.0
+        ],
+        "entropy_gene": [
+          0.0,
+          4.0
+        ],
+        "action_threshold_gene": [
+          0.03,
+          0.4
+        ],
+        "relative_volume_gene": [
+          0.01,
+          0.25
+        ],
+        "stop_loss_atr_gene": [
+          0.75,
+          5.0
+        ],
+        "take_profit_atr_gene": [
+          1.0,
+          8.0
+        ],
+        "entry_order_mode_gene": [
+          0.0,
+          3.0
+        ],
+        "market_urgency_threshold_gene": [
+          0.55,
+          0.9
+        ],
+        "market_max_spread_bps_gene": [
+          0.0,
+          3.0
+        ],
+        "stop_breakout_threshold_gene": [
+          0.35,
+          0.85
+        ],
+        "limit_offset_atr_gene": [
+          0.01,
+          0.25
+        ],
+        "stop_offset_atr_gene": [
+          0.01,
+          0.25
+        ]
+      },
+      "resource_limits": {
+        "max_training_seconds": 604800,
+        "max_memory_mb": 14000,
+        "max_epochs": 2000,
+        "max_batch_size": 512
+      },
+      "incentive_config": {
+        "higher_is_better": true,
+        "tolerance_margin": 1e-06,
+        "bonus_threshold": 0.01,
+        "min_reward_fraction": 0.3,
+        "max_bonus_multiplier": 1.2
+      }
+    }
+  ]
+}
