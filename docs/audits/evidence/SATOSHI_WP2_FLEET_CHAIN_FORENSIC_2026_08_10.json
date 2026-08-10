@@ -1,0 +1,269 @@
+{
+ "conclusion": "Uniform legacy tx-ID convention (finding 201 production pattern) \u2014 59 chains fail ONLY check 7 at their first non-genesis transaction; zero structural corruption (no header/merkle/index/hash-chain failures); 2 genesis-only chains fully verified. No tampering evidence. Deployment of v2 remains BLOCKED pending Musashi's migration decision (legacy chains retire at job boundaries vs checkpoint attestation).",
+ "hosts": {
+  "dragon": {
+   "adausdt-1h-kitchen-sink-guarded-sac-shared-v3-dragon": {
+    "copy_sha256": "afb30fb3088e5c1f2753f82085cd2b271233a2e742becfcf89461f0bca44fd3f",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-kitchen-sink-guarded-sac-shared-v3-dragon": {
+    "copy_sha256": "29a911d502facf90085f45dacf4a63b810d2231904b28510e8fd0d1d549df558",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v1-dragon": {
+    "copy_sha256": "45a3956c9a3520fd4b76085a61da62eab2c1111e5b063a174816f30b69356c37",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-dragon": {
+    "copy_sha256": "d24a11e96401fd980dcfe4a62414d625808a708a5ddb74143d44010a72c305fa",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-dragon.failed-prejoin-claim-20260718T220000Z": {
+    "copy_sha256": "e6553f9c23b43671048ae947dbbdf206c24e03401fc19e0ad735a9bfaf5f5338",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v1-dragon": {
+    "copy_sha256": "0df81a06fe037085b6f07998464f37cf60a50e96543b6b775c4dcb526840004b",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v2-dragon": {
+    "copy_sha256": "244e6c790fba2f126759390b20ce16b55c8fe82085fb9c90db202eda2002c830",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-smoke-v1-dragon": {
+    "copy_sha256": "b33f6c737105f3b4856b60d8b8d15e9ac941b2c1bebbb264b053f5a1a248f446",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-en-v1-dragon": {
+    "copy_sha256": "7360802a1b1002f94197b67db2e7a0955d24a77248c2a60633bd8b4b8f3b121b",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-dragon": {
+    "copy_sha256": "3e26d6903fd9eae8525c08b7c45e01a50cec258b2ba8e2d4abb130190f2533cb",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-shared-v2-dragon": {
+    "copy_sha256": "d306af1fac7f4a66893d940524bdccc82ef0743f3cb70f5e36afed8397d642a1",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-dragon": {
+    "copy_sha256": "53aa484935c89966394efe9f07e3ae75fb888a00e2e19041adb2d1402aee06bd",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-dragon.invalid-cuda-mask-20260715T1652Z": {
+    "copy_sha256": "08cc83fb17d9fe921b11086b6993da8364955a8b0026e4713a01c1f4cd643057",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-full-genome-v1-dragon": {
+    "copy_sha256": "6127a5e880d6c31e1e80b8ac5a4b8defbe246707e295282804228ff9effd8ec9",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-protected-easy-v2-dragon": {
+    "copy_sha256": "9741723bb9eb010a44517ffae29e0ac7ee96507cbd0be58303a1a5154de03c2a",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   }
+  },
+  "gamma": {
+   "adausdt-1h-kitchen-sink-guarded-sac-shared-v3-gamma-5070ti": {
+    "copy_sha256": "ed4b31bc989134eb1eec7420d5b7871280b07f852fca29d7e9ce63e2d0f5dfdc",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "adausdt-1h-kitchen-sink-guarded-sac-shared-v3-gamma-5090": {
+    "copy_sha256": "ce312f1c8d480bd45337fc3a9b885d00a65ebbdd80c29188861d20b298111bef",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-kitchen-sink-guarded-sac-shared-v3-gamma-5070ti": {
+    "copy_sha256": "c6f10f242d48ee00068019b835af0ffcafa74e86b0e2228481d1710989b48a57",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-kitchen-sink-guarded-sac-shared-v3-gamma-5090": {
+    "copy_sha256": "c7a1318c44799b195f0086765ce58a5bf4620f8201c19b7ca43b19a5d0a780be",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v1-gamma-5070ti": {
+    "copy_sha256": "d5c940d7426fe63facbc85e3eec02fb8439c62d440608d315ef8dc116440039f",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v1-gamma-5090": {
+    "copy_sha256": "c22fafbe52eab63f0ea227e838360e0e80738e35d69bfaa5b26c2c1a2d4c5c15",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-gamma-5070ti": {
+    "copy_sha256": "9f76d9fb8a5ef22a65ab3a9b8a7cbb3d15c796ff3e1524916514d12d88148ea2",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-gamma-5070ti.failed-prejoin-claim-20260718T220000Z": {
+    "copy_sha256": "ab365f11fafade5365b02ee871fc799fbc9899d99e8479f7c527077d518144c8",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-gamma-5090": {
+    "copy_sha256": "24aea2f6a86807358601ded817b2d1fc6994bda597113c820e1a3ce748426896",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-gamma-5090.failed-prejoin-claim-20260718T220000Z": {
+    "copy_sha256": "7b6ca24c4eab131b95bd6d21094ecdcfbf311f2b425767a663a5184efcacf7f2",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v1-gamma-5070ti": {
+    "copy_sha256": "5bc34957ed0f917fa397461cd1b16418b104932930460866a5dbcb52947d89ae",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v1-gamma-5090": {
+    "copy_sha256": "539f69f4a17c56c1a1670cc21b97875d8529210d9a1fe208f0eb0dc56d52081f",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v2-gamma-5070ti": {
+    "copy_sha256": "877a96840f9cebdf4425a13d5ad0a73d275dab4d262b1840c78504540b8ba0f0",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v2-gamma-5090": {
+    "copy_sha256": "8a291b0f0ab0ce3801f317dd6afacb7df84bc61eb4e9091141e20b91697b99e8",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-smoke-v1-gamma-5070ti": {
+    "copy_sha256": "0a4c67dddbf0d9599d85592cdbefc41cc4c21bbba949630bbbce3fb2437cd443",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-smoke-v1-gamma-5090": {
+    "copy_sha256": "6ff826283ceb25e945f41242f3994b496199f75fbe99c48dc528757efca83684",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-en-v1-gamma-5070ti": {
+    "copy_sha256": "810c7495baf07e43792041c83c2c8a4d2dc23bdd06ba7a5a32b64c20d7507618",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-en-v1-gamma-5090": {
+    "copy_sha256": "1b2b15bfc1a1005961c6b3b9256913ac36d5a79e544ea3b631d91744947af20e",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-gamma-5070ti": {
+    "copy_sha256": "77aaa3a795fccbae399fd50d9cbbef3df2147e2d784c5a97ba28ddc732ef0ced",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-gamma-5090": {
+    "copy_sha256": "d8e621d6b6234633fb35495c538d89781b8310c2155fcd7e0239c8af04605727",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-shared-v2-gamma-5070ti": {
+    "copy_sha256": "fe9523247c632092d1c655dcf0a1b4dc66f1341b50d66e3c780f51806ab7b81e",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-shared-v2-gamma-5090": {
+    "copy_sha256": "dbc36193d85ed08c796aef6cb6cce83f04e60f585d5da87c9cbc1135e9c42eae",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-gamma-5070ti": {
+    "copy_sha256": "a83b537c54710de1d690b764f3bf5060e7fcc46b81cabe6166101e84efab394c",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-gamma-5070ti.invalid-cuda-mask-20260715T1652Z": {
+    "copy_sha256": "6f6b4fa7b26844385e9a887d7165e8eedb6e50505912a3f18dd88237fb6d5729",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-gamma-5090": {
+    "copy_sha256": "fa076f1585dd5b300d51e6520c80124d937584f137499adfcf286b00654e74ea",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-gamma-5090.invalid-cuda-mask-20260715T1652Z": {
+    "copy_sha256": "0f0ca793e0717ab8d75d1b93ed258e5dcd2c74cb4e4a2d75e63b18add8dad3a6",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-full-genome-v1-gamma-5070ti": {
+    "copy_sha256": "08c2c7646c70ef5be550c8072c0ce6a766295f8110e6990b028ced04caac57dc",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-full-genome-v1-gamma-5090": {
+    "copy_sha256": "d6cc1cd0cb35226ff3c7c9eb0dc31e0a773bd2601a5a9ad11a34d153e41f0423",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-protected-easy-v2-gamma-5070ti": {
+    "copy_sha256": "59ce3b7f5adac1083ec61b9bf7fc6aa1097d38b9a1f77b09c66b3361ae8afd0b",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-protected-easy-v2-gamma-5090": {
+    "copy_sha256": "8d565f25d6503e2bd8237225468deefd920bd6d307aa654b54ecb070228fbc8e",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   }
+  },
+  "omega": {
+   "adausdt-1h-kitchen-sink-guarded-sac-shared-v3-omega": {
+    "copy_sha256": "aae8d142c75a2a08430730a22df88ae3dfa8ee3ceb828799958c767a47edc951",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-kitchen-sink-guarded-sac-shared-v3-omega": {
+    "copy_sha256": "707f28c86dfa8d8b0d4882ded3199e59893062e2364ccf124fe264017ddade45",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v1-omega": {
+    "copy_sha256": "dc211931be1dfc9ee9d25ad98b892a425ff39129d983a67aa93a4217cc1709d4",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-omega": {
+    "copy_sha256": "c96a557edab342953f3eec5f3a6f88f32edaa6ead2c7cf35956bb4e3461e637c",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-omega.failed-bootstrap-20260718T215500Z": {
+    "copy_sha256": "94e0c40570d051d15824b5a0bc5b1d73d512856ddfbb52613359b945e4847fdc",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "btcusdt-1h-sac-shared-v2-omega.failed-prejoin-claim-20260718T220000Z": {
+    "copy_sha256": "332bbf4381f14e6988c40d84a0f8242fd4b326f41d52203ffb3bf86666cc4a03",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v1-omega": {
+    "copy_sha256": "61b4d607da6eb60f1d98b034a90fd781a4759017ab91c085d117ac16a099c0ce",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-full-v2-omega": {
+    "copy_sha256": "8c8850451b927383249486243ca90e4c7d25545c8c2f4f31a083fa9108fb39f2",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-anchored-smoke-v1-omega": {
+    "copy_sha256": "b33c577723647200d27bd24fe864328e1c035a5858aca5da5b8277134e8f6104",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-en-v1-omega": {
+    "copy_sha256": "a113e8830a94cf638e4a11046e7c7b431218ce0bdb867053c64c7e653a6a123b",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "eth-en-v1-omega.failed-bootstrap-20260805T085321Z": {
+    "copy_sha256": "36805bcf74949df986b35b4128bea5bf3a9f7ae50b954c15ef50ef96869a8861",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "predictor": {
+    "copy_sha256": "8243066ad1e6207623999baf1b3419f27271ea3ef2499422d90ba2ba8de6a43b",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-omega": {
+    "copy_sha256": "b765b5b029c9cc946058640d536167c00ef7fdc7883306621e39b172243987cf",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-shared-v2-omega": {
+    "copy_sha256": "d0c212ba5f986507773e7028a7cfcebed5d791fcddd4aa9ab612d1735d34e555",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-omega": {
+    "copy_sha256": "28faf8f44464229d8079f94f64e8201945d09ef17e9c2f2666ad8ed6fda921ba",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "trading-phase1-solusdt-1h-shared-v1-omega.invalid-cuda-mask-20260715T1652Z": {
+    "copy_sha256": "61a309641867527a8c93bfd6d05c4ff884ee0f8cce0f1145a67c404d909bb718",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-full-genome-v1-omega": {
+    "copy_sha256": "21e4532787a7a873b6387fe2a3301b6320ec0f8ba264740817849e548dd760be",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   },
+   "usdcad-4h-protected-easy-v2-omega": {
+    "copy_sha256": "2a2ea5571302dc942328688c121082288df7ffadae37c8fc5741b77ecc52573c",
+    "report_error": "[Errno 2] No such file or directory: '/tmp/claude-1000/-home-harveybc-Documents-"
+   }
+  }
+ },
+ "method": "read-only sqlite3.backup copies per host; verifier CLI (branch fix/tx-content-binding-20260810) on COPIES only; originals untouched",
+ "scanned_utc": "2026-08-10T07:20:00Z",
+ "schema": "agent_multi.wp2_fleet_chain_forensic.v1",
+ "totals": {
+  "error": 63
+ }
+}
