@@ -75,6 +75,12 @@ class SyncManager:
     our_height: int = 0
     our_tip_hash: str = ""
     finalized_height: int = 0
+    # Explicit chain identity attestation (protocol v2, findings 202-203).
+    # Populated by the node at startup; zero/empty means "not attested"
+    # and will be refused by v2 peers.
+    protocol_version: int = 0
+    chain_id: str = ""
+    genesis_hash: str = ""
     peers: dict[str, SyncState] = field(default_factory=dict)
     _active_syncs: set[str] = field(default_factory=set)
 
@@ -85,6 +91,9 @@ class SyncManager:
             tip_hash=self.our_tip_hash,
             tip_index=max(0, self.our_height - 1),
             finalized_height=self.finalized_height,
+            protocol_version=self.protocol_version,
+            chain_id=self.chain_id,
+            genesis_hash=self.genesis_hash,
         )
 
     def update_our_state(

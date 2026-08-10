@@ -36,6 +36,31 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 
+# Metadata keys (findings 202-203). Identity keys are stamped once and
+# never silently rewritten; height/tip are maintained transactionally on
+# every append/rollback; pruning keys record the checkpoint commitment
+# that a pruned chain's suffix verification depends on.
+META_CHAIN_ID = "chain_id"
+META_GENESIS_HASH = "genesis_hash"
+META_HEIGHT = "height"
+META_TIP_HASH = "tip_hash"
+META_PRUNED_BEFORE = "pruned_before_index"
+META_CHECKPOINT_INDEX = "checkpoint_block_index"
+META_CHECKPOINT_HASH = "checkpoint_block_hash"
+
+
+class ChainIdentityError(Exception):
+    """Typed refusal: the database attests a different chain identity."""
+
+    def __init__(self, field: str, stored: str, requested: str) -> None:
+        super().__init__(
+            f"chain identity conflict on {field}: stored {stored!r}, "
+            f"requested {requested!r}"
+        )
+        self.field = field
+        self.stored = stored
+        self.requested = requested
+
 
 class ChainDB:
     """SQLite-backed blockchain storage.
@@ -132,6 +157,73 @@ class ChainDB:
             "INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)",
             ("schema_version", str(SCHEMA_VERSION)),
         )
+
+    # ── Metadata ─────────────────────────────────────────────────
+
+    def get_metadata(self, key: str) -> str | None:
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT value FROM metadata WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_metadata(self, key: str, value: str) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    def get_chain_identity(self) -> tuple[str, str] | None:
+        """Return (chain_id, genesis_hash) as attested by this database.
+
+        None when the database carries no identity attestation (legacy or
+        freshly created chain).
+        """
+        chain_id = self.get_metadata(META_CHAIN_ID)
+        genesis_hash = self.get_metadata(META_GENESIS_HASH)
+        if not chain_id or not genesis_hash:
+            return None
+        return (chain_id, genesis_hash)
+
+    def set_chain_identity(self, chain_id: str, genesis_hash: str) -> None:
+        """Stamp the chain identity. Refuses to overwrite a different one.
+
+        Raises ChainIdentityError (typed) on conflict — identity is never
+        silently rewritten.
+        """
+        if not chain_id or not genesis_hash:
+            raise ValueError("chain_id and genesis_hash must be non-empty")
+        stored = self.get_chain_identity()
+        if stored is not None:
+            if stored[0] != chain_id:
+                raise ChainIdentityError(META_CHAIN_ID, stored[0], chain_id)
+            if stored[1] != genesis_hash:
+                raise ChainIdentityError(
+                    META_GENESIS_HASH, stored[1], genesis_hash
+                )
+            return
+        self.set_metadata(META_CHAIN_ID, chain_id)
+        self.set_metadata(META_GENESIS_HASH, genesis_hash)
+        logger.info(
+            "Chain identity stamped: chain_id=%s genesis=%s…",
+            chain_id, genesis_hash[:16],
+        )
+
+    def get_pruning_checkpoint(self) -> dict[str, Any] | None:
+        """Return the pruning/checkpoint provenance, or None if never pruned."""
+        pruned_before = self.get_metadata(META_PRUNED_BEFORE)
+        if pruned_before is None:
+            return None
+        checkpoint_index = self.get_metadata(META_CHECKPOINT_INDEX)
+        checkpoint_hash = self.get_metadata(META_CHECKPOINT_HASH)
+        return {
+            "pruned_before_index": int(pruned_before),
+            "checkpoint_block_index": (
+                int(checkpoint_index) if checkpoint_index is not None else None
+            ),
+            "checkpoint_block_hash": checkpoint_hash,
+        }
 
     # ── Block operations ─────────────────────────────────────────
 
@@ -233,6 +325,17 @@ class ChainDB:
                     ),
                 )
 
+            # Maintain the metadata height/tip claim transactionally so the
+            # verifier can check it against the verified rows (check 10).
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (META_HEIGHT, str(block.header.index + 1)),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (META_TIP_HASH, block.hash),
+            )
+
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
@@ -268,6 +371,22 @@ class ChainDB:
             # Also remove any state snapshots that are now invalid
             self._conn.execute(
                 "DELETE FROM state_snapshots WHERE block_index > ?", (index,)
+            )
+            # Refresh the metadata height/tip claim from the surviving rows
+            tip_row = self._conn.execute(
+                "SELECT block_index, hash FROM blocks "
+                "ORDER BY block_index DESC LIMIT 1"
+            ).fetchone()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (
+                    META_HEIGHT,
+                    str(tip_row["block_index"] + 1) if tip_row else "0",
+                ),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (META_TIP_HASH, tip_row["hash"] if tip_row else ""),
             )
             self._conn.execute("COMMIT")
             return cur.rowcount
@@ -429,14 +548,56 @@ class ChainDB:
     def prune_transactions_before(self, block_index: int) -> int:
         """Remove transaction bodies before a given block height.
 
-        Keeps block headers intact for chain validation.
-        Only prune blocks that have a state snapshot after them.
+        Keeps block headers intact for chain validation. Records the
+        pruning/checkpoint provenance atomically with the deletion
+        (findings 202-203): a pruned chain can only ever verify as a
+        typed ``verified_suffix_from_checkpoint``, and only when this
+        commitment and the retained suffix verify. Without this
+        metadata, missing bodies are corruption, not pruning.
         """
         assert self._conn is not None
-        cursor = self._conn.execute(
-            "DELETE FROM transactions WHERE block_index < ?", (block_index,)
-        )
-        pruned = cursor.rowcount
+        if block_index <= 0:
+            return 0  # nothing below genesis to prune — historical no-op
+        checkpoint_index = block_index - 1
+        checkpoint_row = self._conn.execute(
+            "SELECT hash FROM blocks WHERE block_index = ?",
+            (checkpoint_index,),
+        ).fetchone()
+        if checkpoint_row is None:
+            raise ValueError(
+                f"cannot prune before block {block_index}: checkpoint block "
+                f"{checkpoint_index} is not stored"
+            )
+
+        prior = self.get_metadata(META_PRUNED_BEFORE)
+        effective_before = max(int(prior), block_index) if prior else block_index
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = self._conn.execute(
+                "DELETE FROM transactions WHERE block_index < ?", (block_index,)
+            )
+            pruned = cursor.rowcount
+            for key, value in (
+                (META_PRUNED_BEFORE, str(effective_before)),
+                (META_CHECKPOINT_INDEX, str(effective_before - 1)),
+            ):
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    (key, value),
+                )
+            commit_row = self._conn.execute(
+                "SELECT hash FROM blocks WHERE block_index = ?",
+                (effective_before - 1,),
+            ).fetchone()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (META_CHECKPOINT_HASH, commit_row["hash"]),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
         if pruned:
             self._conn.execute("PRAGMA incremental_vacuum")
             logger.info("Pruned %d transactions before block %d", pruned, block_index)

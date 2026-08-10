@@ -177,6 +177,15 @@ class TestCollectChainMetrics:
 # ── OLAP ingestion ──────────────────────────────────────────────
 
 
+#: Provenance binding for chain-derived OLAP ingestion (findings 202-203).
+_PROVENANCE = dict(
+    chain_id="doin-testnet",
+    genesis_hash="0" * 64,
+    source_tip_hash="a" * 64,
+    source_height=2,
+)
+
+
 class TestOLAPChainIngestion:
     def _make_olap(self):
         from doin_node.stats.olap_db import OLAPDatabase
@@ -204,7 +213,7 @@ class TestOLAPChainIngestion:
     def test_ingest_creates_records(self):
         db, path = self._make_olap()
         blocks = self._sample_blocks()
-        count = db.ingest_from_chain(blocks)
+        count = db.ingest_from_chain(blocks, **_PROVENANCE)
         assert count == 1
         row = db._conn.execute(
             "SELECT * FROM fact_chain_optimae WHERE optimae_id='opt1'"
@@ -217,8 +226,8 @@ class TestOLAPChainIngestion:
     def test_idempotent(self):
         db, path = self._make_olap()
         blocks = self._sample_blocks()
-        c1 = db.ingest_from_chain(blocks)
-        c2 = db.ingest_from_chain(blocks)
+        c1 = db.ingest_from_chain(blocks, **_PROVENANCE)
+        c2 = db.ingest_from_chain(blocks, **_PROVENANCE)
         assert c1 == 1
         assert c2 == 0  # no new records
         total = db._conn.execute("SELECT COUNT(*) FROM fact_chain_optimae").fetchone()[0]
@@ -269,7 +278,7 @@ class TestIntegrationFlow:
         # 5. Ingest into OLAP
         tmp = tempfile.mktemp(suffix=".db")
         db = OLAPDatabase(tmp)
-        count = db.ingest_from_chain(blocks)
+        count = db.ingest_from_chain(blocks, **_PROVENANCE)
         assert count == 1
 
         row = db._conn.execute(

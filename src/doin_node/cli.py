@@ -315,6 +315,14 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),
         prune_keep_blocks=raw.get("prune_keep_blocks", defaults.prune_keep_blocks),
+        chain_id=raw.get("chain_id", defaults.chain_id),
+        genesis_hash=raw.get("genesis_hash", defaults.genesis_hash),
+        verify_chain_on_start=raw.get(
+            "verify_chain_on_start", defaults.verify_chain_on_start
+        ),
+        on_verification_failure=raw.get(
+            "on_verification_failure", defaults.on_verification_failure
+        ),
         network_protocol=raw.get("network_protocol", defaults.network_protocol),
         gossip_heartbeat_interval=raw.get("gossip_heartbeat_interval", defaults.gossip_heartbeat_interval),
         discovery_enabled=raw.get("discovery_enabled", defaults.discovery_enabled),
@@ -497,8 +505,14 @@ def main() -> None:
     print(f"  Starting node on :{config.port}...")
     print("=" * 60 + "\n")
 
-    # Run
-    asyncio.run(run_node(node))
+    # Run — a failed chain verification is a typed refusal, exit code 3.
+    from doin_node.blockchain.verify import ChainStartupRefused
+    try:
+        asyncio.run(run_node(node))
+    except ChainStartupRefused as e:
+        print(f"\nFATAL (chain verification): {e}", file=sys.stderr)
+        print(e.report.model_dump_json(indent=2), file=sys.stderr)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

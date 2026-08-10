@@ -21,6 +21,15 @@ from doin_node.stats.olap_schema import SCHEMA_SQL, SCHEMA_VERSION
 logger = logging.getLogger(__name__)
 
 
+class OLAPProvenanceError(Exception):
+    """Typed refusal: chain-derived OLAP ingestion without/with wrong provenance.
+
+    The OLAP is derived, never authority: rows projected from the chain
+    must be bound to (chain_id, genesis_hash, source_tip_hash,
+    source_height). Missing provenance is refusal, never silent ingestion.
+    """
+
+
 class OLAPDatabase:
     """Manage a local SQLite OLAP database.
 
@@ -290,12 +299,57 @@ class OLAPDatabase:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def ingest_from_chain(self, blocks: list) -> int:
+    def get_chain_provenance(self) -> dict[str, Any] | None:
+        """Return the provenance binding of chain-derived rows, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT chain_id, genesis_hash, source_tip_hash, "
+                "source_height, updated_at FROM _chain_provenance WHERE id=1"
+            ).fetchone()
+            return dict(row) if row else None
+
+    def ingest_from_chain(
+        self,
+        blocks: list,
+        *,
+        chain_id: str | None = None,
+        genesis_hash: str | None = None,
+        source_tip_hash: str | None = None,
+        source_height: int | None = None,
+    ) -> int:
         """Walk blockchain blocks, extract experiment metrics from OPTIMAE_ACCEPTED
         transactions, and insert into fact_chain_optimae.
 
-        Returns count of new records ingested. Idempotent — uses optimae_id as dedup key.
+        Every ingestion MUST be bound to (chain_id, genesis_hash,
+        source_tip_hash, source_height) — findings 202-203. A missing
+        binding, or a binding whose chain identity differs from the one
+        already recorded, raises a typed :class:`OLAPProvenanceError`.
+
+        Returns count of new records ingested. Idempotent — uses
+        optimae_id as dedup key.
         """
+        if (
+            not chain_id
+            or not genesis_hash
+            or not source_tip_hash
+            or source_height is None
+        ):
+            raise OLAPProvenanceError(
+                "chain ingestion requires (chain_id, genesis_hash, "
+                "source_tip_hash, source_height); refusing unbound ingestion"
+            )
+        stored = self.get_chain_provenance()
+        if stored is not None and (
+            stored["chain_id"] != chain_id
+            or stored["genesis_hash"] != genesis_hash
+        ):
+            raise OLAPProvenanceError(
+                "chain identity mismatch: OLAP rows are bound to "
+                f"chain_id={stored['chain_id']!r} genesis="
+                f"{stored['genesis_hash'][:16]}…, refusing ingestion from "
+                f"chain_id={chain_id!r}"
+            )
+
         from doin_node.stats.chain_metrics import collect_chain_metrics
         rows = collect_chain_metrics(blocks)
         now = _now_iso()
@@ -341,7 +395,67 @@ class OLAPDatabase:
                         count += 1
                 except Exception:
                     logger.exception("Failed to ingest chain optimae %s", oid)
+            self._conn.execute(
+                """INSERT OR REPLACE INTO _chain_provenance
+                   (id, chain_id, genesis_hash, source_tip_hash,
+                    source_height, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?)""",
+                (chain_id, genesis_hash, source_tip_hash, source_height, now),
+            )
         return count
+
+    def invalidate_chain_rows_above(
+        self,
+        height: int,
+        *,
+        chain_id: str,
+        genesis_hash: str,
+        new_tip_hash: str,
+        new_height: int,
+    ) -> int:
+        """Deterministically invalidate chain-derived rows above *height*.
+
+        Called on chain reorganisation: every fact_chain_optimae row whose
+        ``block_height`` exceeds the common ancestor is deleted, and the
+        provenance binding is moved to the new source tip. Reprojection
+        happens by re-ingesting the replacement branch — the OLAP stays
+        derived and rebuildable, never consensus authority.
+
+        Returns the number of invalidated rows.
+        """
+        if not chain_id or not genesis_hash:
+            raise OLAPProvenanceError(
+                "reorg invalidation requires the bound chain identity"
+            )
+        stored = self.get_chain_provenance()
+        if stored is not None and (
+            stored["chain_id"] != chain_id
+            or stored["genesis_hash"] != genesis_hash
+        ):
+            raise OLAPProvenanceError(
+                "chain identity mismatch on reorg invalidation: bound to "
+                f"chain_id={stored['chain_id']!r}, got {chain_id!r}"
+            )
+        now = _now_iso()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM fact_chain_optimae WHERE block_height > ?",
+                (height,),
+            )
+            self._conn.execute(
+                """INSERT OR REPLACE INTO _chain_provenance
+                   (id, chain_id, genesis_hash, source_tip_hash,
+                    source_height, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?)""",
+                (chain_id, genesis_hash, new_tip_hash, new_height, now),
+            )
+            invalidated = cur.rowcount
+        if invalidated:
+            logger.info(
+                "OLAP reorg invalidation: %d chain-derived row(s) above "
+                "height %d removed", invalidated, height,
+            )
+        return invalidated
 
     @property
     def db_path(self) -> str:

@@ -72,21 +72,27 @@ from doin_core.models import (
     distribute_block_reward,
 )
 from doin_core.protocol.messages import (
+    PROTOCOL_VERSION,
     BlockAnnouncement,
     ChainStatus,
     Message,
     MessageType,
     OptimaeCommit,
     OptimaeReveal,
+    PeerChainMismatchError,
     TaskClaimed,
     TaskCompleted,
     TaskCreated,
+    validate_peer_chain_status,
 )
+from doin_core.models.verification import ChainVerificationReport
 from doin_node.versioning import compute_component_versions
 
 from doin_core.models.fee_market import FeeConfig, FeeMarket
 
 from doin_node.blockchain.chain import Chain
+from doin_node.blockchain.verify import ChainStartupRefused, verify_chain_db
+from doin_node.stats.olap_db import OLAPProvenanceError
 from doin_node.network.discovery import PeerDiscovery, DiscoveredPeer
 from doin_node.network.flooding import FloodingConfig, FloodingProtocol
 from doin_node.network.gossip import GossipSub
@@ -306,6 +312,21 @@ class UnifiedNodeConfig:
     snapshot_interval: int = 100  # Save state snapshot every N blocks
     prune_keep_blocks: int = 10000  # Keep tx bodies for last N blocks
 
+    # Explicit chain identity (findings 202-203). Empty values derive the
+    # deterministic defaults: genesis_hash from the deterministic genesis
+    # block, chain_id as "doin-<genesis12>". Peers whose ChainStatus does
+    # not attest exactly this identity (and protocol version) are rejected
+    # before any block exchange.
+    chain_id: str = ""
+    genesis_hash: str = ""
+
+    # Full chain verification on startup — runs after DB open and BEFORE
+    # gossip, sync, optimization, evaluation, dashboard or OLAP projection.
+    verify_chain_on_start: bool = True
+    # "exit": raise a typed ChainStartupRefused before any side effect.
+    # "quarantine": start a read-only diagnostic HTTP endpoint only.
+    on_verification_failure: str = "exit"
+
     # Network: "gossipsub" (production) or "flooding" (legacy/testing)
     network_protocol: str = "gossipsub"
     gossip_heartbeat_interval: float = 1.0
@@ -380,9 +401,31 @@ class UnifiedNode:
         # Storage backend: SQLite (production) or JSON Chain (legacy)
         self.chain = Chain(data_dir=Path(config.data_dir))
         self.chaindb: ChainDB | None = None
+        self._chaindb_path: str = ""
         if config.storage_backend == "sqlite":
             db_path = config.db_path or str(Path(config.data_dir) / "chain.db")
             self.chaindb = ChainDB(db_path)
+            self._chaindb_path = str(db_path)
+
+        # ── Explicit chain identity (findings 202-203) ──
+        # Deterministic defaults preserve the existing fleet chain: the
+        # genesis is the deterministic epoch genesis, the chain ID derives
+        # from it. Both can be pinned explicitly in config.
+        self.expected_genesis_hash: str = (
+            config.genesis_hash or Block.genesis("genesis").hash
+        )
+        self.chain_id: str = (
+            config.chain_id or f"doin-{self.expected_genesis_hash[:12]}"
+        )
+        if config.on_verification_failure not in ("exit", "quarantine"):
+            raise ValueError(
+                "on_verification_failure must be 'exit' or 'quarantine', "
+                f"got {config.on_verification_failure!r}"
+            )
+        self.chain_verification_report: ChainVerificationReport | None = None
+        self.quarantine_report: ChainVerificationReport | None = None
+        self._identity_rejected_peers: set[str] = set()
+        self._olap_projected_height: int = 0
 
         # ── Component versions (computed once, used for peer version handshake) ──
         self._component_versions: dict[str, str] = self._compute_component_versions()
@@ -805,6 +848,62 @@ class UnifiedNode:
                 self.chain.initialize("genesis")
                 self.chain.save()
 
+        # ── Full chain verification (findings 202-203) ──
+        # Runs after DB open and BEFORE gossip, sync, optimization,
+        # evaluation, dashboard acceptance or OLAP projection. On failure
+        # the node either refuses to start (typed error) or enters a
+        # clearly reported read-only quarantine diagnostic mode.
+        if self.chaindb and self.config.verify_chain_on_start:
+            stored_identity = self.chaindb.get_chain_identity()
+            report = verify_chain_db(
+                self._chaindb_path,
+                # Only demand a chain-id attestation once one exists;
+                # a fresh/legacy DB is adopted (stamped) after it fully
+                # verifies against the expected genesis.
+                expected_chain_id=(
+                    self.chain_id if stored_identity is not None else None
+                ),
+                expected_genesis_hash=self.expected_genesis_hash,
+            )
+            self.chain_verification_report = report
+            if not report.ok:
+                logger.error(
+                    "Chain verification %s (first failure: %s)",
+                    report.outcome.value,
+                    report.first_failure.model_dump() if report.first_failure else None,
+                )
+                if self.config.on_verification_failure == "quarantine":
+                    self.quarantine_report = report
+                    self._log_alert(
+                        "critical", "chain_verification",
+                        f"chain verification {report.outcome.value} — node "
+                        "quarantined in read-only diagnostic mode",
+                    )
+                    self._register_quarantine_routes()
+                    await self.transport.start()
+                    logger.error(
+                        "QUARANTINE: read-only diagnostic mode on :%d — no "
+                        "gossip, sync, optimization, evaluation, dashboard "
+                        "or OLAP projection will run",
+                        self.config.port,
+                    )
+                    return
+                raise ChainStartupRefused(report)
+            if stored_identity is None:
+                # First verified boot on this database: stamp identity.
+                self.chaindb.set_chain_identity(
+                    self.chain_id, self.expected_genesis_hash
+                )
+            logger.info(
+                "Chain verified: %s height=%d chain_id=%s",
+                report.outcome.value, report.height, self.chain_id,
+            )
+
+        # Publish our chain identity for peer status exchange
+        self.sync_manager.protocol_version = PROTOCOL_VERSION
+        self.sync_manager.chain_id = self.chain_id
+        self.sync_manager.genesis_hash = self.expected_genesis_hash
+
         # Wire gossip send function to transport
         if self.gossip:
             self.gossip.set_send_fn(self._gossip_send)
@@ -974,6 +1073,73 @@ class UnifiedNode:
         if not self.chaindb:
             self.chain.save()
 
+    # ── OLAP chain projection (derived, never authority) ─────────
+
+    def _olap_project_chain(self) -> None:
+        """Project newly appended verified blocks into the local OLAP.
+
+        Every ingestion is bound to (chain_id, genesis_hash,
+        source_tip_hash, source_height) — findings 202-203. Failures are
+        alerts, never consensus events: the OLAP is derived/rebuildable.
+        """
+        olap = getattr(self.experiment_tracker, "_olap", None)
+        if olap is None or self.quarantine_report is not None:
+            return
+        height = self._get_height()
+        if height <= self._olap_projected_height:
+            return
+        tip = self._get_tip()
+        if tip is None:
+            return
+        blocks = self._get_blocks_range(self._olap_projected_height, height - 1)
+        try:
+            olap.ingest_from_chain(
+                blocks,
+                chain_id=self.chain_id,
+                genesis_hash=self.expected_genesis_hash,
+                source_tip_hash=tip.hash,
+                source_height=height,
+            )
+            self._olap_projected_height = height
+        except OLAPProvenanceError as e:
+            self._log_alert(
+                "error", "olap_provenance",
+                f"OLAP chain projection refused: {e}",
+            )
+        except Exception:
+            logger.exception("OLAP chain projection failed")
+
+    def _olap_invalidate_reorg(self, common_ancestor: int) -> None:
+        """Deterministically invalidate chain-derived OLAP rows on reorg.
+
+        Rows above the common ancestor are removed and the provenance
+        binding moves to the new tip; the replacement branch is
+        reprojected by the next `_olap_project_chain` call.
+        """
+        olap = getattr(self.experiment_tracker, "_olap", None)
+        if olap is None:
+            return
+        tip = self._get_tip()
+        height = self._get_height()
+        try:
+            olap.invalidate_chain_rows_above(
+                common_ancestor,
+                chain_id=self.chain_id,
+                genesis_hash=self.expected_genesis_hash,
+                new_tip_hash=tip.hash if tip else "",
+                new_height=height,
+            )
+        except OLAPProvenanceError as e:
+            self._log_alert(
+                "error", "olap_provenance",
+                f"OLAP reorg invalidation refused: {e}",
+            )
+        except Exception:
+            logger.exception("OLAP reorg invalidation failed")
+        self._olap_projected_height = min(
+            self._olap_projected_height, common_ancestor + 1
+        )
+
     def _update_domain_best_from_chain(self) -> None:
         """Scan chain for OPTIMAE_ACCEPTED transactions and update domain best.
 
@@ -1062,6 +1228,9 @@ class UnifiedNode:
     # ================================================================
 
     async def _on_transport_message(self, message: Message, sender: str) -> None:
+        # Quarantined nodes are read-only diagnostics: no gossip processing.
+        if self.quarantine_report is not None:
+            return
         # Auto-discover peers from incoming connections.
         # Extract the sender's advertised port from the payload.
         sender_port = (message.payload or {}).get("_sender_port", self.config.port)
@@ -2051,6 +2220,8 @@ class UnifiedNode:
     # ================================================================
 
     async def try_generate_block(self) -> Block | None:
+        if self.quarantine_report is not None:
+            return None  # quarantined: never append to an unverified chain
         can = self.consensus.can_generate_block()
         ws = sum(self.consensus.state.pending_increments.values())
         logger.info(
@@ -2092,6 +2263,7 @@ class UnifiedNode:
 
         self._append_block(block)
         self._save_chain()
+        self._olap_project_chain()
 
         # Update finality
         depth_block_hash = None
@@ -4528,6 +4700,10 @@ class UnifiedNode:
 
         blocks_removed = self.chaindb.rollback_to(common)
         logger.info("Rolled back %d block(s) to index %d", blocks_removed, common)
+        # Deterministically invalidate chain-derived OLAP rows above the
+        # common ancestor (findings 202-203); the replacement branch is
+        # reprojected after sync completes.
+        self._olap_invalidate_reorg(common)
 
         # Refresh cached sync-manager state after the rollback
         new_tip = self._get_tip()
@@ -4662,6 +4838,7 @@ class UnifiedNode:
             common,
         )
         self.chaindb.rollback_to(common)
+        self._olap_invalidate_reorg(common)
         appended = self._validate_and_append_blocks(peer_blocks)
         if appended != len(peer_blocks):
             logger.error(
@@ -4671,6 +4848,7 @@ class UnifiedNode:
                 len(peer_blocks),
             )
             self.chaindb.rollback_to(common)
+            self._olap_invalidate_reorg(common)
             restored = self._validate_and_append_blocks(local_blocks)
             if restored != len(local_blocks):
                 raise RuntimeError(
@@ -4691,11 +4869,51 @@ class UnifiedNode:
         )
         return True
 
+    async def _verify_peer_chain_identity(self, endpoint: str) -> bool:
+        """Refuse a peer BEFORE any block exchange unless its ChainStatus
+        attests exactly our protocol version, chain_id and genesis_hash
+        (findings 202-203). A peer that cannot attest is refused — never
+        accepted by field defaults.
+        """
+        session = self.transport._session
+        if session is None:
+            return False
+        status = await fetch_chain_status(session, endpoint)
+        if status is None:
+            logger.warning(
+                "Peer %s did not serve a chain status — no block exchange",
+                endpoint,
+            )
+            return False
+        try:
+            validate_peer_chain_status(
+                status,
+                expected_chain_id=self.chain_id,
+                expected_genesis_hash=self.expected_genesis_hash,
+            )
+        except PeerChainMismatchError as e:
+            if endpoint not in self._identity_rejected_peers:
+                self._identity_rejected_peers.add(endpoint)
+                self._log_alert(
+                    "error", "chain_identity",
+                    f"peer {endpoint} rejected before block exchange: {e}",
+                )
+            logger.warning(
+                "Peer %s rejected before block exchange: %s", endpoint, e
+            )
+            return False
+        self._identity_rejected_peers.discard(endpoint)
+        return True
+
     async def _sync_with_peer(self, endpoint: str) -> None:
         """Sync our chain with a peer that's ahead of us.
 
         Fetches blocks in batches and validates them before appending.
         """
+        if self.quarantine_report is not None:
+            return  # quarantined: never sync from or to peers
+        if not await self._verify_peer_chain_identity(endpoint):
+            return
         state = self.sync_manager.peers.get(endpoint)
         our_tip = self._get_tip()
         equal_height_fork = bool(
@@ -4721,6 +4939,7 @@ class UnifiedNode:
                 await self._resolve_equal_height_fork(session, endpoint)
                 self._update_domain_best_from_chain()
                 self._save_chain()
+                self._olap_project_chain()
                 self.sync_manager.record_sync_success(
                     endpoint, self._get_height()
                 )
@@ -4787,6 +5006,7 @@ class UnifiedNode:
             self._update_domain_best_from_chain()
 
             self._save_chain()
+            self._olap_project_chain()
             self.sync_manager.record_sync_success(endpoint, self._get_height())
             logger.info("Sync complete with %s (height now %d)", endpoint, self._get_height())
 
@@ -4803,6 +5023,26 @@ class UnifiedNode:
         for endpoint in list(self._peers.keys()):
             status = await fetch_chain_status(session, endpoint)
             if status is None:
+                continue
+
+            # Reject a peer on chain-identity/protocol mismatch BEFORE any
+            # block exchange (findings 202-203).
+            try:
+                validate_peer_chain_status(
+                    status,
+                    expected_chain_id=self.chain_id,
+                    expected_genesis_hash=self.expected_genesis_hash,
+                )
+            except PeerChainMismatchError as e:
+                if endpoint not in self._identity_rejected_peers:
+                    self._identity_rejected_peers.add(endpoint)
+                    self._log_alert(
+                        "error", "chain_identity",
+                        f"peer {endpoint} rejected before block exchange: {e}",
+                    )
+                logger.warning(
+                    "Peer %s rejected before block exchange: %s", endpoint, e
+                )
                 continue
 
             self.sync_manager.update_peer_status(endpoint, status)
@@ -4959,6 +5199,56 @@ class UnifiedNode:
     # HTTP endpoints (same as old node for backward compat)
     # ================================================================
 
+    def _register_quarantine_routes(self) -> None:
+        """Read-only diagnostic routes for a quarantined node.
+
+        The chain did not verify: no chain data is served for sync, no
+        gossip/optimizer/evaluator/dashboard/OLAP path is started. The
+        node only reports its quarantine state and the typed report.
+        """
+        app = self.transport._app
+        app.router.add_get("/status", self._http_quarantine_status)
+        app.router.add_get("/verify/report", self._http_verify_report)
+        app.router.add_get("/chain/status", self._http_quarantine_refuse)
+        app.router.add_get("/chain/blocks", self._http_quarantine_refuse)
+        app.router.add_get("/chain/block/{index}", self._http_quarantine_refuse)
+
+    async def _http_quarantine_status(self, request) -> Any:
+        from aiohttp import web
+        report = self.quarantine_report
+        return web.json_response({
+            "peer_id": self.peer_id,
+            "state": "quarantined",
+            "reason": "chain_verification_failed",
+            "outcome": report.outcome.value if report else "unknown",
+            "first_failure": (
+                report.first_failure.model_dump()
+                if report and report.first_failure else None
+            ),
+            "chain_id": self.chain_id,
+            "genesis_hash": self.expected_genesis_hash,
+            "protocol_version": PROTOCOL_VERSION,
+        })
+
+    async def _http_verify_report(self, request) -> Any:
+        from aiohttp import web
+        report = self.quarantine_report or self.chain_verification_report
+        if report is None:
+            return web.json_response(
+                {"error": "no verification report available"}, status=404
+            )
+        return web.json_response(json.loads(report.model_dump_json()))
+
+    async def _http_quarantine_refuse(self, request) -> Any:
+        from aiohttp import web
+        return web.json_response(
+            {
+                "error": "node quarantined: chain verification failed",
+                "state": "quarantined",
+            },
+            status=503,
+        )
+
     def _register_http_routes(self) -> None:
         app = self.transport._app
         app.router.add_get("/tasks/pending", self._http_tasks_pending)
@@ -5065,7 +5355,7 @@ class UnifiedNode:
         return web.json_response({"status": "queued", "task_id": task.id})
 
     async def _http_chain_status(self, request) -> Any:
-        """Serve our chain status for sync."""
+        """Serve our chain status (with explicit chain identity) for sync."""
         from aiohttp import web
         tip = self._get_tip()
         height = self._get_height()
@@ -5074,6 +5364,9 @@ class UnifiedNode:
             "tip_hash": tip.hash if tip else "",
             "tip_index": tip.header.index if tip else -1,
             "finalized_height": self.finality.finalized_height,
+            "protocol_version": PROTOCOL_VERSION,
+            "chain_id": self.chain_id,
+            "genesis_hash": self.expected_genesis_hash,
             "component_versions": self._component_versions,
         })
 

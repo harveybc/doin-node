@@ -8,7 +8,7 @@ Tables:
   _schema_version       – migration tracking
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 -- Migration tracking
@@ -126,6 +126,19 @@ CREATE TABLE IF NOT EXISTS fact_chain_optimae (
 );
 CREATE INDEX IF NOT EXISTS idx_chain_optimae_domain ON fact_chain_optimae(domain_id);
 CREATE INDEX IF NOT EXISTS idx_chain_optimae_experiment ON fact_chain_optimae(experiment_id);
+
+-- Provenance binding for chain-derived OLAP rows (findings 202-203).
+-- The OLAP is derived and rebuildable, never consensus authority: every
+-- chain ingestion is bound to (chain_id, genesis_hash, source_tip_hash,
+-- source_height) and reorgs deterministically invalidate/reproject rows.
+CREATE TABLE IF NOT EXISTS _chain_provenance (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    chain_id TEXT NOT NULL,
+    genesis_hash TEXT NOT NULL,
+    source_tip_hash TEXT NOT NULL,
+    source_height INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_fact_round_experiment ON fact_round(experiment_id);
