@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from doin_node.unified import (
     UnifiedNode,
     UnifiedNodeConfig,
+    _build_shared_population_tx,
     _candidate_rejection_reason,
     _shared_generation_fingerprint,
     _shared_population_fingerprint,
@@ -145,19 +145,12 @@ async def test_shared_population_store_is_idempotent_after_peer_commit() -> None
 @pytest.mark.asyncio
 async def test_shared_population_store_is_idempotent_while_pending() -> None:
     pop_state = {"generation": 3, "population": [{"x": 1}]}
-    fingerprint = _shared_population_fingerprint(pop_state)
 
-    from doin_core.models.transaction import Transaction, TransactionType
-
-    pending = Transaction(
-        id=hashlib.sha256(
-            f"shared_pop:domain-a:3:{fingerprint}".encode()
-        ).hexdigest(),
-        tx_type=TransactionType.OPTIMAE_ACCEPTED,
-        domain_id="domain-a",
-        peer_id="peer-a",
-        payload={},
-    )
+    # The pending transaction is built exactly as production builds it:
+    # deterministic content, content-derived ID (finding 201 — dedup keys
+    # are no longer allowed to masquerade as transaction IDs).
+    pending = _build_shared_population_tx("domain-a", pop_state, "peer-a")
+    assert pending.id == pending.compute_id()
     node = SimpleNamespace(
         peer_id="peer-a",
         _has_transaction=lambda _tx_id: False,

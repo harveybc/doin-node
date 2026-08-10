@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from doin_core.models.block import Block, BlockHeader
-from doin_core.models.transaction import Transaction
+from doin_core.models.transaction import (
+    TX_ID_PATTERN,
+    Transaction,
+    TransactionIntegrityError,
+    compute_transaction_id,
+)
 from doin_core.crypto.hashing import compute_merkle_root
 
 logger = logging.getLogger(__name__)
@@ -20,6 +25,30 @@ logger = logging.getLogger(__name__)
 
 class ChainError(Exception):
     """Raised when a chain operation fails."""
+
+
+class ChainIntegrityError(ChainError):
+    """A transaction inside a block fails content-hash binding.
+
+    Typed integrity failure carrying block/transaction coordinates.
+    Never includes the transaction payload (finding 201).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        block_index: int,
+        tx_index: int,
+        tx_id: str,
+    ) -> None:
+        super().__init__(
+            f"{message} (block={block_index}, tx_index={tx_index}, "
+            f"tx_id={tx_id[:16]}…)"
+        )
+        self.block_index = block_index
+        self.tx_index = tx_index
+        self.tx_id = tx_id
 
 
 class Chain:
@@ -187,9 +216,38 @@ class Chain:
                 f"got {block.header.previous_hash[:12]}"
             )
 
-        # Verify merkle root
-        tx_hashes = [tx.id for tx in block.transactions]
-        expected_merkle = compute_merkle_root(tx_hashes)
+        # Independently recompute every transaction's content hash before
+        # Merkle calculation. Supplied IDs (and Pydantic construction) are
+        # never trusted here (finding 201).
+        recomputed_hashes: list[str] = []
+        seen_ids: set[str] = set()
+        for i, tx in enumerate(block.transactions):
+            expected_id = compute_transaction_id(
+                tx_type=tx.tx_type.value,
+                domain_id=tx.domain_id,
+                peer_id=tx.peer_id,
+                payload=tx.payload,
+                timestamp=tx.timestamp.isoformat(),
+            )
+            if not TX_ID_PATTERN.fullmatch(tx.id) or tx.id != expected_id:
+                raise ChainIntegrityError(
+                    "transaction ID does not match canonical content hash",
+                    block_index=block.header.index,
+                    tx_index=i,
+                    tx_id=tx.id,
+                )
+            if expected_id in seen_ids:
+                raise ChainIntegrityError(
+                    "duplicate transaction ID within block",
+                    block_index=block.header.index,
+                    tx_index=i,
+                    tx_id=expected_id,
+                )
+            seen_ids.add(expected_id)
+            recomputed_hashes.append(expected_id)
+
+        # Verify merkle root from the independently recomputed hashes
+        expected_merkle = compute_merkle_root(recomputed_hashes)
         if block.header.merkle_root != expected_merkle:
             raise ChainError("Merkle root mismatch")
 
@@ -216,7 +274,19 @@ class Chain:
             raise ChainError(f"Chain file not found: {load_path}")
 
         data = json.loads(load_path.read_text())
-        self._blocks = [Block.model_validate(b) for b in data]
+        blocks: list[Block] = []
+        for i, raw in enumerate(data):
+            try:
+                blocks.append(Block.model_validate(raw))
+            except TransactionIntegrityError as exc:
+                # Typed refusal with coordinates, no payload dump.
+                raise ChainIntegrityError(
+                    "stored transaction content does not match its ID",
+                    block_index=i,
+                    tx_index=exc.tx_index if exc.tx_index is not None else -1,
+                    tx_id=exc.tx_id or "",
+                ) from None
+        self._blocks = blocks
         self._block_index = {b.hash: i for i, b in enumerate(self._blocks)}
         logger.info("Chain loaded from %s (%d blocks)", load_path, len(self._blocks))
 

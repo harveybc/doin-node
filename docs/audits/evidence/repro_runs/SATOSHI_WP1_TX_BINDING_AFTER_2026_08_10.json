@@ -1,0 +1,19 @@
+{
+  "run": "AFTER: fix/tx-content-binding-20260810 worktrees",
+  "doin_core_src": "/tmp/claude-1000/-home-harveybc-Documents-GitHub-predictor/94c1b43d-d764-48d5-885f-68470ae06b5f/scratchpad/doin-core-wp1-wt/src",
+  "doin_node_src": "/tmp/claude-1000/-home-harveybc-Documents-GitHub-predictor/94c1b43d-d764-48d5-885f-68470ae06b5f/scratchpad/doin-node-wp1-wt/src",
+  "utc": "2026-08-10T07:03:18.896272+00:00",
+  "forged_id_constructed": false,
+  "forged_id_construction_refusal": "TransactionIntegrityError",
+  "model_construct_bypass_refused": true,
+  "model_construct_refusal": "TransactionIntegrityError",
+  "forged_tx_built_via_attribute_mutation": true,
+  "forged_append_error": "TransactionIntegrityError: transaction ID does not match canonical content hash (block=1, tx_index=0, tx_id=ffffffffffffffff\u2026)",
+  "forged_id_appended": false,
+  "payload_tampered_in_sqlite": false,
+  "next_block_accepted_after_tamper": false,
+  "honest_block_tamper_detected_on_load": true,
+  "honest_block_tamper_refusal": "TransactionIntegrityError: stored transaction content does not match its ID (block=1, tx_index=0, tx_id=9402081bcb5ea55e\u2026)",
+  "height": 2,
+  "attack_succeeded": false
+}

@@ -1,0 +1,16 @@
+{
+  "run": "BEFORE: canonical master (doin-core@9c39df4c9de89334e7f852ea8571ceafce313517, doin-node@ec5cb1305d83d112bb7936212811f1bdf4858da3)",
+  "doin_core_src": "/home/harveybc/Documents/GitHub/doin-core/src",
+  "doin_node_src": "/home/harveybc/Documents/GitHub/doin-node/src",
+  "utc": "2026-08-10T07:03:18.734528+00:00",
+  "forged_id_constructed": true,
+  "forged_id_differs_from_content_hash": true,
+  "forged_id_appended": true,
+  "payload_tampered_in_sqlite": true,
+  "tamper_not_detected_on_load": true,
+  "loaded_payload_is_tampered": true,
+  "next_block_accepted_after_tamper": true,
+  "honest_block_tamper_detected_on_load": false,
+  "height": 4,
+  "attack_succeeded": true
+}

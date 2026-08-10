@@ -153,6 +153,39 @@ def _shared_population_fingerprint(population_state: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _build_shared_population_tx(
+    domain_id: str, pop_state: dict, peer_id: str,
+) -> "Transaction":
+    """Build the deterministic shared-population commit transaction.
+
+    The transaction ID is the canonical content hash (finding 201 — supplied
+    IDs must equal the recomputed content hash, so semantic dedup keys can no
+    longer be used as IDs). To keep the O(1) idempotency check
+    (``_has_transaction(tx.id)``) that previously relied on a deterministic
+    dedup-key ID, the transaction content itself is fully deterministic:
+    the timestamp is a fixed epoch constant (same convention as the genesis
+    block), so identical (domain, population state) always derives the same
+    content hash. Real event time is carried by the enclosing block header.
+    """
+    from doin_core.models.transaction import Transaction, TransactionType
+    from datetime import datetime, timezone
+
+    population_fingerprint = _shared_population_fingerprint(pop_state)
+    return Transaction(
+        tx_type=TransactionType.OPTIMAE_ACCEPTED,
+        domain_id=domain_id,
+        peer_id=peer_id,
+        payload={
+            "_shared_population": pop_state,
+            "_shared_population_fingerprint": population_fingerprint,
+            "_shared_population_seed": pop_state.get("bootstrap_seed"),
+            "performance": pop_state.get("best_fitness_ever", 0.0),
+            "increment": 0.01,
+        },
+        timestamp=datetime(1970, 1, 1, tzinfo=timezone.utc),
+    )
+
+
 def _shared_generation_fingerprint(population_state: dict[str, Any]) -> str:
     """Identify one immutable generation while ignoring live fitness updates."""
     population = []
@@ -2890,31 +2923,13 @@ class UnifiedNode:
     async def _store_shared_population_in_chain(
         self, domain_id: str, pop_state: dict,
     ) -> None:
-        """Store shared population state as a transaction in the chain."""
-        from doin_core.models.transaction import Transaction, TransactionType
-        from datetime import datetime, timezone
-        import hashlib as _hl
+        """Store shared population state as a transaction in the chain.
 
-        population_fingerprint = _shared_population_fingerprint(pop_state)
-        tx = Transaction(
-            id=_hl.sha256(
-                (
-                    f"shared_pop:{domain_id}:{pop_state.get('generation', 0)}:"
-                    f"{population_fingerprint}"
-                ).encode()
-            ).hexdigest(),
-            tx_type=TransactionType.OPTIMAE_ACCEPTED,
-            domain_id=domain_id,
-            peer_id=self.peer_id,
-            payload={
-                "_shared_population": pop_state,
-                "_shared_population_fingerprint": population_fingerprint,
-                "_shared_population_seed": pop_state.get("bootstrap_seed"),
-                "performance": pop_state.get("best_fitness_ever", 0.0),
-                "increment": 0.01,
-            },
-            timestamp=datetime.now(timezone.utc),
-        )
+        The transaction is deterministic (content-derived ID, fixed epoch
+        timestamp) so retries of the same population state dedupe via
+        ``_has_transaction`` — see ``_build_shared_population_tx``.
+        """
+        tx = _build_shared_population_tx(domain_id, pop_state, self.peer_id)
 
         if self._has_transaction(tx.id):
             logger.info(

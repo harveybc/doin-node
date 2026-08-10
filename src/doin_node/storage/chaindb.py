@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Any
 
 from doin_core.models.block import Block, BlockHeader
-from doin_core.models.transaction import Transaction
+from doin_core.models.transaction import (
+    TX_ID_PATTERN,
+    Transaction,
+    TransactionIntegrityError,
+    compute_transaction_id,
+)
 from doin_core.crypto.hashing import compute_merkle_root
 
 logger = logging.getLogger(__name__)
@@ -286,9 +291,38 @@ class ChainDB:
                     f"got {block.header.previous_hash[:16]}"
                 )
 
-        # Verify merkle root
-        tx_hashes = [tx.id for tx in block.transactions]
-        expected_merkle = compute_merkle_root(tx_hashes)
+        # Independently recompute every transaction's content hash before
+        # Merkle calculation. Supplied IDs (and Pydantic construction) are
+        # never trusted here (finding 201).
+        recomputed_hashes: list[str] = []
+        seen_ids: set[str] = set()
+        for i, tx in enumerate(block.transactions):
+            expected_id = compute_transaction_id(
+                tx_type=tx.tx_type.value,
+                domain_id=tx.domain_id,
+                peer_id=tx.peer_id,
+                payload=tx.payload,
+                timestamp=tx.timestamp.isoformat(),
+            )
+            if not TX_ID_PATTERN.fullmatch(tx.id) or tx.id != expected_id:
+                raise TransactionIntegrityError(
+                    "transaction ID does not match canonical content hash",
+                    block_index=block.header.index,
+                    tx_index=i,
+                    tx_id=tx.id,
+                )
+            if expected_id in seen_ids:
+                raise TransactionIntegrityError(
+                    "duplicate transaction ID within block",
+                    block_index=block.header.index,
+                    tx_index=i,
+                    tx_id=expected_id,
+                )
+            seen_ids.add(expected_id)
+            recomputed_hashes.append(expected_id)
+
+        # Verify merkle root from the independently recomputed hashes
+        expected_merkle = compute_merkle_root(recomputed_hashes)
         if block.header.merkle_root != expected_merkle:
             raise ValueError("Merkle root mismatch")
 
@@ -499,11 +533,32 @@ class ChainDB:
 
     def _row_to_transaction(self, row: sqlite3.Row) -> Transaction:
         from doin_core.models.transaction import TransactionType
+
+        # Verify the stored row's content against its stored ID from the raw
+        # fields, before (and independent of) Pydantic construction. A
+        # mismatch is a typed integrity failure with coordinates and no
+        # payload dump (finding 201).
+        stored_id = row["tx_id"]
+        payload = json.loads(row["payload"])
+        expected_id = compute_transaction_id(
+            tx_type=row["tx_type"],
+            domain_id=row["domain_id"],
+            peer_id=row["peer_id"],
+            payload=payload,
+            timestamp=row["timestamp"],
+        )
+        if not TX_ID_PATTERN.fullmatch(stored_id) or stored_id != expected_id:
+            raise TransactionIntegrityError(
+                "stored transaction content does not match its ID",
+                block_index=row["block_index"],
+                tx_index=row["tx_index"],
+                tx_id=stored_id,
+            )
         return Transaction(
-            id=row["tx_id"],
+            id=stored_id,
             tx_type=TransactionType(row["tx_type"]),
             domain_id=row["domain_id"],
             peer_id=row["peer_id"],
-            payload=json.loads(row["payload"]),
+            payload=payload,
             timestamp=row["timestamp"],
         )
