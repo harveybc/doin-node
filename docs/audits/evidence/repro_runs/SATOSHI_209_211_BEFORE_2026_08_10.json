@@ -1,0 +1,54 @@
+{
+  "run": "BEFORE",
+  "doin_core_src": "/tmp/claude-1000/-home-harveybc-Documents-GitHub-predictor/94c1b43d-d764-48d5-885f-68470ae06b5f/scratchpad/doin-core-wp1-wt/src",
+  "doin_node_src": "/tmp/claude-1000/-home-harveybc-Documents-GitHub-predictor/94c1b43d-d764-48d5-885f-68470ae06b5f/scratchpad/doin-node-wp1-wt/src",
+  "utc": "2026-08-11T04:23:05.183605+00:00",
+  "finding_209": {
+    "missing_tip_hash_only": {
+      "typed_report": true,
+      "outcome": "fully_verified",
+      "check_10_status": "pass",
+      "check_10_detail": "",
+      "first_failure": null
+    },
+    "missing_height_only": {
+      "typed_report": true,
+      "outcome": "fully_verified",
+      "check_10_status": "pass",
+      "check_10_detail": "",
+      "first_failure": null
+    },
+    "non_integer_height": {
+      "raised": "ValueError: invalid literal for int() with base 10: 'not-an-int'",
+      "typed_report": false
+    },
+    "corrupted_metadata_pair": {
+      "typed_report": true,
+      "outcome": "failed",
+      "check_10_status": "fail",
+      "check_10_detail": "metadata height 999 does not match verified height 3",
+      "first_failure": {
+        "check_number": 10,
+        "check_name": "metadata_height_tip",
+        "block_index": 2,
+        "tx_index": null,
+        "reason": "metadata height 999 does not match verified height 3"
+      }
+    }
+  },
+  "finding_210": {
+    "startup_verify_outcome": "fully_verified",
+    "append_cursor_bound": false,
+    "history_tampered_via_second_connection": true,
+    "append_after_history_tamper": "ACCEPTED",
+    "height_after_append": 4,
+    "subsequent_full_verify": "failed"
+  },
+  "finding_211": {
+    "fleet_example": "predictor_omega_node_cnn_direction_neat.json",
+    "materialized_without_identity": "ACCEPTED",
+    "config_chain_id": "",
+    "config_genesis_hash": "",
+    "identity_template": "not present in this tree"
+  }
+}

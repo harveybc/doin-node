@@ -160,3 +160,42 @@ async def test_shared_population_store_is_idempotent_while_pending() -> None:
     )
 
     await UnifiedNode._store_shared_population_in_chain(node, "domain-a", pop_state)
+
+
+# ── Finding 211: shared populations require explicit chain identity ──
+
+def test_unified_node_refuses_shared_population_without_chain_identity(tmp_path) -> None:
+    from doin_node.unified import ChainIdentityConfigError, DomainRole
+
+    role = DomainRole(
+        domain_id="shared-domain-211",
+        optimize=True,
+        optimization_config={"shared_population": True},
+    )
+    config = UnifiedNodeConfig(
+        port=8497, data_dir=str(tmp_path / "n211"), domains=[role],
+    )
+    with pytest.raises(ChainIdentityConfigError) as ei:
+        UnifiedNode(config)
+    assert "chain_id" in str(ei.value)
+    assert "genesis_hash" in str(ei.value)
+
+
+def test_unified_node_accepts_shared_population_with_explicit_identity(tmp_path) -> None:
+    from doin_node.unified import DomainRole
+
+    role = DomainRole(
+        domain_id="shared-domain-211-ok",
+        optimize=True,
+        optimization_config={"shared_population": True},
+    )
+    config = UnifiedNodeConfig(
+        port=8498,
+        data_dir=str(tmp_path / "n211ok"),
+        domains=[role],
+        chain_id="doin-explicit-fleet",
+        genesis_hash="ef" * 32,
+    )
+    node = UnifiedNode(config)
+    assert node.chain_id == "doin-explicit-fleet"
+    assert node.expected_genesis_hash == "ef" * 32

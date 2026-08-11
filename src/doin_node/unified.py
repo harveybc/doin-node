@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -85,13 +86,21 @@ from doin_core.protocol.messages import (
     TaskCreated,
     validate_peer_chain_status,
 )
-from doin_core.models.verification import ChainVerificationReport
+from doin_core.models.verification import (
+    ChainVerificationOutcome,
+    ChainVerificationReport,
+    FailureCoordinate,
+)
 from doin_node.versioning import compute_component_versions
 
 from doin_core.models.fee_market import FeeConfig, FeeMarket
 
 from doin_node.blockchain.chain import Chain
-from doin_node.blockchain.verify import ChainStartupRefused, verify_chain_db
+from doin_node.blockchain.verify import (
+    ChainQuarantined,
+    ChainStartupRefused,
+    verify_chain_db,
+)
 from doin_node.stats.olap_db import OLAPProvenanceError
 from doin_node.network.discovery import PeerDiscovery, DiscoveredPeer
 from doin_node.network.flooding import FloodingConfig, FloodingProtocol
@@ -100,7 +109,7 @@ from doin_node.network.peer import Peer, PeerState
 from doin_node.network.sync import SyncManager, fetch_blocks, fetch_chain_status
 from doin_node.network.transport import Transport
 from doin_node.stats.experiment_tracker import ExperimentTracker
-from doin_node.storage.chaindb import ChainDB
+from doin_node.storage.chaindb import ChainBindingError, ChainDB
 
 logger = logging.getLogger(__name__)
 
@@ -312,11 +321,20 @@ class UnifiedNodeConfig:
     snapshot_interval: int = 100  # Save state snapshot every N blocks
     prune_keep_blocks: int = 10000  # Keep tx bodies for last N blocks
 
-    # Explicit chain identity (findings 202-203). Empty values derive the
-    # deterministic defaults: genesis_hash from the deterministic genesis
-    # block, chain_id as "doin-<genesis12>". Peers whose ChainStatus does
-    # not attest exactly this identity (and protocol version) are rejected
-    # before any block exchange.
+    # Explicit chain identity (findings 202-203, 211).
+    #
+    # REQUIRED KEYS for any shared-population / fleet / production config:
+    #   "chain_id":     the one network-wide chain identifier every
+    #                   participating machine must pin identically;
+    #   "genesis_hash": the 64-hex hash of the network's genesis block.
+    # A config with any domain whose optimization_config sets
+    # "shared_population": true MUST provide both keys — omission fails
+    # closed with a typed ChainIdentityConfigError (finding 211).
+    # Single-node/dev configs may leave them empty: the deterministic
+    # defaults are derived (genesis_hash from the deterministic genesis
+    # block, chain_id as "doin-<genesis12>") with a logged warning.
+    # Peers whose ChainStatus does not attest exactly this identity (and
+    # protocol version) are rejected before any block exchange.
     chain_id: str = ""
     genesis_hash: str = ""
 
@@ -326,6 +344,11 @@ class UnifiedNodeConfig:
     # "exit": raise a typed ChainStartupRefused before any side effect.
     # "quarantine": start a read-only diagnostic HTTP endpoint only.
     on_verification_failure: str = "exit"
+    # Periodic background full re-verification (finding 210). On failure
+    # the node quarantines itself: no append, sync, gossip, archive or
+    # OLAP projection until a fresh successful report exists. 0 disables
+    # (dev/tests only — the startup report then stays authoritative).
+    chain_verify_interval: float = 3600.0
 
     # Network: "gossipsub" (production) or "flooding" (legacy/testing)
     network_protocol: str = "gossipsub"
@@ -359,6 +382,61 @@ class SharedClaimConfirmation:
     won: bool
     ready_peers: int
     contacted_peers: int
+
+
+class ChainIdentityConfigError(Exception):
+    """Typed refusal: a shared-population config omits its chain identity.
+
+    Finding 211: every shared-population/production deployment must pin
+    one explicit, network-wide (chain_id, genesis_hash) pair. Without it,
+    unrelated networks silently share the deterministic default identity
+    and are distinguished only later as competing histories.
+    """
+
+    def __init__(self, shared_domains: list[str], problem: str) -> None:
+        super().__init__(
+            "shared-population configuration requires an explicit chain "
+            f"identity: {problem} (shared-population domains: "
+            f"{', '.join(shared_domains)}). Add explicit \"chain_id\" and "
+            "\"genesis_hash\" keys shared by every participating machine "
+            "— see examples/fleet_shared_population_identity_template.json"
+        )
+        self.shared_domains = shared_domains
+        self.problem = problem
+
+
+_GENESIS_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def validate_chain_identity_config(config: "UnifiedNodeConfig") -> list[str]:
+    """Enforce the finding-211 chain-identity contract on a config.
+
+    Returns the shared-population domain IDs. Fails closed (typed
+    ChainIdentityConfigError) when any domain runs a shared population
+    and the config does not pin both an explicit ``chain_id`` and a
+    well-formed ``genesis_hash``. Single-node/dev configs (no shared
+    population) pass and may derive deterministic defaults.
+    """
+    shared_domains = [
+        d.domain_id
+        for d in config.domains
+        if (d.optimization_config or {}).get("shared_population")
+    ]
+    if shared_domains:
+        if not config.chain_id and not config.genesis_hash:
+            raise ChainIdentityConfigError(
+                shared_domains, "both \"chain_id\" and \"genesis_hash\" are missing"
+            )
+        if not config.chain_id:
+            raise ChainIdentityConfigError(shared_domains, "\"chain_id\" is missing")
+        if not config.genesis_hash:
+            raise ChainIdentityConfigError(shared_domains, "\"genesis_hash\" is missing")
+    if config.genesis_hash and not _GENESIS_HASH_RE.fullmatch(config.genesis_hash):
+        raise ChainIdentityConfigError(
+            shared_domains or [d.domain_id for d in config.domains],
+            "\"genesis_hash\" is not 64 lowercase hex characters",
+        )
+    return shared_domains
 
 
 # ── Unified Node ─────────────────────────────────────────────────────
@@ -407,16 +485,26 @@ class UnifiedNode:
             self.chaindb = ChainDB(db_path)
             self._chaindb_path = str(db_path)
 
-        # ── Explicit chain identity (findings 202-203) ──
-        # Deterministic defaults preserve the existing fleet chain: the
-        # genesis is the deterministic epoch genesis, the chain ID derives
-        # from it. Both can be pinned explicitly in config.
+        # ── Explicit chain identity (findings 202-203, 211) ──
+        # Shared-population/production configs MUST pin (chain_id,
+        # genesis_hash) explicitly — omission fails closed with a typed
+        # error. Single-node/dev configs may derive the deterministic
+        # defaults, with a logged warning.
+        validate_chain_identity_config(config)
         self.expected_genesis_hash: str = (
             config.genesis_hash or Block.genesis("genesis").hash
         )
         self.chain_id: str = (
             config.chain_id or f"doin-{self.expected_genesis_hash[:12]}"
         )
+        if not config.chain_id or not config.genesis_hash:
+            logger.warning(
+                "Chain identity derived from deterministic defaults "
+                "(single-node/dev mode): chain_id=%s genesis=%s… — "
+                "shared-population/production deployments must pin "
+                "explicit chain_id and genesis_hash (finding 211)",
+                self.chain_id, self.expected_genesis_hash[:16],
+            )
         if config.on_verification_failure not in ("exit", "quarantine"):
             raise ValueError(
                 "on_verification_failure must be 'exit' or 'quarantine', "
@@ -855,6 +943,13 @@ class UnifiedNode:
         # clearly reported read-only quarantine diagnostic mode.
         if self.chaindb and self.config.verify_chain_on_start:
             stored_identity = self.chaindb.get_chain_identity()
+            # Bind the tamper-evident append cursor BEFORE verification
+            # (finding 210): any external write landing while the
+            # verifier reads shows up as data_version drift afterwards,
+            # so the verified report and the bound cursor are one unit.
+            self.chaindb.bind_verified_cursor(
+                self.chaindb.height, self.chaindb.tip_hash
+            )
             report = verify_chain_db(
                 self._chaindb_path,
                 # Only demand a chain-id attestation once one exists;
@@ -865,6 +960,25 @@ class UnifiedNode:
                 ),
                 expected_genesis_hash=self.expected_genesis_hash,
             )
+            cursor_status = self.chaindb.cursor_status()
+            if report.ok and not (
+                cursor_status["intact"]
+                and report.height == cursor_status["height"]
+                and (report.tip_hash or "") == cursor_status["tip_hash"]
+            ):
+                # The database moved under the verifier: the report does
+                # not describe the current bytes. Fail closed.
+                report.outcome = ChainVerificationOutcome.FAILED
+                report.first_failure = FailureCoordinate(
+                    check_number=10,
+                    check_name="metadata_height_tip",
+                    block_index=None,
+                    tx_index=None,
+                    reason=(
+                        "database changed during startup verification "
+                        "(append-cursor drift)"
+                    ),
+                )
             self.chain_verification_report = report
             if not report.ok:
                 logger.error(
@@ -891,6 +1005,8 @@ class UnifiedNode:
                 raise ChainStartupRefused(report)
             if stored_identity is None:
                 # First verified boot on this database: stamp identity.
+                # (A same-connection write — it never disturbs the bound
+                # append cursor.)
                 self.chaindb.set_chain_identity(
                     self.chain_id, self.expected_genesis_hash
                 )
@@ -1001,6 +1117,17 @@ class UnifiedNode:
             asyncio.create_task(self._maintenance_loop())
         )
 
+        # Periodic background full chain re-verification with
+        # quarantine-on-failure (finding 210)
+        if (
+            self.chaindb
+            and self.config.verify_chain_on_start
+            and self.config.chain_verify_interval > 0
+        ):
+            self._background_tasks.append(
+                asyncio.create_task(self._chain_verify_loop())
+            )
+
         protocol = "gossipsub" if self.gossip else "flooding"
         storage = "sqlite" if self.chaindb else "json"
         logger.info(
@@ -1059,8 +1186,29 @@ class UnifiedNode:
         return self.chain.has_transaction(tx_id)
 
     def _append_block(self, block: Block) -> None:
+        if self.quarantine_report is not None:
+            raise ChainQuarantined(self.quarantine_report)
         if self.chaindb:
-            self.chaindb.append_block(block)
+            try:
+                self.chaindb.append_block(block)
+            except ChainBindingError as e:
+                # Tamper evidence at the append boundary (finding 210):
+                # the write was refused and rolled back. Schedule a full
+                # re-verification — it quarantines the node on failure,
+                # or re-binds the cursor when the drift proves benign.
+                self._log_alert(
+                    "critical", "chain_binding",
+                    f"append refused by tamper-evident binding: {e}",
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and self._running:
+                    self._background_tasks.append(
+                        loop.create_task(self._run_full_chain_verify())
+                    )
+                raise
         else:
             self.chain.append_block(block)
 
@@ -1073,6 +1221,81 @@ class UnifiedNode:
         if not self.chaindb:
             self.chain.save()
 
+    # ── Background full verification + quarantine (finding 210) ──
+
+    async def _chain_verify_loop(self) -> None:
+        """Periodic full chain re-verification with quarantine-on-failure."""
+        while self._running:
+            await asyncio.sleep(self.config.chain_verify_interval)
+            if not self._running or self.quarantine_report is not None:
+                return
+            await self._run_full_chain_verify()
+
+    async def _run_full_chain_verify(self) -> None:
+        """Full verify off the event loop; quarantine on failure.
+
+        On success the report is refreshed and the append cursor rebound;
+        on failure the node quarantines itself: existing gates stop block
+        generation, gossip processing, sync, archive and OLAP projection.
+        """
+        if self.chaindb is None or self.quarantine_report is not None:
+            return
+        try:
+            report = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: verify_chain_db(
+                    self._chaindb_path,
+                    expected_chain_id=self.chain_id,
+                    expected_genesis_hash=self.expected_genesis_hash,
+                ),
+            )
+        except Exception:
+            logger.exception("Background chain verification could not run")
+            return
+        if report.ok:
+            self.chain_verification_report = report
+            try:
+                self.chaindb.bind_verified_cursor(
+                    report.height, report.tip_hash or ""
+                )
+            except ChainBindingError:
+                # The chain advanced while the verifier ran (normal on a
+                # live node): keep the existing cursor — it already binds
+                # appends to the previously verified history.
+                pass
+            logger.info(
+                "Background chain verification: %s height=%d",
+                report.outcome.value, report.height,
+            )
+            return
+        self.quarantine_report = report
+        self._log_alert(
+            "critical", "chain_verification",
+            f"background chain verification {report.outcome.value} — node "
+            "quarantined: no append, sync, gossip, archive or OLAP "
+            "projection until a fresh successful verification",
+        )
+
+    def _fresh_verification_report(self) -> ChainVerificationReport | None:
+        """The current verification report, iff it is still trustworthy.
+
+        Fresh means: the node is not quarantined, the last full
+        verification succeeded, and — when the tamper-evident cursor is
+        bound — no other connection has written to the database since
+        that verification. Archive and OLAP projection require this
+        (finding 210); they never run on unverified or drifted state.
+        """
+        if self.quarantine_report is not None:
+            return None
+        report = self.chain_verification_report
+        if report is None or not report.ok:
+            return None
+        if self.chaindb is not None:
+            status = self.chaindb.cursor_status()
+            if status["bound"] and not status["intact"]:
+                return None
+        return report
+
     # ── OLAP chain projection (derived, never authority) ─────────
 
     def _olap_project_chain(self) -> None:
@@ -1081,9 +1304,20 @@ class UnifiedNode:
         Every ingestion is bound to (chain_id, genesis_hash,
         source_tip_hash, source_height) — findings 202-203. Failures are
         alerts, never consensus events: the OLAP is derived/rebuildable.
+
+        Requires a fresh successful verification report (finding 210):
+        a quarantined node, a failed report or a drifted append cursor
+        refuses projection.
         """
         olap = getattr(self.experiment_tracker, "_olap", None)
         if olap is None or self.quarantine_report is not None:
+            return
+        if self.chaindb is not None and self._fresh_verification_report() is None:
+            self._log_alert(
+                "error", "olap_provenance",
+                "OLAP chain projection refused: no fresh successful "
+                "chain verification report",
+            )
             return
         height = self._get_height()
         if height <= self._olap_projected_height:
@@ -2274,22 +2508,32 @@ class UnifiedNode:
                 depth_block_hash = b.hash
         self.finality.on_new_block(block.header.index, depth_block_hash)
 
-        # State snapshot at intervals (SQLite only)
+        # State snapshot + pruning archive at intervals (SQLite only).
+        # Archiving requires a fresh successful verification report
+        # (finding 210): a snapshot/checkpoint must never commit to
+        # unverified or drifted history.
         if self.chaindb and block.header.index % self.config.snapshot_interval == 0:
-            self.chaindb.save_snapshot(
-                block_index=block.header.index,
-                block_hash=block.hash,
-                balances=self.balance_tracker.all_balances,
-                reputation=self.reputation.all_scores,
-                domain_stats={d: self.vuw.compute_weights().get(d, 0) for d in self._domains},
-            )
-            logger.info("State snapshot saved at block #%d", block.header.index)
+            if self._fresh_verification_report() is None:
+                self._log_alert(
+                    "error", "chain_archive",
+                    "state snapshot/prune archive refused: no fresh "
+                    "successful chain verification report",
+                )
+            else:
+                self.chaindb.save_snapshot(
+                    block_index=block.header.index,
+                    block_hash=block.hash,
+                    balances=self.balance_tracker.all_balances,
+                    reputation=self.reputation.all_scores,
+                    domain_stats={d: self.vuw.compute_weights().get(d, 0) for d in self._domains},
+                )
+                logger.info("State snapshot saved at block #%d", block.header.index)
 
-            # Prune old transaction bodies
-            if self.config.prune_keep_blocks > 0:
-                prune_before = block.header.index - self.config.prune_keep_blocks
-                if prune_before > 0:
-                    self.chaindb.prune_transactions_before(prune_before)
+                # Prune old transaction bodies
+                if self.config.prune_keep_blocks > 0:
+                    prune_before = block.header.index - self.config.prune_keep_blocks
+                    if prune_before > 0:
+                        self.chaindb.prune_transactions_before(prune_before)
 
         # External anchoring
         if self.anchor_manager.should_anchor(block.header.index):

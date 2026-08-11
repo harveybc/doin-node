@@ -43,6 +43,7 @@ from doin_node.unified import (
     DomainRole,
     UnifiedNode,
     UnifiedNodeConfig,
+    validate_chain_identity_config,
 )
 
 
@@ -271,7 +272,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
     # Reference dataclass defaults for absent fields rather than duplicating
     # guessed literals, so loading {} reproduces UnifiedNodeConfig() exactly.
     defaults = UnifiedNodeConfig()
-    return UnifiedNodeConfig(
+    config = UnifiedNodeConfig(
         node_label=raw.get("node_label", defaults.node_label),
         host=raw.get("host", defaults.host),
         port=raw.get("port", defaults.port),
@@ -323,6 +324,9 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         on_verification_failure=raw.get(
             "on_verification_failure", defaults.on_verification_failure
         ),
+        chain_verify_interval=raw.get(
+            "chain_verify_interval", defaults.chain_verify_interval
+        ),
         network_protocol=raw.get("network_protocol", defaults.network_protocol),
         gossip_heartbeat_interval=raw.get("gossip_heartbeat_interval", defaults.gossip_heartbeat_interval),
         discovery_enabled=raw.get("discovery_enabled", defaults.discovery_enabled),
@@ -334,6 +338,13 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         fee_market_enabled=raw.get("fee_market_enabled", defaults.fee_market_enabled),
         fee_config=_parse_fee_config(raw.get("fee_config")),
     )
+    # Finding 211: a shared-population config MUST pin one explicit,
+    # network-wide (chain_id, genesis_hash). The materializer fails
+    # closed (typed ChainIdentityConfigError) so a fleet machine can
+    # never boot into the deterministic default identity by omission.
+    # Single-node/dev configs pass and derive with a logged warning.
+    validate_chain_identity_config(config)
+    return config
 
 
 def load_identity(identity_path: str | None, data_dir: str) -> PeerIdentity:

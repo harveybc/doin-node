@@ -62,6 +62,28 @@ class ChainIdentityError(Exception):
         self.requested = requested
 
 
+class ChainBindingError(Exception):
+    """Typed refusal: the tamper-evident append binding was violated.
+
+    Finding 210. Raised inside the append/rollback write transaction when
+    the database changed outside this verified connection (SQLite
+    ``data_version`` drift), when the in-transaction tip does not match
+    the verified cursor, or when the metadata (height, tip_hash) pair is
+    broken or contradicts the stored tip. The write is rolled back; a
+    fresh successful full verification is required before further
+    appends. Carries coordinates only — never payloads.
+    """
+
+    def __init__(self, reason: str, **coordinates: object) -> None:
+        detail = " ".join(f"{k}={v}" for k, v in sorted(coordinates.items()))
+        super().__init__(
+            f"append binding violated: {reason}"
+            + (f" ({detail})" if detail else "")
+        )
+        self.reason = reason
+        self.coordinates = coordinates
+
+
 class ChainDB:
     """SQLite-backed blockchain storage.
 
@@ -73,6 +95,10 @@ class ChainDB:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
+        # Tamper-evident append cursor (finding 210): bound once after a
+        # successful full verification; every later append is O(1)-checked
+        # against it inside the write transaction.
+        self._verified_cursor: dict[str, Any] | None = None
 
     def open(self) -> None:
         """Open the database and create tables if needed."""
@@ -92,6 +118,171 @@ class ChainDB:
         if self._conn:
             self._conn.close()
             self._conn = None
+        self._verified_cursor = None  # data_version is per-connection
+
+    # ── Tamper-evident append cursor (finding 210) ───────────────
+
+    def _data_version(self) -> int:
+        """This connection's SQLite ``data_version`` counter.
+
+        It changes if and only if another connection commits a change to
+        the database file; commits made on this connection leave it
+        untouched. That makes it an O(1) tamper-evidence token for the
+        history this connection verified.
+        """
+        assert self._conn is not None
+        return int(self._conn.execute("PRAGMA data_version").fetchone()[0])
+
+    def _tip_row(self) -> tuple[int, str]:
+        """(height, tip_hash) read on this connection, O(1)."""
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT block_index, hash FROM blocks "
+            "ORDER BY block_index DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return (0, "")
+        return (row["block_index"] + 1, row["hash"])
+
+    def bind_verified_cursor(self, height: int, tip_hash: str) -> dict[str, Any]:
+        """Bind future appends to a startup-verified (height, tip).
+
+        Called once after a successful full verification (and again after
+        each later successful background verification). Persists this
+        connection's ``data_version`` alongside the verified tip so every
+        append can prove, in O(1), that no other connection has written
+        to the database since the history was verified.
+
+        Raises ChainBindingError (typed) when the stored tip does not
+        match the claimed verified state — a cursor is never bound to a
+        database that contradicts its verification report.
+        """
+        assert self._conn is not None
+        actual_height, actual_tip = self._tip_row()
+        if actual_height != height or (height > 0 and actual_tip != tip_hash):
+            raise ChainBindingError(
+                "verified cursor does not match the stored tip",
+                verified_height=height,
+                stored_height=actual_height,
+            )
+        self._verified_cursor = {
+            "data_version": self._data_version(),
+            "height": actual_height,
+            "tip_hash": actual_tip,
+        }
+        logger.info(
+            "Append cursor bound: height=%d tip=%s… data_version=%d",
+            actual_height, actual_tip[:16], self._verified_cursor["data_version"],
+        )
+        return dict(self._verified_cursor)
+
+    @property
+    def verified_cursor(self) -> dict[str, Any] | None:
+        """The bound append cursor, or None when appends are unbound."""
+        return dict(self._verified_cursor) if self._verified_cursor else None
+
+    def cursor_status(self) -> dict[str, Any]:
+        """O(1) tamper-evidence status for the bound cursor.
+
+        ``intact`` is True only when no other connection has committed
+        since binding AND the stored tip still equals the bound tip.
+        """
+        if self._verified_cursor is None or self._conn is None:
+            return {"bound": False, "intact": False}
+        current_dv = self._data_version()
+        actual_height, actual_tip = self._tip_row()
+        cursor = self._verified_cursor
+        return {
+            "bound": True,
+            "intact": (
+                current_dv == cursor["data_version"]
+                and actual_height == cursor["height"]
+                and actual_tip == cursor["tip_hash"]
+            ),
+            "bound_data_version": cursor["data_version"],
+            "current_data_version": current_dv,
+            "height": cursor["height"],
+            "tip_hash": cursor["tip_hash"],
+        }
+
+    def _check_append_binding(self, block: Block) -> None:
+        """Verify tip + metadata + cursor INSIDE the open write transaction.
+
+        Runs after BEGIN IMMEDIATE so the checks and the insert are one
+        serialized unit (no TOCTOU window). All O(1); never O(chain).
+        """
+        assert self._conn is not None
+        cursor = self._verified_cursor
+        if cursor is not None:
+            current_dv = self._data_version()
+            if current_dv != cursor["data_version"]:
+                raise ChainBindingError(
+                    "database changed outside the verified connection "
+                    "since verification (data_version drift)",
+                    bound_data_version=cursor["data_version"],
+                    current_data_version=current_dv,
+                )
+        actual_height, actual_tip = self._tip_row()
+        if cursor is not None and (
+            actual_height != cursor["height"] or actual_tip != cursor["tip_hash"]
+        ):
+            raise ChainBindingError(
+                "stored tip does not match the verified cursor",
+                cursor_height=cursor["height"],
+                stored_height=actual_height,
+            )
+        if block.header.index != actual_height:
+            raise ChainBindingError(
+                "tip moved during append",
+                block_index=block.header.index,
+                stored_height=actual_height,
+            )
+        if actual_height > 0 and block.header.previous_hash != actual_tip:
+            raise ChainBindingError(
+                "previous_hash does not match the in-transaction tip",
+                block_index=block.header.index,
+            )
+        # Metadata (height, tip_hash) must be valid as a pair here too
+        # (findings 209-210): both absent (legacy DB not yet claimed) or
+        # both present and matching the stored tip.
+        claimed_height = self.get_metadata(META_HEIGHT)
+        claimed_tip = self.get_metadata(META_TIP_HASH)
+        if (claimed_height is None) != (claimed_tip is None):
+            raise ChainBindingError(
+                "metadata (height, tip_hash) pair is broken",
+                block_index=block.header.index,
+            )
+        if claimed_height is not None:
+            try:
+                claimed_height_int = int(claimed_height)
+            except (TypeError, ValueError):
+                raise ChainBindingError(
+                    "metadata height is not an integer",
+                    block_index=block.header.index,
+                ) from None
+            if claimed_height_int != actual_height or claimed_tip != actual_tip:
+                raise ChainBindingError(
+                    "metadata height/tip does not match the stored tip",
+                    metadata_height=claimed_height_int,
+                    stored_height=actual_height,
+                )
+
+    def _advance_cursor_after_commit(self, height: int, tip_hash: str) -> None:
+        """Move the bound cursor to the just-committed tip.
+
+        The bound ``data_version`` is deliberately KEPT: commits on this
+        connection never change it, so re-reading it here would open a
+        race where an external commit landing between our COMMIT and the
+        re-read is silently absorbed. Any external commit — whenever it
+        lands — must surface as drift on the next append.
+        """
+        if self._verified_cursor is None:
+            return
+        self._verified_cursor = {
+            "data_version": self._verified_cursor["data_version"],
+            "height": height,
+            "tip_hash": tip_hash,
+        }
 
     def _create_tables(self) -> None:
         assert self._conn is not None
@@ -280,7 +471,14 @@ class ChainDB:
         return [self._row_to_block(row) for row in rows]
 
     def append_block(self, block: Block) -> None:
-        """Validate and append a block atomically (block + all transactions)."""
+        """Validate and append a block atomically (block + all transactions).
+
+        When a verified cursor is bound (production startup path), the
+        append is additionally bound to the verified history: the
+        connection's ``data_version``, the stored tip and the metadata
+        pair are re-checked INSIDE the write transaction, and a typed
+        ChainBindingError refuses the append on any drift (finding 210).
+        """
         assert self._conn is not None
 
         # Validate
@@ -289,6 +487,7 @@ class ChainDB:
         # Atomic write
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            self._check_append_binding(block)
             self._conn.execute(
                 """INSERT INTO blocks
                    (block_index, hash, previous_hash, timestamp, merkle_root,
@@ -340,6 +539,7 @@ class ChainDB:
         except Exception:
             self._conn.execute("ROLLBACK")
             raise
+        self._advance_cursor_after_commit(block.header.index + 1, block.hash)
 
     def append_blocks(self, blocks: list[Block]) -> int:
         """Validate and append multiple blocks. Returns count appended."""
@@ -358,10 +558,23 @@ class ChainDB:
 
         Used during chain reorganisation when we discover a longer
         valid chain from a peer.  Returns the number of blocks removed.
+
+        A bound verified cursor is checked for external drift before the
+        rollback and moved to the surviving tip afterwards — a reorg is a
+        legitimate same-connection rewrite, never a cursor bypass.
         """
         assert self._conn is not None
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            if self._verified_cursor is not None:
+                current_dv = self._data_version()
+                if current_dv != self._verified_cursor["data_version"]:
+                    raise ChainBindingError(
+                        "database changed outside the verified connection "
+                        "since verification (data_version drift)",
+                        bound_data_version=self._verified_cursor["data_version"],
+                        current_data_version=current_dv,
+                    )
             self._conn.execute(
                 "DELETE FROM transactions WHERE block_index > ?", (index,)
             )
@@ -389,6 +602,10 @@ class ChainDB:
                 (META_TIP_HASH, tip_row["hash"] if tip_row else ""),
             )
             self._conn.execute("COMMIT")
+            self._advance_cursor_after_commit(
+                tip_row["block_index"] + 1 if tip_row else 0,
+                tip_row["hash"] if tip_row else "",
+            )
             return cur.rowcount
         except Exception:
             self._conn.execute("ROLLBACK")

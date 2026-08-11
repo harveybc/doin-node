@@ -35,12 +35,13 @@ from doin_core.models.transaction import Transaction, TransactionType
 from doin_core.models.verification import ChainVerificationOutcome
 from doin_core.protocol.messages import PROTOCOL_VERSION
 from doin_node.blockchain.verify import (
+    ChainQuarantined,
     ChainStartupRefused,
     main as verify_main,
     verify_chain_db,
 )
 from doin_node.stats.olap_db import OLAPDatabase, OLAPProvenanceError
-from doin_node.storage.chaindb import ChainDB
+from doin_node.storage.chaindb import ChainBindingError, ChainDB
 from doin_node.unified import UnifiedNode, UnifiedNodeConfig
 
 TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
@@ -644,6 +645,13 @@ class TestReorgOlapReprojection:
         node.chaindb.append_block(b1)
         node.chaindb.append_block(b2)
 
+        # Finding 210: OLAP projection requires a fresh successful
+        # verification report — without one it must refuse.
+        node._olap_project_chain()
+        assert self._rows(node.experiment_tracker._olap) == set()
+
+        node.chain_verification_report = verify_chain_db(tmp_path / "chain.db")
+        assert node.chain_verification_report.ok
         node._olap_project_chain()
         olap = node.experiment_tracker._olap
         assert self._rows(olap) == {("opt-n1", 1), ("opt-n2", 2)}
@@ -742,5 +750,212 @@ class TestRestartRefusalBeforeSideEffects:
                     report = await resp.json()
                 assert report["outcome"] == "failed"
                 assert report["first_failure"]["block_index"] == 2
+        finally:
+            await node.stop()
+
+
+# ── Finding 209: metadata (height, tip_hash) valid AS A PAIR ─────────
+
+class TestMetadataPairCheck10:
+    """Adversarial metadata states must yield typed results, never crash."""
+
+    def test_missing_tip_hash_only_fails_typed(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        _corrupt(db_path, "DELETE FROM metadata WHERE key = 'tip_hash'")
+        report = verify_chain_db(db_path)
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 10
+        assert "pair" in report.first_failure.reason
+
+    def test_missing_height_only_fails_typed(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        _corrupt(db_path, "DELETE FROM metadata WHERE key = 'height'")
+        report = verify_chain_db(db_path)
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 10
+        assert "pair" in report.first_failure.reason
+
+    def test_non_integer_height_is_typed_failure_not_exception(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        _corrupt(
+            db_path,
+            "UPDATE metadata SET value = 'not-an-int' WHERE key = 'height'",
+        )
+        report = verify_chain_db(db_path)  # must NOT raise (finding 209)
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 10
+        assert "not an integer" in report.first_failure.reason
+
+    def test_corrupted_metadata_pair_fails_typed(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        _corrupt(db_path, "UPDATE metadata SET value = '999' WHERE key = 'height'")
+        _corrupt(
+            db_path,
+            "UPDATE metadata SET value = ? WHERE key = 'tip_hash'",
+            ("ab" * 32,),
+        )
+        report = verify_chain_db(db_path)
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 10
+
+    def test_declared_legacy_pair_absent_passes_with_detail(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        _corrupt(db_path, "DELETE FROM metadata WHERE key IN ('height', 'tip_hash')")
+        report = verify_chain_db(db_path)
+        assert report.outcome is ChainVerificationOutcome.FULLY_VERIFIED
+        check10 = next(c for c in report.checks if c.number == 10)
+        assert check10.status.value == "pass"
+        assert "legacy" in check10.detail
+
+    def test_check_exception_becomes_typed_failure(self, tmp_path, monkeypatch) -> None:
+        """Any exception inside a check is a typed FAIL with coordinates."""
+        from doin_node.blockchain import verify as verify_mod
+
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+
+        def boom(self) -> None:
+            raise RuntimeError("adversarial input crashed the check")
+
+        monkeypatch.setattr(verify_mod._Verifier, "_check_9_snapshots", boom)
+        report = verify_chain_db(db_path)  # must NOT raise
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 9
+        assert report.first_failure.check_name == "snapshots_match_blocks"
+        assert "RuntimeError" in report.first_failure.reason
+        check10 = next(c for c in report.checks if c.number == 10)
+        assert check10.status.value == "skipped"
+
+
+# ── Finding 210: tamper-evident append binding ───────────────────────
+
+class TestTamperEvidentAppendBinding:
+    """Appends are bound to the verified history via the data_version cursor."""
+
+    def _open_bound(self, db_path: Path) -> ChainDB:
+        db = ChainDB(db_path)
+        db.open()
+        report = verify_chain_db(db_path)
+        assert report.ok
+        db.bind_verified_cursor(report.height, report.tip_hash or "")
+        return db
+
+    def test_auditor_counterexample_append_refused_after_history_tamper(
+        self, tmp_path
+    ) -> None:
+        """verify -> tamper history via SECOND connection -> append REFUSED."""
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        db = self._open_bound(db_path)
+        _corrupt(
+            db_path,
+            "UPDATE transactions SET payload = ? WHERE block_index = 1 AND tx_index = 0",
+            (json.dumps({"n": 999999}),),
+        )
+        tip = db.get_block(db.height - 1)
+        nxt = _block_on(tip, [_tx(900)])
+        with pytest.raises(ChainBindingError) as ei:
+            db.append_block(nxt)
+        assert "data_version" in str(ei.value)
+        assert db.height == 5  # nothing was committed
+        db.close()
+        report = verify_chain_db(db_path)
+        assert report.outcome is ChainVerificationOutcome.FAILED
+        assert report.first_failure.check_number == 7
+
+    def test_bound_appends_proceed_and_advance_cursor(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        db = self._open_bound(db_path)
+        start_height = db.height
+        prev = db.get_block(start_height - 1)
+        for i in range(2):
+            block = _block_on(prev, [_tx(700 + i)])
+            db.append_block(block)
+            prev = block
+        cursor = db.verified_cursor
+        assert cursor["height"] == start_height + 2
+        assert cursor["tip_hash"] == prev.hash
+        assert db.cursor_status()["intact"] is True
+        db.close()
+        assert verify_chain_db(db_path).ok
+
+    def test_rollback_rebinds_cursor_and_allows_new_branch(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        db = self._open_bound(db_path)
+        db.rollback_to(2)
+        assert db.verified_cursor["height"] == 3
+        branch = _block_on(db.get_block(2), [_tx(800)])
+        db.append_block(branch)  # legitimate same-connection reorg append
+        assert db.verified_cursor["tip_hash"] == branch.hash
+        db.close()
+        assert verify_chain_db(db_path).ok
+
+    def test_metadata_pair_break_refused_at_append_even_unbound(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        db = ChainDB(db_path)
+        db.open()  # no cursor bound (legacy/dev path)
+        _corrupt(db_path, "DELETE FROM metadata WHERE key = 'tip_hash'")
+        nxt = _block_on(db.get_block(db.height - 1), [_tx(810)])
+        with pytest.raises(ChainBindingError) as ei:
+            db.append_block(nxt)
+        assert "pair" in str(ei.value)
+        db.close()
+
+    def test_cursor_refuses_binding_to_mismatched_claim(self, tmp_path) -> None:
+        db_path = tmp_path / "chain.db"
+        _build_chain(db_path)
+        db = ChainDB(db_path)
+        db.open()
+        with pytest.raises(ChainBindingError):
+            db.bind_verified_cursor(999, "ff" * 64)
+        db.close()
+
+    async def test_node_startup_binds_cursor_and_detects_drift(self, tmp_path) -> None:
+        _build_chain(tmp_path / "chain.db")
+        node = UnifiedNode(_node_config(tmp_path, port=18492))
+        await node.start()
+        try:
+            assert node.chaindb.verified_cursor is not None
+            assert node.chaindb.cursor_status()["intact"] is True
+            assert node._fresh_verification_report() is not None
+            # External tamper: the report is no longer fresh evidence.
+            _corrupt(
+                tmp_path / "chain.db",
+                "UPDATE transactions SET payload = ? WHERE block_index = 2 AND tx_index = 0",
+                (json.dumps({"n": 31337}),),
+            )
+            assert node.chaindb.cursor_status()["intact"] is False
+            assert node._fresh_verification_report() is None
+        finally:
+            await node.stop()
+
+    async def test_background_full_verify_quarantines_on_failure(self, tmp_path) -> None:
+        _build_chain(tmp_path / "chain.db")
+        node = UnifiedNode(_node_config(tmp_path, port=18493))
+        await node.start()
+        try:
+            assert node.quarantine_report is None
+            _corrupt(
+                tmp_path / "chain.db",
+                "UPDATE transactions SET payload = ? WHERE block_index = 1 AND tx_index = 1",
+                (json.dumps({"n": 424242}),),
+            )
+            await node._run_full_chain_verify()
+            assert node.quarantine_report is not None
+            assert node.quarantine_report.first_failure.check_number == 7
+            # Quarantine refuses generation, appends, archive and OLAP.
+            assert (await node.try_generate_block()) is None
+            assert node._fresh_verification_report() is None
+            tip = node.chaindb.get_block(node.chaindb.height - 1)
+            with pytest.raises(ChainQuarantined):
+                node._append_block(_block_on(tip, [_tx(950)]))
         finally:
             await node.stop()

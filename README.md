@@ -117,7 +117,20 @@ and defaults are defined there.
 | Role loops | `optimizer_loop_interval`, `eval_poll_interval`, `eval_max_concurrent` |
 | Shared population | `shared_min_peers`, `shared_claim_timeout`, `shared_claim_result_patience`, `shared_claim_settle_seconds`, `shared_claim_confirmation_rounds`, `shared_initialize_before_peers`, `shared_peer_wait_timeout` |
 | Storage / analytics | `storage_backend` (`sqlite` or `json`), `db_path`, `snapshot_interval`, `prune_keep_blocks`, `experiment_stats_file`, `olap_db_path`, `dashboard_enabled`, `reset_chain` |
+| Chain identity / verification | `chain_id`, `genesis_hash`, `verify_chain_on_start`, `on_verification_failure` (`exit` or `quarantine`), `chain_verify_interval` |
 | Economics (optional) | `fee_market_enabled`, `fee_config` |
+
+**Chain identity contract (finding 211).** `chain_id` and `genesis_hash` are
+REQUIRED, as a pair, in any config where a domain sets
+`"shared_population": true`: every machine participating in the same shared
+population must carry the identical two values, and the config materializer
+(`load_config` in `cli.py`) fails closed with a typed
+`ChainIdentityConfigError` when either is missing or `genesis_hash` is not
+64 lowercase hex characters. Single-node/dev configs may omit them; the
+deterministic defaults are then derived with a logged warning.
+[`examples/fleet_shared_population_identity_template.json`](examples/fleet_shared_population_identity_template.json)
+is the canonical template demonstrating the contract (it pins the existing
+fleet chain's identity explicitly).
 
 The `domains` list assigns roles and plugins per domain (parsed into
 `DomainRole` by [`src/doin_node/cli.py`](src/doin_node/cli.py)):

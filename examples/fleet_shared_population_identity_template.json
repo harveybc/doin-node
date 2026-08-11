@@ -1,0 +1,42 @@
+{
+    "$doc": "CANONICAL fleet template (finding 211): every shared-population/production config MUST pin one explicit, network-wide chain identity. 'chain_id' and 'genesis_hash' below are REQUIRED whenever any domain sets 'shared_population': true — the config materializer fails closed (typed ChainIdentityConfigError) if either is missing. All machines participating in the same shared population must carry these two values IDENTICALLY. The values shown pin the existing fleet chain: the deterministic epoch genesis and its derived chain ID, now stated explicitly instead of silently defaulted.",
+    "chain_id": "doin-4e19257e8941",
+    "genesis_hash": "4e19257e8941caec2ec6a4d581a981a533ab5728c11e58c3d13040049e3cd6d5",
+    "host": "0.0.0.0",
+    "port": 8470,
+    "data_dir": "./doin-data-fleet",
+    "bootstrap_peers": [
+        "192.168.0.107:8470",
+        "192.168.0.106:8470"
+    ],
+    "storage_backend": "sqlite",
+    "verify_chain_on_start": true,
+    "on_verification_failure": "exit",
+    "chain_verify_interval": 3600,
+    "network_protocol": "flooding",
+    "discovery_enabled": true,
+    "fee_market_enabled": false,
+    "reset_chain": false,
+    "require_deterministic_seed": true,
+    "domains": [
+        {
+            "domain_id": "example-shared-domain",
+            "optimize": true,
+            "evaluate": true,
+            "optimization_plugin": "binary_predictor",
+            "inference_plugin": "binary_predictor",
+            "target_performance": 999.0,
+            "metric_type": "binary",
+            "optimization_config": {
+                "shared_population": true,
+                "shared_population_size": 30,
+                "population_size": 30,
+                "ga_seed": 42,
+                "optimization_patience": 3
+            },
+            "param_bounds": {
+                "learning_rate": [1e-05, 0.01]
+            }
+        }
+    ]
+}

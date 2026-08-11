@@ -12,7 +12,12 @@ typed :class:`~doin_core.models.verification.ChainVerificationReport`:
  7. every transaction-content hash;
  8. every Merkle root;
  9. snapshots against existing block index/hash;
-10. metadata height/tip against verified rows.
+10. metadata height/tip against verified rows — valid AS A PAIR: both
+    absent (declared legacy) or both present and matching (finding 209).
+
+Every check executes under a typed-failure wrapper: an exception raised
+inside a check is recorded as a FAIL for that check number with
+coordinates — the verifier never crashes on adversarial input.
 
 Pruning semantics: a chain whose transaction bodies were pruned is NEVER
 ``fully_verified``. When (and only when) the recorded checkpoint
@@ -102,6 +107,16 @@ class ChainStartupRefused(Exception):
             f"db={report.db_path}"
         )
         self.report = report
+
+
+class ChainQuarantined(ChainStartupRefused):
+    """Typed refusal: the node is quarantined after a failed verification.
+
+    Raised by runtime paths (append, archive, projection) once a
+    background/periodic full verification has failed — the chain is
+    read-only evidence until a fresh successful verification report
+    exists. Carries the failing typed report (finding 210).
+    """
 
 
 def _header_hash_from_row(row: sqlite3.Row) -> str:
@@ -227,28 +242,51 @@ class _Verifier:
             self._check_10_metadata_height_tip,
         ]
         for i, check in enumerate(checks, start=1):
-            check()
+            number, name = CHECK_NAMES[i - 1]
+            try:
+                check()
+            except Exception as e:  # noqa: BLE001
+                # Finding 209: a raised exception inside any check is a
+                # verifier defect against adversarial input — it must
+                # surface as a typed FAIL with the check's number and
+                # coordinates, never crash the caller.
+                if not self._stopped:
+                    self._record(
+                        number, name, CheckStatus.FAIL,
+                        f"check raised {type(e).__name__} instead of a "
+                        f"typed result: {e}",
+                    )
+                self._stopped = True
             if self._stopped:
                 self._skip_remaining(i + 1)
                 break
         else:
             if self.pruned_body_blocks:
-                pruned_before = int(self.pruning_meta[META_PRUNED_BEFORE])  # type: ignore[arg-type]
-                checkpoint_index = int(self.pruning_meta[META_CHECKPOINT_INDEX])  # type: ignore[arg-type]
-                tip = self.blocks[-1]
-                self.report.outcome = (
-                    ChainVerificationOutcome.VERIFIED_SUFFIX_FROM_CHECKPOINT
-                )
-                self.report.verified_suffix = VerifiedSuffixFromCheckpoint(
-                    checkpoint_block_index=checkpoint_index,
-                    checkpoint_block_hash=str(
-                        self.pruning_meta[META_CHECKPOINT_HASH]
-                    ),
-                    suffix_start_index=pruned_before,
-                    suffix_end_index=tip["block_index"],
-                    suffix_tip_hash=tip["hash"],
-                    pruned_body_blocks=len(self.pruned_body_blocks),
-                )
+                try:
+                    pruned_before = int(self.pruning_meta[META_PRUNED_BEFORE])  # type: ignore[arg-type]
+                    checkpoint_index = int(self.pruning_meta[META_CHECKPOINT_INDEX])  # type: ignore[arg-type]
+                    tip = self.blocks[-1]
+                    self.report.outcome = (
+                        ChainVerificationOutcome.VERIFIED_SUFFIX_FROM_CHECKPOINT
+                    )
+                    self.report.verified_suffix = VerifiedSuffixFromCheckpoint(
+                        checkpoint_block_index=checkpoint_index,
+                        checkpoint_block_hash=str(
+                            self.pruning_meta[META_CHECKPOINT_HASH]
+                        ),
+                        suffix_start_index=pruned_before,
+                        suffix_end_index=tip["block_index"],
+                        suffix_tip_hash=tip["hash"],
+                        pruned_body_blocks=len(self.pruned_body_blocks),
+                    )
+                except Exception as e:  # noqa: BLE001
+                    number, name = CHECK_NAMES[5]
+                    self._record(
+                        number, name, CheckStatus.FAIL,
+                        "pruning provenance could not be finalized as a "
+                        f"typed suffix commitment ({type(e).__name__}: {e})",
+                        block_index=self.pruned_body_blocks[0],
+                    )
             else:
                 self.report.outcome = ChainVerificationOutcome.FULLY_VERIFIED
 
@@ -642,6 +680,14 @@ class _Verifier:
         )
 
     def _check_10_metadata_height_tip(self) -> None:
+        """Metadata (height, tip_hash) must be valid AS A PAIR (finding 209).
+
+        Exactly two acceptable states: both members absent (a declared
+        legacy database — PASS with an explicit detail) or both present
+        and matching the verified rows. One missing member, a
+        non-integer height, or a mismatching value is a typed FAIL —
+        never an uncaught exception.
+        """
         number, name = CHECK_NAMES[9]
         tip = self.blocks[-1]
         claimed_height = self._meta(META_HEIGHT)
@@ -649,11 +695,31 @@ class _Verifier:
         if claimed_height is None and claimed_tip is None:
             self._record(
                 number, name, CheckStatus.PASS,
-                "no metadata height/tip claim recorded (legacy database); "
-                f"derived height={tip['block_index'] + 1} from verified rows",
+                "no metadata height/tip claim recorded (declared legacy "
+                f"database); derived height={tip['block_index'] + 1} from "
+                "verified rows",
             )
             return
-        if claimed_height is not None and int(claimed_height) != tip["block_index"] + 1:
+        if claimed_height is None or claimed_tip is None:
+            missing = META_HEIGHT if claimed_height is None else META_TIP_HASH
+            present = META_TIP_HASH if claimed_height is None else META_HEIGHT
+            self._record(
+                number, name, CheckStatus.FAIL,
+                f"metadata (height, tip_hash) must be valid as a pair: "
+                f"{present!r} is recorded but {missing!r} is missing",
+                block_index=tip["block_index"],
+            )
+            return
+        try:
+            claimed_height_int = int(claimed_height)
+        except (TypeError, ValueError):
+            self._record(
+                number, name, CheckStatus.FAIL,
+                f"metadata height {claimed_height!r} is not an integer",
+                block_index=tip["block_index"],
+            )
+            return
+        if claimed_height_int != tip["block_index"] + 1:
             self._record(
                 number, name, CheckStatus.FAIL,
                 f"metadata height {claimed_height} does not match verified "
@@ -661,7 +727,7 @@ class _Verifier:
                 block_index=tip["block_index"],
             )
             return
-        if claimed_tip is not None and claimed_tip != tip["hash"]:
+        if claimed_tip != tip["hash"]:
             self._record(
                 number, name, CheckStatus.FAIL,
                 "metadata tip_hash does not match the verified tip",

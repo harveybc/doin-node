@@ -18,18 +18,45 @@ from pathlib import Path
 import pytest
 
 from doin_node import cli
-from doin_node.unified import DomainRole, UnifiedNodeConfig
+from doin_node.unified import (
+    ChainIdentityConfigError,
+    DomainRole,
+    UnifiedNodeConfig,
+)
 from doin_core.consensus import IncentiveConfig
 from doin_core.models import ResourceLimits
 from doin_core.models.fee_market import FeeConfig
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
+# The existing fleet chain's identity, stated explicitly (finding 211):
+# deterministic epoch genesis and its derived chain ID.
+FLEET_CHAIN_ID = "doin-4e19257e8941"
+FLEET_GENESIS_HASH = (
+    "4e19257e8941caec2ec6a4d581a981a533ab5728c11e58c3d13040049e3cd6d5"
+)
+
 
 def _write(tmp_path: Path, obj: dict) -> str:
     p = tmp_path / "node.json"
     p.write_text(json.dumps(obj))
     return str(p)
+
+
+def _load_with_fleet_identity(example_path: Path, tmp_path: Path):
+    """Load a legacy shared-population example under the 211 contract.
+
+    The 97 legacy example JSONs predate the explicit-identity requirement
+    and stay untouched as read-only evidence; materializing them now
+    requires pinning the fleet identity, which this helper adds without
+    changing any other key.
+    """
+    raw = json.loads(Path(example_path).read_text())
+    raw.setdefault("chain_id", FLEET_CHAIN_ID)
+    raw.setdefault("genesis_hash", FLEET_GENESIS_HASH)
+    p = tmp_path / Path(example_path).name
+    p.write_text(json.dumps(raw))
+    return cli.load_config(str(p), {})
 
 
 # A config that sets EVERY top-level field to a non-default value so a dropped
@@ -65,6 +92,9 @@ FULL_NODE = {
     "db_path": "/tmp/x/chain.db",
     "snapshot_interval": 42,
     "prune_keep_blocks": 55,
+    "chain_id": "test-chain-full",
+    "genesis_hash": "cd" * 32,
+    "chain_verify_interval": 777.0,
     "network_protocol": "flooding",
     "gossip_heartbeat_interval": 2.5,
     "discovery_enabled": False,
@@ -153,6 +183,9 @@ def test_r05_every_top_level_field_materialized(tmp_path):
     assert cfg.db_path == "/tmp/x/chain.db"
     assert cfg.snapshot_interval == 42
     assert cfg.prune_keep_blocks == 55
+    assert cfg.chain_id == "test-chain-full"
+    assert cfg.genesis_hash == "cd" * 32
+    assert cfg.chain_verify_interval == 777.0
     assert cfg.network_protocol == "flooding"
     assert cfg.gossip_heartbeat_interval == 2.5
     assert cfg.discovery_enabled is False
@@ -213,8 +246,10 @@ def test_r01_r02_r03_r04_every_domain_field_materialized(tmp_path):
     assert role.incentive_config.max_bonus_multiplier == 1.3
 
 
-def test_r13_omega_example_values():
-    cfg = cli.load_config(str(EXAMPLES / "predictor_omega_node_tft_binary_neat.json"), {})
+def test_r13_omega_example_values(tmp_path):
+    cfg = _load_with_fleet_identity(
+        EXAMPLES / "predictor_omega_node_tft_binary_neat.json", tmp_path
+    )
     assert cfg.storage_backend == "sqlite"
     assert cfg.network_protocol == "flooding"
     assert cfg.discovery_enabled is True
@@ -227,8 +262,10 @@ def test_r13_omega_example_values():
     assert role.higher_is_better is False
 
 
-def test_r13_gamma_example_three_distinct_subtrees():
-    cfg = cli.load_config(str(EXAMPLES / "predictor_gamma_node_tft_binary_neat.json"), {})
+def test_r13_gamma_example_three_distinct_subtrees(tmp_path):
+    cfg = _load_with_fleet_identity(
+        EXAMPLES / "predictor_gamma_node_tft_binary_neat.json", tmp_path
+    )
     role = cfg.domains[0]
     # Representative characteristic fields (not just identity)
     assert role.optimization_config["shared_population"] is True
@@ -257,8 +294,10 @@ def test_r13_gamma_example_three_distinct_subtrees():
     "worker_config",
     ["omega_node.json", "dragon_node.json", "gamma_5070ti_node.json", "gamma_5090_node.json"],
 )
-def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_config):
-    cfg = cli.load_config(str(EXAMPLES / "trading" / campaign / worker_config), {})
+def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_config, tmp_path):
+    cfg = _load_with_fleet_identity(
+        EXAMPLES / "trading" / campaign / worker_config, tmp_path
+    )
     assert cfg.shared_min_peers == 3
     assert cfg.shared_peer_wait_timeout == 60
     assert cfg.shared_claim_settle_seconds == 2
@@ -301,10 +340,87 @@ def test_phase_1_fleet_configs_require_the_complete_swarm(campaign, worker_confi
     "worker_config",
     ["omega_node.json", "dragon_node.json", "gamma_5070ti_node.json", "gamma_5090_node.json"],
 )
-def test_phase_1_v2_fleet_initializes_before_full_compute_barrier(campaign, worker_config):
-    cfg = cli.load_config(str(EXAMPLES / "trading" / campaign / worker_config), {})
+def test_phase_1_v2_fleet_initializes_before_full_compute_barrier(campaign, worker_config, tmp_path):
+    cfg = _load_with_fleet_identity(
+        EXAMPLES / "trading" / campaign / worker_config, tmp_path
+    )
     assert cfg.shared_initialize_before_peers is True
     assert cfg.shared_min_peers == 3
+
+
+# ── Finding 211: explicit chain identity for shared populations ──────
+
+@pytest.mark.parametrize(
+    "fleet_example",
+    [
+        "predictor_omega_node_cnn_direction_neat.json",
+        "predictor_gamma_node_tft_binary_neat.json",
+        "trading/phase_1_asset_policy_btcusdt_1h_shared_v1/omega_node.json",
+    ],
+)
+def test_finding_211_shared_population_config_without_identity_refuses(fleet_example):
+    """A real fleet shared-population config without chain identity fails closed."""
+    with pytest.raises(ChainIdentityConfigError) as ei:
+        cli.load_config(str(EXAMPLES / fleet_example), {})
+    msg = str(ei.value)
+    assert "chain_id" in msg and "genesis_hash" in msg
+
+
+def test_finding_211_missing_single_member_refuses(tmp_path):
+    base = {
+        "domains": [{
+            "domain_id": "d-shared",
+            "optimize": True,
+            "optimization_config": {"shared_population": True},
+        }],
+    }
+    only_chain_id = dict(base, chain_id=FLEET_CHAIN_ID)
+    with pytest.raises(ChainIdentityConfigError) as ei:
+        cli.load_config(_write(tmp_path, only_chain_id), {})
+    assert "genesis_hash" in str(ei.value)
+
+    only_genesis = dict(base, genesis_hash=FLEET_GENESIS_HASH)
+    with pytest.raises(ChainIdentityConfigError) as ei:
+        cli.load_config(_write(tmp_path, only_genesis), {})
+    assert "chain_id" in str(ei.value)
+
+
+def test_finding_211_malformed_genesis_hash_refuses(tmp_path):
+    obj = {
+        "chain_id": FLEET_CHAIN_ID,
+        "genesis_hash": "NOT-64-HEX",
+        "domains": [{
+            "domain_id": "d-shared",
+            "optimize": True,
+            "optimization_config": {"shared_population": True},
+        }],
+    }
+    with pytest.raises(ChainIdentityConfigError):
+        cli.load_config(_write(tmp_path, obj), {})
+
+
+def test_finding_211_canonical_identity_template_materializes():
+    """The one canonical example template demonstrates the contract."""
+    cfg = cli.load_config(
+        str(EXAMPLES / "fleet_shared_population_identity_template.json"), {}
+    )
+    assert cfg.chain_id == FLEET_CHAIN_ID
+    assert cfg.genesis_hash == FLEET_GENESIS_HASH
+    assert cfg.domains[0].optimization_config["shared_population"] is True
+
+
+def test_finding_211_single_node_dev_config_may_omit_identity(tmp_path):
+    """No shared population -> identity may derive (single-node/dev mode)."""
+    obj = {
+        "domains": [{
+            "domain_id": "d-solo",
+            "optimize": True,
+            "optimization_config": {"n_params": 3},
+        }],
+    }
+    cfg = cli.load_config(_write(tmp_path, obj), {})
+    assert cfg.chain_id == ""
+    assert cfg.genesis_hash == ""
 
 
 def test_r09_r10_absent_new_subtrees_default_empty(tmp_path):

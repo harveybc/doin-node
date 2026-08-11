@@ -125,6 +125,9 @@ async def test_ordered_shared_initialization_precedes_compute_peer_barrier() -> 
         domains=[role],
         shared_min_peers=3,
         shared_initialize_before_peers=True,
+        # Finding 211: shared-population configs must pin chain identity.
+        chain_id="doin-test-ordered-shared",
+        genesis_hash="ab" * 32,
     ))
     events = []
 
