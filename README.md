@@ -1,6 +1,6 @@
 # doin-node
 
-**Status: ACTIVE — the unified participant runtime of the DOIN family.**
+**Status: ACTIVE — the unified participant runtime.**
 It supersedes the retired standalone
 [doin-optimizer](https://github.com/harveybc/doin-optimizer) and
 [doin-evaluator](https://github.com/harveybc/doin-evaluator) clients: optimizer,
@@ -13,15 +13,27 @@ per machine loads a JSON config that selects, per optimization domain, whether
 this machine optimizes, evaluates, or only relays; which plugins implement the
 domain; and how it joins the peer network. Consensus is proof-of-optimization:
 blocks are generated when verified optimization improvements cross a dynamic
-threshold, so a chain of blocks doubles as an auditable record of optimization
-progress, mirrored into an embedded OLAP star schema for analysis.
+threshold. Per-round optimization metrics are recorded to an embedded SQLite
+star schema as the node runs.
+
+## Run this with an AI agent
+
+Paste this into Claude Code, Cursor, Codex, GitHub Copilot or any coding agent
+with shell access:
+
+> Read `AGENTS.md` in this repository and follow the **Agent quickstart**
+> section end to end: set up the environment, run the smoke test, start the
+> example single-node quadratic run, then tell me the exact URL or file paths
+> where I can see the results and one query I should try first.
+
+`AGENTS.md` is the [agents.md](https://agents.md) convention, read natively by
+most coding agents.
 
 ## Role and non-responsibilities
 
-**Role:** everything needed to *participate*: the event loops for the
-optimizer/evaluator roles, HTTP transport and peer protocols, blockchain
-storage and sync, shared-population coordination, the monitoring dashboard,
-and the OLAP-on-blockchain analytics layer
+**Role:** the event loops for the optimizer/evaluator roles, HTTP transport and
+peer protocols, blockchain storage and sync, shared-population coordination,
+the monitoring dashboard, and the analytics layer
 ([`src/doin_node/stats/`](src/doin_node/stats)).
 
 **Not in this repository:**
@@ -36,8 +48,7 @@ and the OLAP-on-blockchain analytics layer
 - Domain optimizers/models remain external installable packages (for example
   [predictor](https://github.com/harveybc/predictor) and
   [agent-multi](https://github.com/harveybc/agent-multi)) that work locally
-  without DOIN. DOIN extends local optimization collaboratively — it does not
-  absorb domain concerns.
+  without DOIN.
 
 ## Architecture
 
@@ -48,7 +59,7 @@ and the OLAP-on-blockchain analytics layer
 | [`src/doin_node/blockchain/`](src/doin_node/blockchain) | Chain state, block application, sync |
 | [`src/doin_node/network/`](src/doin_node/network) | aiohttp transport, flooding and gossipsub protocols, peer discovery |
 | [`src/doin_node/storage/`](src/doin_node/storage) | Chain persistence backends (`sqlite` via aiosqlite, or `json`) |
-| [`src/doin_node/stats/`](src/doin_node/stats) | **OLAP-on-blockchain**: star schema (v3: `dim_domain`, `dim_experiment`, `fact_round`, `fact_experiment_summary`, `fact_chain_optimae`), experiment tracker (CSV + SQLite dual-write), chain metrics, SQLite→PostgreSQL sync |
+| [`src/doin_node/stats/`](src/doin_node/stats) | OLAP star schema (v3: `dim_domain`, `dim_experiment`, `fact_round`, `fact_experiment_summary`, `fact_chain_optimae`), experiment tracker (CSV + SQLite dual-write), chain metrics, SQLite→PostgreSQL sync. Note that `fact_chain_optimae` is populated only by `ingest_from_chain()`, which currently has no runtime caller |
 | [`src/doin_node/dashboard/`](src/doin_node/dashboard) | Web monitoring UI served at `/dashboard` |
 | [`src/doin_node/scheduling/`](src/doin_node/scheduling), [`validation/`](src/doin_node/validation), [`benchmarks/`](src/doin_node/benchmarks) | GPU/job scheduling, input validation, benchmark harnesses |
 
@@ -78,9 +89,6 @@ git clone https://github.com/harveybc/doin-node.git
 pip install -e doin-core -e doin-plugins -e doin-node
 ```
 
-Verified 2026-08-10 in the maintainer's Python 3.12 environment: importing
-`doin_node` succeeds (version `0.1.0`) and the smoke run below works.
-
 ## Quickstart: single-node quadratic run
 
 Runs one process that optimizes *and* evaluates the self-contained quadratic
@@ -93,12 +101,15 @@ doin-node --config examples/quadratic_single_node.json
 # equivalently: python -m doin_node.cli --config examples/quadratic_single_node.json
 ```
 
-Executed 2026-08-10 (30-second smoke): the node created OLAP schema v3 at
-`doin-data-single/olap.db`, registered the `quadratic` domain
-(optimize=evaluate=true), loaded the `simple_quadratic`
-optimizer/evaluator/synthetic plugins, initialized a chain with a genesis
-block, passed its port self-check on `:8470`, served the dashboard at
-`http://localhost:8470/dashboard`, and shut down cleanly on Ctrl+C.
+The node creates OLAP schema v3 at `doin-data-single/olap.db`, registers the
+`quadratic` domain (optimize=evaluate=true), loads the `simple_quadratic`
+optimizer/evaluator/synthetic plugins, initializes a chain with a genesis
+block, and serves the dashboard at `http://localhost:8470/dashboard`. Stop it
+with Ctrl+C.
+
+Note that starting a node kills any process **owned by the same user** already
+listening on its port (`Transport.start()` → `_kill_stale_process_on_port`).
+Check the port is free, or pass `--port`.
 
 Useful CLI flags (see `doin-node --help`): `--port`, `--data-dir`, `--peers`,
 `--identity`, `--stats-file`, `--olap-db`, `--reset-chain`, `--log-level`.
@@ -182,9 +193,10 @@ pip install -e .[dev]
 pytest -q
 ```
 
-Observed 2026-08-10: `pytest -q --collect-only | tail -1` reports
-**409 tests collected** in [`tests/`](tests). (Collection count only; the full
-suite includes multi-node network tests and takes correspondingly longer.)
+`pytest -q` reports **409 passed** in about 10 seconds, across
+[`tests/`](tests). `ruff` and `mypy` are configured in `pyproject.toml` and
+shipped in the dev extras, but CI runs neither, so the codebase is not known to
+be lint- or type-clean.
 
 ## Artifacts, outputs, and reproducibility
 
@@ -218,8 +230,7 @@ a completed campaign are kept under [`examples/results/`](examples/results).
   not expose node ports to untrusted networks.
 - No exchange, broker, or API credentials are required or read by this
   repository. Trading domains operate purely on historical/synthetic data
-  through simulation and backtesting; no live orders are placed. Nothing here
-  is financial advice.
+  through simulation and backtesting; no live orders are placed.
 
 ## Limitations and legacy notes
 
