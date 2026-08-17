@@ -26,7 +26,7 @@ unifies the optimizer, evaluator and network roles that the thesis and early
 repositories represented as separate participants.
 
 Read the original thesis in the doin-core repository:
-[PDF](https://github.com/harveybc/doin-core/blob/master/docs/Hybrid-Model%20Decentralized%20Evolutionary%20Computing%20Using%20Blockchain%20and%20Proof-of-Work%20Optimization.pdf).
+[Hybrid-Model Decentralized Evolutionary Computing Using Blockchain and Proof-of-Work Optimization](https://github.com/harveybc/doin-core/blob/master/docs/Hybrid-Model%20Decentralized%20Evolutionary%20Computing%20Using%20Blockchain%20and%20Proof-of-Work%20Optimization.pdf).
 
 ## Run this with an AI agent
 
