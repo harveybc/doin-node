@@ -16,6 +16,18 @@ blocks are generated when verified optimization improvements cross a dynamic
 threshold. Per-round optimization metrics are recorded to an embedded SQLite
 star schema as the node runs.
 
+## Research origin
+
+DOIN derives from Harvey Demian Bastidas Caicedo's 2018 Master's in
+Engineering thesis at Pontificia Universidad Javeriana Cali, *Computación
+Evolutiva Descentralizada de Modelo Híbrido usando Blockchain y Prueba de
+Trabajo de Optimización*. The present runtime is a later implementation: it
+unifies the optimizer, evaluator and network roles that the thesis and early
+repositories represented as separate participants.
+
+Read the original thesis in the doin-core repository:
+[PDF](https://github.com/harveybc/doin-core/blob/master/docs/Hybrid-Model%20Decentralized%20Evolutionary%20Computing%20Using%20Blockchain%20and%20Proof-of-Work%20Optimization.pdf).
+
 ## Run this with an AI agent
 
 Paste this into Claude Code, Cursor, Codex, GitHub Copilot or any coding agent
