@@ -30,6 +30,13 @@ dev = [
 
 [project.scripts]
 doin-node = "doin_node.cli:main"
+doin-predictor-candidate = "doin_node.predictor_bridge:main"
+
+[project.entry-points."doin.optimization"]
+predictor_candidate = "doin_node.predictor_bridge:PredictorCandidateBridge"
+
+[project.entry-points."doin.inference"]
+predictor_candidate = "doin_node.predictor_bridge:PredictorCandidateBridge"
 
 [project.urls]
 Homepage = "https://github.com/harveybc/doin-node"
