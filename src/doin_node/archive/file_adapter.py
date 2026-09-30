@@ -15,17 +15,34 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from doin_core.archive.body import ArchiveEnvelope, ArchiveRefusal, digest_bytes
+from doin_core.archive.body import (
+    ArchiveEnvelope,
+    ArchiveRefusal,
+    VerifiedArchive,
+    digest_bytes,
+    verify_archive_bytes,
+    verify_envelope,
+)
 
 LAKE_WRITE_FACT = (
-    "data_lake_service.LakeBackend declares no byte-upload capability. "
-    "write_metrics stores a consumer report, not resource bytes. "
-    "data_gov.resource_registration.ResourceRegistry.append writes one catalog "
-    "JSON row and does not copy resource bytes. This file adapter is the "
-    "disposable shadow store for the bytes."
+    "data_lake_service.LakeBackend write_metrics stores a consumer report, not "
+    "resource bytes. data_gov.resource_registration.ResourceRegistry.append writes "
+    "one catalog JSON row and does not copy resource bytes. A governed byte store "
+    "is a separate capability and is not a deployed lake. This file adapter is a "
+    "disposable directory, not a lake."
+)
+MANIFEST_IDENTITY_RULE = (
+    "BODY_DIGEST identifies the block body bytes and does not include candidates. "
+    "MANIFEST_DIGEST identifies one binding of section digests, sizes and inventory. "
+    "A later manifest for the same body is a successor: it is stored beside the first "
+    "and does not overwrite it. Putting the same bytes again is a retry. "
+    "A contradiction, the same digest with different bytes or an index that disagrees, "
+    "is CONFLICT and is not a retry."
 )
 
 
@@ -50,34 +67,74 @@ class FileArchiveAdapter:
         self.root = Path(root)
 
     def put(self, envelope: ArchiveEnvelope) -> ArchiveReceipt:
-        if digest_bytes(envelope.body) != envelope.body_digest:
-            raise ArchiveRefusal("DIGEST_MISMATCH")
-        if digest_bytes(envelope.manifest) != envelope.manifest_digest:
-            raise ArchiveRefusal("DIGEST_MISMATCH")
-        self._store("objects", envelope.body_digest, envelope.body)
-        self._store("manifests", envelope.manifest_digest, envelope.manifest)
-        for section in envelope.sections:
+        verified = verify_envelope(envelope)
+        self._store("objects", verified.body_digest, verified.body)
+        self._store("manifests", verified.manifest_digest, verified.manifest)
+        seen: set[str] = set()
+        for section in verified.sections:
+            if section.digest in seen:
+                continue
+            seen.add(section.digest)
             self._store("objects", section.digest, section.content)
-        existed = self._index_path(envelope.body_digest).is_file()
-        if existed:
-            self._require_same_index(envelope)
-        else:
-            self._write_index(envelope)
-        receipt = ArchiveReceipt(
-            body_digest=envelope.body_digest,
-            manifest_digest=envelope.manifest_digest,
-            header_hash=envelope.header_hash,
-            anchor=envelope.anchor,
-            already_stored=existed,
-            verified=False,
-        )
-        self.read_verified(receipt)
+        created = self._write_index(verified)
+        if not created:
+            self._require_same_index(verified)
+        reloaded = self.load_verified(verified.manifest_digest)
+        if reloaded.body != verified.body or reloaded.manifest != verified.manifest:
+            raise ArchiveRefusal("DIGEST_MISMATCH")
         return ArchiveReceipt(
-            body_digest=receipt.body_digest,
-            manifest_digest=receipt.manifest_digest,
-            header_hash=receipt.header_hash,
-            anchor=receipt.anchor,
-            already_stored=existed,
+            body_digest=verified.body_digest,
+            manifest_digest=verified.manifest_digest,
+            header_hash=verified.header_hash,
+            anchor=verified.anchor,
+            already_stored=not created,
+            verified=True,
+        )
+
+    def put_governed(self, envelope: ArchiveEnvelope, store: Any, *, grant: str) -> ArchiveReceipt:
+        """Write verified bytes through a governed store and read them back.
+
+        An empty grant is refused before any write. This directory is not a lake,
+        and a successful read-back is not a deployed lake.
+        """
+        if not isinstance(grant, str) or not grant:
+            raise ArchiveRefusal("GRANT_REQUIRED")
+        verified = verify_envelope(envelope)
+        written: list[tuple[bytes, str]] = [
+            (verified.body, verified.body_digest),
+            (verified.manifest, verified.manifest_digest),
+        ]
+        for section in verified.sections:
+            written.append((section.content, section.digest))
+        seen: set[str] = set()
+        for content, digest in written:
+            if digest in seen:
+                continue
+            seen.add(digest)
+            stored = store.put_bytes(content, grant=grant)
+            if stored != digest:
+                raise ArchiveRefusal("DIGEST_MISMATCH")
+        sections = {
+            section.digest: store.get_bytes(section.digest, grant=grant)
+            for section in verified.sections
+        }
+        again = verify_archive_bytes(
+            body=store.get_bytes(verified.body_digest, grant=grant),
+            manifest=store.get_bytes(verified.manifest_digest, grant=grant),
+            sections=sections,
+        )
+        if (
+            again.body_digest != verified.body_digest
+            or again.manifest_digest != verified.manifest_digest
+            or again.chain_verified
+        ):
+            raise ArchiveRefusal("DIGEST_MISMATCH")
+        return ArchiveReceipt(
+            body_digest=again.body_digest,
+            manifest_digest=again.manifest_digest,
+            header_hash=again.header_hash,
+            anchor=again.anchor,
+            already_stored=False,
             verified=True,
         )
 
@@ -88,18 +145,82 @@ class FileArchiveAdapter:
         return self._read_exact(self.root / "manifests" / _hex64(digest), digest)
 
     def read_verified(self, receipt: ArchiveReceipt) -> tuple[bytes, bytes]:
-        manifest = self.read_manifest(receipt.manifest_digest)
-        parsed = json.loads(manifest)
-        if parsed.get("manifest_digest") is not None:
+        verified = self.load_verified(receipt.manifest_digest)
+        if (
+            verified.body_digest != receipt.body_digest
+            or verified.header_hash != receipt.header_hash
+            or verified.anchor != receipt.anchor
+            or verified.chain_verified
+        ):
             raise ArchiveRefusal("DIGEST_MISMATCH")
-        if parsed.get("body_digest") != receipt.body_digest:
+        return verified.body, verified.manifest
+
+    def load_verified(self, manifest_digest: str) -> VerifiedArchive:
+        """Reconstruct one manifest from stored bytes. The envelope is not an input."""
+        manifest = self.read_manifest(manifest_digest)
+        try:
+            parsed = json.loads(manifest)
+        except ValueError as exc:
+            raise ArchiveRefusal("UNREADABLE") from exc
+        body_digest = parsed.get("body_digest") if isinstance(parsed, dict) else None
+        if not isinstance(body_digest, str):
             raise ArchiveRefusal("DIGEST_MISMATCH")
-        body = self.read_body(receipt.body_digest)
+        body = self.read_body(body_digest)
+        sections: dict[str, bytes] = {}
         for section in parsed.get("sections") or []:
-            content = self.read_body(section["digest"])
-            if len(content) != section["size"]:
-                raise ArchiveRefusal("DIGEST_MISMATCH")
-        return body, manifest
+            if not isinstance(section, dict) or not isinstance(section.get("digest"), str):
+                raise ArchiveRefusal("SECTION")
+            sections[section["digest"]] = self.read_body(section["digest"])
+        verified = verify_archive_bytes(body=body, manifest=manifest, sections=sections)
+        if verified.manifest_digest != manifest_digest or verified.chain_verified:
+            raise ArchiveRefusal("DIGEST_MISMATCH")
+        return verified
+
+    def recover(self) -> dict[str, Any]:
+        """Report hash failures. A truncated file is not marked verified and is not deleted."""
+        problems: list[dict[str, Any]] = []
+        checked = 0
+        for directory in ("objects", "manifests"):
+            root = self.root / directory
+            if not root.is_dir():
+                continue
+            for path in sorted(root.iterdir()):
+                if not path.is_file() or path.name.startswith("."):
+                    continue
+                checked += 1
+                try:
+                    data = path.read_bytes()
+                except OSError:
+                    problems.append({"name": path.name, "verified": False, "reason": "UNREADABLE"})
+                    continue
+                if digest_bytes(data) != path.name:
+                    problems.append(
+                        {
+                            "name": path.name,
+                            "verified": False,
+                            "reason": "TRUNCATED_OR_MISMATCH",
+                        }
+                    )
+        index = self.root / "index"
+        if index.is_dir():
+            for path in sorted(index.glob("*.json")):
+                checked += 1
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    digest = payload.get("manifest_digest") if isinstance(payload, dict) else None
+                    if digest != path.stem:
+                        raise ArchiveRefusal("INDEX_NAME")
+                    self.load_verified(digest)
+                except (OSError, ValueError, ArchiveRefusal) as exc:
+                    problems.append(
+                        {"name": path.name, "verified": False, "reason": type(exc).__name__}
+                    )
+        return {
+            "label": self.LABEL,
+            "checked": checked,
+            "verified": checked > 0 and not problems,
+            "problems": problems,
+        }
 
     def record_count(self) -> int:
         index = self.root / "index"
@@ -120,32 +241,35 @@ class FileArchiveAdapter:
         if stored != content:
             raise ArchiveRefusal("DIGEST_MISMATCH")
 
-    def _index_path(self, body_digest: str) -> Path:
-        return self.root / "index" / f"{_hex64(body_digest)}.json"
+    def _index_path(self, manifest_digest: str) -> Path:
+        return self.root / "index" / f"{_hex64(manifest_digest)}.json"
 
-    def _require_same_index(self, envelope: ArchiveEnvelope) -> None:
-        path = self._index_path(envelope.body_digest)
+    def _require_same_index(self, verified: VerifiedArchive) -> None:
+        path = self._index_path(verified.manifest_digest)
         try:
             stored = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise ArchiveRefusal("UNREADABLE") from exc
         if (
-            stored.get("body_digest") != envelope.body_digest
-            or stored.get("manifest_digest") != envelope.manifest_digest
+            stored.get("body_digest") != verified.body_digest
+            or stored.get("manifest_digest") != verified.manifest_digest
+            or stored.get("header_hash") != verified.header_hash
+            or stored.get("anchor") != verified.anchor
         ):
             raise ArchiveRefusal("CONFLICT")
 
-    def _write_index(self, envelope: ArchiveEnvelope) -> None:
+    def _write_index(self, verified: VerifiedArchive) -> bool:
         payload = {
             "schema": "doin.file_receipt.v1",
             "label": self.LABEL,
-            "body_digest": envelope.body_digest,
-            "manifest_digest": envelope.manifest_digest,
-            "header_hash": envelope.header_hash,
-            "anchor": envelope.anchor,
+            "body_digest": verified.body_digest,
+            "manifest_digest": verified.manifest_digest,
+            "header_hash": verified.header_hash,
+            "anchor": verified.anchor,
+            "rule": "MANIFEST_IDENTITY",
         }
-        _write_exclusive(
-            self._index_path(envelope.body_digest),
+        return _write_exclusive(
+            self._index_path(verified.manifest_digest),
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
         )
 
@@ -174,18 +298,22 @@ def _hex64(digest: str) -> str:
     return digest
 
 
-def _write_exclusive(path: Path, content: bytes) -> None:
+def _write_exclusive(path: Path, content: bytes) -> bool:
+    """Publish ``content`` atomically. A partial file never appears at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    try:
-        handle = os.open(path, flags, 0o644)
-    except FileExistsError:
-        return
+    handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".part-")
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
+        try:
+            os.link(temporary, path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass

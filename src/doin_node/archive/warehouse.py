@@ -16,10 +16,16 @@ import json
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from doin_core.archive.body import ArchiveEnvelope, ArchiveRefusal
+from doin_core.archive.body import (
+    ArchiveEnvelope,
+    ArchiveRefusal,
+    VerifiedArchive,
+    verify_envelope,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS dim_experiment (
@@ -34,9 +40,14 @@ CREATE TABLE IF NOT EXISTS fact_round (
     domain_id TEXT NOT NULL,
     round_number INTEGER NOT NULL,
     performance REAL NOT NULL,
+    parameters TEXT NOT NULL,
+    metric_schema TEXT NOT NULL,
     metrics TEXT NOT NULL
 );
 """
+
+_GAP = "NOT_COMPARABLE"
+_QUALIFIERS = ("scale", "unit", "horizon", "population", "reduction")
 
 
 class DisposableWarehouse:
@@ -51,11 +62,11 @@ class DisposableWarehouse:
         self._db_path = text
         if text != ":memory:":
             Path(text).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(text, check_same_thread=False)
+        self._lock = threading.RLock()
+        self._bulk = 0
+        self._conn = sqlite3.connect(text, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
-        self._conn.commit()
 
     def describe(self) -> dict[str, Any]:
         return {"label": self.LABEL, "backend": "sqlite-double", "postgres": False}
@@ -86,7 +97,6 @@ class DisposableWarehouse:
                    VALUES (?, ?, ?, ?)""",
                 (eid, domain_id, node_id, hostname),
             )
-            self._conn.commit()
         return eid
 
     def record_round(
@@ -113,39 +123,81 @@ class DisposableWarehouse:
         detail_metrics: dict[str, Any] | None = None,
         metric_schema: str = "",
     ) -> str:
-        del best_performance, performance_delta, is_improvement, parameters
+        del best_performance, performance_delta, is_improvement
         del best_parameters, wall_clock_seconds, elapsed_seconds
         del time_to_current_best_seconds, time_to_target_seconds, chain_height
-        del peers_count, block_reward_earned, converged, metric_schema
+        del peers_count, block_reward_earned, converged
+        if isinstance(performance, bool) or not isinstance(performance, (int, float)):
+            raise ArchiveRefusal("PERFORMANCE_MUST_BE_A_NUMBER")
+        if isinstance(round_number, bool) or not isinstance(round_number, int):
+            raise ArchiveRefusal("ROUND_NUMBER")
         rid = round_id or uuid.uuid4().hex
-        metrics = json.dumps(
-            detail_metrics or {},
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
+        parameters_text = _parameters_text(parameters)
+        schema_text = metric_schema if isinstance(metric_schema, str) else _GAP
+        metrics = _canonical_json(detail_metrics or {})
         with self._lock:
-            existing = self._conn.execute(
-                "SELECT domain_id, metrics FROM fact_round WHERE round_id=?",
-                (rid,),
-            ).fetchone()
-            if existing is not None:
-                same = (
-                    existing["domain_id"] == domain_id
-                    and existing["metrics"] == metrics
-                )
-                if same:
+            if self._bulk == 0:
+                self._conn.execute("BEGIN")
+            try:
+                existing = self._conn.execute(
+                    """SELECT experiment_id, domain_id, round_number, performance,
+                              parameters, metric_schema, metrics
+                       FROM fact_round WHERE round_id=?""",
+                    (rid,),
+                ).fetchone()
+                if existing is not None:
+                    same = (
+                        existing["experiment_id"] == experiment_id
+                        and existing["domain_id"] == domain_id
+                        and int(existing["round_number"]) == round_number
+                        and existing["performance"] == performance
+                        and existing["parameters"] == parameters_text
+                        and existing["metric_schema"] == schema_text
+                        and existing["metrics"] == metrics
+                    )
+                    if not same:
+                        raise ArchiveRefusal("CONFLICT")
+                    if self._bulk == 0:
+                        self._conn.commit()
                     return rid
-                raise ArchiveRefusal("CONFLICT")
-            self._conn.execute(
-                """INSERT INTO fact_round
-                   (round_id, experiment_id, domain_id, round_number,
-                    performance, metrics)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (rid, experiment_id, domain_id, round_number, performance, metrics),
-            )
-            self._conn.commit()
+                self._conn.execute(
+                    """INSERT INTO fact_round
+                       (round_id, experiment_id, domain_id, round_number,
+                        performance, parameters, metric_schema, metrics)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        rid,
+                        experiment_id,
+                        domain_id,
+                        round_number,
+                        performance,
+                        parameters_text,
+                        schema_text,
+                        metrics,
+                    ),
+                )
+                if self._bulk == 0:
+                    self._conn.commit()
+            except Exception:
+                if self._bulk == 0:
+                    self._conn.rollback()
+                raise
         return rid
+
+    @contextmanager
+    def bulk(self) -> Iterator[None]:
+        """One transaction for a projection. A failure rolls every new row back."""
+        with self._lock:
+            self._conn.execute("BEGIN")
+            self._bulk += 1
+            try:
+                yield
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                self._bulk -= 1
 
     def get_rounds(self, experiment_id: str, limit: int = 1000) -> list[dict[str, Any]]:
         with self._lock:
@@ -167,45 +219,111 @@ def project_metrics(
     *,
     experiment_id: str,
 ) -> int:
-    """Project candidate and retry rows. Non-winners are included.
+    """Project rows from a verified envelope, not from unchecked section objects.
 
     ``chain_verified`` stays false: a stored archive is not a consensus result.
     UNANCHORED is written as such when the round had no block.
     """
+    verified = verify_envelope(envelope)
+    return _project_verified(warehouse, verified, experiment_id=experiment_id)
+
+
+def project_from_reference(
+    warehouse: DisposableWarehouse,
+    source: Any,
+    *,
+    manifest_digest: str,
+    experiment_id: str,
+) -> int:
+    """Project from a file reference. The original envelope is not required."""
+    load = getattr(source, "load_verified", None)
+    if load is None:
+        raise ArchiveRefusal("FILE_REFERENCE_REQUIRED")
+    verified = load(manifest_digest)
+    if not isinstance(verified, VerifiedArchive):
+        raise ArchiveRefusal("FILE_REFERENCE_REQUIRED")
+    return _project_verified(warehouse, verified, experiment_id=experiment_id)
+
+
+def metric_contract(metrics: Any) -> list[dict[str, Any]]:
+    """Copy declared metric fields. Missing qualifiers stay ``NOT_COMPARABLE``."""
+    if not isinstance(metrics, dict):
+        raise ArchiveRefusal("METRIC_CONTRACT")
+    rows: list[dict[str, Any]] = []
+    for name, raw in metrics.items():
+        if isinstance(raw, dict) and "value" in raw:
+            row: dict[str, Any] = {"name": name, "value": raw["value"]}
+            for qualifier in _QUALIFIERS:
+                if qualifier in raw and raw[qualifier] is not None:
+                    row[qualifier] = raw[qualifier]
+                else:
+                    row[qualifier] = _GAP
+        else:
+            row = {"name": name, "value": raw}
+            for qualifier in _QUALIFIERS:
+                row[qualifier] = _GAP
+        rows.append(row)
+    _canonical_json(rows)
+    return rows
+
+
+def _project_verified(
+    warehouse: DisposableWarehouse,
+    verified: VerifiedArchive,
+    *,
+    experiment_id: str,
+) -> int:
+    if verified.chain_verified:
+        raise ArchiveRefusal("CHAIN_NOT_VERIFIED")
     before = len(warehouse.get_rounds(experiment_id))
-    records: list[dict[str, Any]] = []
-    for section in envelope.sections:
-        if section.name in ("candidates", "retries"):
-            parsed = json.loads(section.content)
-            if isinstance(parsed, list):
-                records.extend(parsed)
     chain_height = 0
-    if envelope.anchor == "ANCHORED":
-        chain_height = int(json.loads(envelope.body)["header"]["index"])
-    for seq, item in enumerate(records):
-        warehouse.record_round(
-            experiment_id=experiment_id,
-            domain_id=item["domain_id"],
-            round_number=seq,
-            performance=item["performance"],
-            is_improvement=False,
-            parameters=item.get("parameters") or {},
-            chain_height=chain_height,
-            peers_count=0,
-            block_reward_earned=0.0,
-            converged=False,
-            round_id=item["record_id"],
-            detail_metrics={
-                "anchor": envelope.anchor,
-                "chain_verified": False,
-                "won": item["won"],
-                "attempt": item["attempt"],
-                "candidate_id": item["candidate_id"],
-                "kind": item["kind"],
-                "header_hash": envelope.header_hash,
-                "body_digest": envelope.body_digest,
-                "manifest_digest": envelope.manifest_digest,
-            },
-            metric_schema="doin.archive_projection.v1",
-        )
+    if verified.anchor == "ANCHORED":
+        chain_height = int(json.loads(verified.body)["header"]["index"])
+    with warehouse.bulk():
+        for seq, item in enumerate(verified.records):
+            parameters = item["parameters"] if isinstance(item.get("parameters"), dict) else None
+            provenance = item["provenance"] if "provenance" in item else _GAP
+            warehouse.record_round(
+                experiment_id=experiment_id,
+                domain_id=item["domain_id"],
+                round_number=seq,
+                performance=item["performance"],
+                is_improvement=False,
+                parameters=parameters,
+                chain_height=chain_height,
+                peers_count=0,
+                block_reward_earned=0.0,
+                converged=False,
+                round_id=item["record_id"],
+                detail_metrics={
+                    "anchor": verified.anchor,
+                    "chain_verified": False,
+                    "won": item["won"],
+                    "attempt": item["attempt"],
+                    "candidate_id": item["candidate_id"],
+                    "kind": item["kind"],
+                    "header_hash": verified.header_hash,
+                    "body_digest": verified.body_digest,
+                    "manifest_digest": verified.manifest_digest,
+                    "metrics": metric_contract(item.get("metrics")),
+                    "parameters": parameters if parameters is not None else _GAP,
+                    "provenance": provenance,
+                },
+                metric_schema="doin.archive_projection.v1",
+            )
     return len(warehouse.get_rounds(experiment_id)) - before
+
+
+def _parameters_text(parameters: dict[str, Any] | None) -> str:
+    if parameters is None:
+        return _GAP
+    if not isinstance(parameters, dict):
+        raise ArchiveRefusal("RECORD_MAPPING_EXPECTED")
+    return _canonical_json(parameters)
+
+
+def _canonical_json(value: Any) -> str:
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ArchiveRefusal(f"NOT_CANONICAL: {exc}") from exc
