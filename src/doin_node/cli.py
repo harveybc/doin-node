@@ -32,6 +32,7 @@ from typing import Any
 from doin_core.crypto.identity import PeerIdentity
 from doin_core.consensus import IncentiveConfig
 from doin_core.models import ResourceLimits
+from doin_core.models.modular_experiment import ModularExperiment
 from doin_core.models.fee_market import FeeConfig
 from doin_core.plugins.loader import (
     load_inference_plugin,
@@ -242,18 +243,41 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
     domain_roles = []
     for d in raw.get("domains", []):
         domain_id = d["domain_id"]
+        opt_config = copy.deepcopy(d.get("optimization_config") or {})
+        inf_config = copy.deepcopy(d.get("inference_config") or {})
+        if "modular_experiment" in inf_config and "modular_experiment" not in opt_config:
+            raise ValueError(f"domain '{domain_id}': modular_experiment requires optimization_config")
+        if "modular_experiment" in opt_config:
+            modular_raw = opt_config["modular_experiment"]
+            try:
+                modular = ModularExperiment.model_validate(modular_raw)
+            except ValueError as exc:
+                raise ValueError(f"domain '{domain_id}': invalid modular_experiment: {exc}") from exc
+            objective = modular.objective
+            if d.get("higher_is_better", True) != objective.higher_is_better:
+                raise ValueError(f"domain '{domain_id}': higher_is_better conflicts with modular objective")
+            canonical = modular.model_dump(mode="json", exclude_none=True)
+            for config in (opt_config, inf_config):
+                if ("modular_experiment" in config and
+                        ModularExperiment.model_validate(config["modular_experiment"]) != modular):
+                    raise ValueError(f"domain '{domain_id}': modular_experiment differs between plugins")
+                for key in ("optimization_metric", "performance_metric"):
+                    if key in config and config[key] != objective.metric:
+                        raise ValueError(f"domain '{domain_id}': {key} conflicts with modular objective")
+                config["modular_experiment"] = copy.deepcopy(canonical)
+                config["optimization_metric"] = objective.metric
         domain_roles.append(DomainRole(
             domain_id=domain_id,
             optimize=d.get("optimize", False),
             evaluate=d.get("evaluate", False),
             optimization_plugin=d.get("optimization_plugin", ""),
-            optimization_config=copy.deepcopy(d.get("optimization_config") or {}),
+            optimization_config=opt_config,
             inference_plugin=d.get("inference_plugin", ""),
             synthetic_data_plugin=d.get("synthetic_data_plugin", ""),
             has_synthetic_data=d.get("has_synthetic_data", False),
             synthetic_data_validation=d.get("synthetic_data_validation", True),
             higher_is_better=d.get("higher_is_better", True),
-            inference_config=copy.deepcopy(d.get("inference_config") or {}),
+            inference_config=inf_config,
             synthetic_data_config=copy.deepcopy(d.get("synthetic_data_config") or {}),
             metric_type=d.get("metric_type", ""),
             param_bounds=_parse_param_bounds(

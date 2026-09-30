@@ -1,0 +1,40 @@
+{
+  "initiative": "modular-doin-config-handoff",
+  "method": "portable-test-led-data-centric-development",
+  "current_stage": "S12_ALPHA_ACCEPTANCE",
+  "stage_status": {
+    "S0_DISCOVERY": "passed",
+    "S1_REQUIREMENTS": "passed",
+    "S2_USE_CASES": "passed",
+    "S3_ACCEPTANCE_TEST_DESIGN": "passed",
+    "S4_ARCHITECTURE": "passed",
+    "S5_SYSTEM_TEST_DESIGN": "passed",
+    "S6_COMPONENT_DESIGN": "passed",
+    "S7_INTEGRATION_TEST_DESIGN": "passed",
+    "S8_UNIT_TEST_DESIGN": "passed",
+    "S9_UNIT_IMPLEMENTATION": "passed",
+    "S10_INTEGRATION_VERIFICATION": "passed",
+    "S11_SYSTEM_VERIFICATION": "passed",
+    "S12_ALPHA_ACCEPTANCE": "pending_real_training",
+    "S13_BETA_ACCEPTANCE": "not_started",
+    "S14_RELEASE_OPERATION": "not_started"
+  },
+  "traceability_file": "docs/MODULAR_DOIN_HANDOFF.md",
+  "evidence": [
+    "doin-core: tests/test_modular_experiment.py",
+    "doin-node: tests/test_modular_handoff.py",
+    "doin-node: python -m doin_node.modular_dry_run examples/modular_handoff_dry_run.json"
+  ],
+  "next_allowed_actions": [
+    "implement real predictor modular trainer and independent evaluator",
+    "run identified temporal train/validation experiment",
+    "verify measured objective with DOIN evaluator"
+  ],
+  "blocked_actions": [
+    "claim an optimization result from the config-only dry-run",
+    "start or modify live DOIN services or chain state"
+  ],
+  "open_decisions": [
+    "predictor owner must choose branch encoders, detector checkpoint format and real data artifact identity"
+  ]
+}

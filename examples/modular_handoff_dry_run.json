@@ -1,0 +1,37 @@
+{
+  "domains": [
+    {
+      "domain_id": "modular_forecast_dry_run",
+      "optimize": false,
+      "evaluate": false,
+      "higher_is_better": false,
+      "optimization_plugin": "predictor",
+      "inference_plugin": "predictor",
+      "optimization_config": {
+        "modular_experiment": {
+          "schema_version": "modular.experiment.v1",
+          "architecture": {
+            "branches": [
+              {"name": "close", "features": ["close"], "encoder": "temporal_conv"},
+              {"name": "context", "features": ["volume"], "encoder": "recurrent"}
+            ],
+            "fusion": "sequence_concat",
+            "temporal_core": "recurrent"
+          },
+          "regime": "R0",
+          "objective": {
+            "metric": "MAE",
+            "split": "validation",
+            "higher_is_better": false,
+            "unit": "price"
+          },
+          "data": {
+            "dataset_id": "placeholder-dataset",
+            "train_end": "2024-01-01",
+            "validation_start": "2024-01-02"
+          }
+        }
+      }
+    }
+  ]
+}
