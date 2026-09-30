@@ -871,3 +871,436 @@ def test_projection_count_is_not_a_truncated_read() -> None:
     assert len(warehouse.get_rounds("e-count")) == 1000
     assert len(warehouse.get_rounds("e-count", limit=1)) == 1
     assert len(warehouse.get_rounds("e-count", limit=1)) < inserted
+
+
+def _byte_store(path: str | object = ":memory:"):
+    from data_lake_service.byte_store import GovernedByteStore
+
+    return GovernedByteStore(path, grants={"granted-test"})
+
+
+def _fact_count(warehouse: DisposableWarehouse, experiment_id: str) -> int:
+    row = warehouse._conn.execute(
+        "SELECT COUNT(*) FROM fact_round WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    return int(row[0])
+
+
+def _refuse_insert(**kwargs):
+    raise AssertionError("projected without an accepted reference")
+
+
+class _TracingStore:
+    """Delegates to a real byte store and records put/get order."""
+
+    def __init__(self, inner, root, manifest_digest: str, events: list[str]) -> None:
+        self.inner = inner
+        self.root = root
+        self.manifest_digest = manifest_digest
+        self.events = events
+        self.watch = True
+        self.gets = 0
+
+    def describe(self):
+        return self.inner.describe()
+
+    def put_bytes(self, content: bytes, *, grant: str) -> str:
+        if self.watch:
+            self.events.append("put")
+            assert not (self.root / "pending").exists()
+            assert not (self.root / "accepted").exists()
+        return self.inner.put_bytes(content, grant=grant)
+
+    def get_bytes(self, digest: str, *, grant: str) -> bytes:
+        if self.watch:
+            self.gets += 1
+            self.events.append("get")
+            if self.gets == 1:
+                assert digest == self.manifest_digest
+                assert not (self.root / "accepted").exists()
+                pending = self.root / "pending" / f"{self.manifest_digest}.json"
+                assert pending.is_file()
+        return self.inner.get_bytes(digest, grant=grant)
+
+
+def test_service_projects_only_after_a_verified_hash_read(tmp_path) -> None:
+    """O03/AT02. Durable write, then reference, then hash read, then projection.
+
+    The directory stays DISPOSABLE_FILE_NOT_LAKE. The byte store stays
+    DISPOSABLE_BYTE_STORE_NOT_DEPLOYED_LAKE. Neither name is a lake.
+    """
+    from data_lake_service.byte_store import GovernedByteStore
+
+    from doin_node.archive.service import BYTE_STORE_LABEL, DisposableServiceAdapter
+
+    _block, envelope = _fixture()
+    db_path = tmp_path / "bytes.sqlite"
+    root = tmp_path / "references"
+    inner = _byte_store(db_path)
+    events: list[str] = []
+    store = _TracingStore(inner, root, envelope.manifest_digest, events)
+    adapter = DisposableServiceAdapter(store, root, grant="granted-test")
+    assert inspect.signature(DisposableWarehouse.get_rounds).parameters["limit"].default == 1000
+    assert FileArchiveAdapter.LABEL == "DISPOSABLE_FILE_NOT_LAKE"
+    assert BYTE_STORE_LABEL == GovernedByteStore.LABEL == "DISPOSABLE_BYTE_STORE_NOT_DEPLOYED_LAKE"
+    described = inner.describe()
+    assert described["deployed_lake"] is False
+    assert described["registration_authorizes_delivery"] is False
+    warehouse = DisposableWarehouse(":memory:")
+    warehouse.create_experiment(
+        domain_id="fixture-domain",
+        node_id="node-fixture",
+        hostname="",
+        experiment_id="e1",
+    )
+    original = warehouse.record_round
+
+    def recording(**kwargs):
+        if store.watch:
+            events.append("project")
+            assert "get" in events
+            assert all(item == "put" for item in events[: events.index("get")])
+            accepted = root / "accepted" / f"{envelope.manifest_digest}.json"
+            assert accepted.is_file()
+        return original(**kwargs)
+
+    warehouse.record_round = recording
+    inserted = adapter.publish_and_project(warehouse, envelope, experiment_id="e1")
+    store.watch = False
+    assert inserted == 3
+    assert inserted == _fact_count(warehouse, "e1")
+    assert len(warehouse.get_rounds("e1")) == 3
+    rows = warehouse.get_rounds("e1")
+    assert {row["performance"] for row in rows} == {0.2, 0.9, 0.25}
+    assert {row["round_id"] for row in rows} == {"rec-lose-1", "rec-win-1", "rec-lose-2"}
+    for row in rows:
+        payload = json.loads(row["metrics"])
+        assert payload["chain_verified"] is False
+        assert payload["anchor"] == "ANCHORED"
+        assert payload["manifest_digest"] == envelope.manifest_digest
+        assert payload["body_digest"] == envelope.body_digest
+        for item in payload["metrics"]:
+            for qualifier in ("scale", "unit", "horizon", "population", "reduction"):
+                assert item[qualifier] == "NOT_COMPARABLE"
+    pending = json.loads((root / "pending" / f"{envelope.manifest_digest}.json").read_text())
+    accepted = json.loads((root / "accepted" / f"{envelope.manifest_digest}.json").read_text())
+    assert pending["accepted"] is False
+    assert accepted["accepted"] is True
+    assert pending["label"] == accepted["label"] == "DISPOSABLE_FILE_NOT_LAKE"
+    assert pending["byte_store_label"] == BYTE_STORE_LABEL
+    assert hashlib.sha256(envelope.manifest).hexdigest() == envelope.manifest_digest
+    assert not (root / "objects").exists()
+    for path in root.rglob("*"):
+        if path.is_file():
+            data = path.read_bytes()
+            assert path.suffix == ".json"
+            assert envelope.body not in data
+    assert adapter.publish_and_project(warehouse, envelope, experiment_id="e1") == 0
+    assert _fact_count(warehouse, "e1") == 3
+    assert {row["round_id"] for row in warehouse.get_rounds("e1")} == {
+        "rec-lose-1",
+        "rec-win-1",
+        "rec-lose-2",
+    }
+
+    variant = build_archive(
+        block=_block,
+        candidates=[
+            {
+                "record_id": "rec-lose-1",
+                "candidate_id": "cand-lose",
+                "attempt": 1,
+                "won": False,
+                "domain_id": "fixture-domain",
+                "peer_id": "peer-fixture",
+                "performance": 0.2,
+                "parameters": {"w": 0.2},
+                "metrics": {"split": "val"},
+            },
+            {
+                "record_id": "rec-win-1",
+                "candidate_id": "cand-win",
+                "attempt": 1,
+                "won": True,
+                "domain_id": "fixture-domain",
+                "peer_id": "peer-fixture",
+                "performance": 0.91,
+                "parameters": {"w": 1},
+                "metrics": {"split": "val"},
+            },
+        ],
+        retries=[
+            {
+                "record_id": "rec-lose-2",
+                "candidate_id": "cand-lose",
+                "attempt": 2,
+                "won": False,
+                "domain_id": "fixture-domain",
+                "peer_id": "peer-fixture",
+                "performance": 0.25,
+                "parameters": {"w": 0.25},
+                "metrics": {"split": "val"},
+            }
+        ],
+    )
+    assert variant.manifest_digest != envelope.manifest_digest
+    with pytest.raises(ArchiveRefusal, match="CONFLICT"):
+        adapter.publish_and_project(warehouse, variant, experiment_id="e1")
+    assert _fact_count(warehouse, "e1") == 3
+    assert {row["performance"] for row in warehouse.get_rounds("e1")} == {0.2, 0.9, 0.25}
+
+    inner._conn.close()
+    reopened = _byte_store(db_path)
+    manifest = reopened.get_bytes(envelope.manifest_digest, grant="granted-test")
+    assert hashlib.sha256(manifest).hexdigest() == envelope.manifest_digest
+    again = DisposableServiceAdapter(reopened, root, grant="granted-test")
+    fresh = _open_experiment("e-reopen")
+    reloaded = project_from_reference(
+        fresh,
+        again,
+        manifest_digest=envelope.manifest_digest,
+        experiment_id="e-reopen",
+    )
+    assert reloaded == 3
+    assert _fact_count(fresh, "e-reopen") == 3
+    assert all(
+        json.loads(row["metrics"])["chain_verified"] is False
+        for row in fresh.get_rounds("e-reopen")
+    )
+    receipt = root / "accepted" / f"{envelope.manifest_digest}.json"
+    forged = json.loads(receipt.read_text(encoding="utf-8"))
+    forged["body_digest"] = "ab" * 32
+    receipt.write_text(json.dumps(forged), encoding="utf-8")
+    refused = _open_experiment("e-forged")
+    refused.record_round = _refuse_insert
+    with pytest.raises(ArchiveRefusal, match="CONFLICT"):
+        project_from_reference(
+            refused,
+            again,
+            manifest_digest=envelope.manifest_digest,
+            experiment_id="e-forged",
+        )
+    assert refused.get_rounds("e-forged") == []
+    assert _fact_count(fresh, "e-reopen") == 3
+    reopened._conn.close()
+
+
+def test_failed_service_write_accepts_no_reference_and_inserts_nothing(tmp_path) -> None:
+    """A refused put is not a commit: no accepted reference and no new fact row.
+
+    Objects from the puts that did succeed stay in the byte store. They are not
+    a reference. Deleting them would risk a digest another manifest already uses.
+    """
+    from data_lake_service.byte_store import ByteStoreRefusal, GovernedByteStore
+
+    from doin_node.archive.service import DisposableServiceAdapter
+
+    warehouse = DisposableWarehouse(":memory:")
+    warehouse.create_experiment(
+        domain_id="test", node_id="n", hostname="", experiment_id="e-kept"
+    )
+    warehouse.create_experiment(
+        domain_id="fixture-domain",
+        node_id="node-fixture",
+        hostname="",
+        experiment_id="e-fail",
+    )
+    kept_store = _byte_store()
+    kept = DisposableServiceAdapter(kept_store, tmp_path / "kept", grant="granted-test")
+    assert kept.publish_and_project(
+        warehouse,
+        build_archive(block=None, candidates=[_mae_row()]),
+        experiment_id="e-kept",
+    ) == 1
+    assert _fact_count(warehouse, "e-kept") == 1
+    warehouse.record_round = _refuse_insert
+    _block, envelope = _fixture()
+
+    class StopPut:
+        def __init__(self, inner) -> None:
+            self.inner = inner
+            self.puts = 0
+
+        def describe(self):
+            return self.inner.describe()
+
+        def put_bytes(self, content: bytes, *, grant: str) -> str:
+            self.puts += 1
+            if self.puts == 2:
+                raise RuntimeError("WRITE_FAILED")
+            return self.inner.put_bytes(content, grant=grant)
+
+        def get_bytes(self, digest: str, *, grant: str) -> bytes:
+            raise AssertionError("read after a failed write")
+
+    failing = _byte_store()
+    stopped = StopPut(failing)
+    adapter = DisposableServiceAdapter(stopped, tmp_path / "failed", grant="granted-test")
+    with pytest.raises(RuntimeError, match="WRITE_FAILED"):
+        adapter.publish_and_project(warehouse, envelope, experiment_id="e-fail")
+    assert stopped.puts == 2
+    assert failing._conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0] == 1
+    assert list((tmp_path / "failed").glob("pending/*")) == []
+    assert list((tmp_path / "failed").glob("accepted/*")) == []
+    assert warehouse.get_rounds("e-fail") == []
+    assert _fact_count(warehouse, "e-fail") == 0
+    assert _fact_count(warehouse, "e-kept") == 1
+    kept_envelope = build_archive(block=None, candidates=[_mae_row()])
+    kept_row = kept_store.get_bytes(kept_envelope.manifest_digest, grant="granted-test")
+    assert kept_row == kept_envelope.manifest
+    assert hashlib.sha256(kept_row).hexdigest() == kept_envelope.manifest_digest
+
+    class BadDigest:
+        def __init__(self, inner) -> None:
+            self.inner = inner
+
+        def describe(self):
+            return self.inner.describe()
+
+        def put_bytes(self, content: bytes, *, grant: str) -> str:
+            self.inner.put_bytes(content, grant=grant)
+            return "ab" * 32
+
+        def get_bytes(self, digest: str, *, grant: str) -> bytes:
+            raise AssertionError("read after a digest lie")
+
+    lied = _byte_store()
+    bad = DisposableServiceAdapter(BadDigest(lied), tmp_path / "lie", grant="granted-test")
+    with pytest.raises(ArchiveRefusal, match="DIGEST_MISMATCH"):
+        bad.publish_and_project(warehouse, envelope, experiment_id="e-fail")
+    assert list((tmp_path / "lie").glob("accepted/*")) == []
+    assert list((tmp_path / "lie").glob("pending/*")) == []
+    assert _fact_count(warehouse, "e-fail") == 0
+
+    refused_store = _byte_store()
+    with pytest.raises(ArchiveRefusal, match="GRANT_REQUIRED"):
+        DisposableServiceAdapter(refused_store, tmp_path / "empty-grant", grant="")
+    assert refused_store._conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0] == 0
+    other = DisposableServiceAdapter(
+        refused_store, tmp_path / "other-grant", grant="other-grant"
+    )
+    with pytest.raises(ArchiveRefusal, match="GRANT_REFUSED"):
+        other.publish_and_project(warehouse, envelope, experiment_id="e-fail")
+    assert list((tmp_path / "other-grant").glob("pending/*")) == []
+    assert refused_store._conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0] == 0
+
+    with pytest.raises(ByteStoreRefusal, match="POSTGRES_REFUSED"):
+        GovernedByteStore("postgresql://example/lake", grants={"granted-test"})
+
+    class Claim:
+        def __init__(self, **overrides) -> None:
+            self.overrides = overrides
+            self.puts = 0
+
+        def describe(self):
+            payload = {
+                "label": GovernedByteStore.LABEL,
+                "deployed_lake": False,
+                "registration_authorizes_delivery": False,
+            }
+            payload.update(self.overrides)
+            return payload
+
+        def put_bytes(self, content: bytes, *, grant: str) -> str:
+            self.puts += 1
+            raise AssertionError("a refused store was written")
+
+    registered = Claim(registration_authorizes_delivery=True)
+    with pytest.raises(ArchiveRefusal, match="REGISTRATION_DOES_NOT_AUTHORIZE"):
+        DisposableServiceAdapter(registered, tmp_path / "registered", grant="granted-test")
+    assert registered.puts == 0
+    deployed = Claim(deployed_lake=True)
+    with pytest.raises(ArchiveRefusal, match="DEPLOYED_LAKE_REFUSED"):
+        DisposableServiceAdapter(deployed, tmp_path / "deployed", grant="granted-test")
+    assert deployed.puts == 0
+    assert _fact_count(warehouse, "e-kept") == 1
+    assert warehouse.get_rounds("e-fail") == []
+
+
+def test_service_hash_read_rejects_other_bytes_before_insert(tmp_path) -> None:
+    """O03/AT02. A hash mismatch or a source that returns other bytes inserts nothing."""
+    from doin_node.archive.service import DisposableServiceAdapter
+
+    _block, envelope = _fixture()
+    warehouse = _open_experiment("e-read")
+    warehouse.record_round = _refuse_insert
+
+    class OtherBytes:
+        def __init__(self, inner) -> None:
+            self.inner = inner
+
+        def describe(self):
+            return self.inner.describe()
+
+        def put_bytes(self, content: bytes, *, grant: str) -> str:
+            return self.inner.put_bytes(content, grant=grant)
+
+        def get_bytes(self, digest: str, *, grant: str) -> bytes:
+            return b"other-bytes"
+
+    other_store = _byte_store()
+    other = DisposableServiceAdapter(
+        OtherBytes(other_store), tmp_path / "other", grant="granted-test"
+    )
+    with pytest.raises(ArchiveRefusal, match="DIGEST_MISMATCH"):
+        other.publish_and_project(warehouse, envelope, experiment_id="e-read")
+    assert list((tmp_path / "other" / "pending").glob("*.json"))
+    assert list((tmp_path / "other").glob("accepted/*")) == []
+    assert warehouse.get_rounds("e-read") == []
+    assert _fact_count(warehouse, "e-read") == 0
+
+    class HashMismatch:
+        def __init__(self, inner) -> None:
+            self.inner = inner
+            self.done = False
+
+        def describe(self):
+            return self.inner.describe()
+
+        def put_bytes(self, content: bytes, *, grant: str) -> str:
+            return self.inner.put_bytes(content, grant=grant)
+
+        def get_bytes(self, digest: str, *, grant: str) -> bytes:
+            if not self.done:
+                self.inner._conn.execute(
+                    "UPDATE objects SET content=? WHERE digest=?",
+                    (b"short", digest),
+                )
+                self.done = True
+            return self.inner.get_bytes(digest, grant=grant)
+
+    mismatch_store = _byte_store()
+    mismatch = DisposableServiceAdapter(
+        HashMismatch(mismatch_store), tmp_path / "mismatch", grant="granted-test"
+    )
+    with pytest.raises(ArchiveRefusal, match="HASH_MISMATCH"):
+        mismatch.publish_and_project(warehouse, envelope, experiment_id="e-read")
+    assert list((tmp_path / "mismatch").glob("accepted/*")) == []
+    assert list((tmp_path / "mismatch" / "pending").glob("*.json"))
+    assert _fact_count(warehouse, "e-read") == 0
+
+    durable = _byte_store(tmp_path / "bytes.sqlite")
+    root = tmp_path / "good"
+    published = DisposableServiceAdapter(durable, root, grant="granted-test")
+    held = DisposableWarehouse(":memory:")
+    held.create_experiment(domain_id="test", node_id="n", hostname="", experiment_id="e-held")
+    assert published.publish_and_project(
+        held,
+        build_archive(block=None, candidates=[_mae_row()]),
+        experiment_id="e-held",
+    ) == 1
+    small = build_archive(block=None, candidates=[_mae_row()])
+    durable._conn.execute("DELETE FROM objects WHERE digest=?", (small.manifest_digest,))
+    missing = _open_experiment("e-missing")
+    missing.record_round = _refuse_insert
+    with pytest.raises(ArchiveRefusal, match="MISSING"):
+        project_from_reference(
+            missing,
+            published,
+            manifest_digest=small.manifest_digest,
+            experiment_id="e-missing",
+        )
+    assert missing.get_rounds("e-missing") == []
+    assert _fact_count(held, "e-held") == 1
+    durable._conn.close()
