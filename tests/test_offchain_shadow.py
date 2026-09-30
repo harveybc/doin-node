@@ -24,6 +24,7 @@ from doin_core.archive.body import (
     build_archive,
     canonical_bytes,
     digest_bytes,
+    verify_envelope,
 )
 from doin_core.crypto.hashing import compute_merkle_root
 from doin_core.models import Block, BlockHeader, Transaction, TransactionType
@@ -570,3 +571,303 @@ def test_governed_byte_api_refuses_a_bad_readback(tmp_path) -> None:
     store.lie = True
     with pytest.raises(ArchiveRefusal):
         adapter.put_governed(envelope, store, grant="granted-test")
+
+
+class _ReturnedArchive:
+    """Source that returns a prepared object and does not check the request."""
+
+    def __init__(self, verified) -> None:
+        self.verified = verified
+
+    def load_verified(self, manifest_digest: str):
+        del manifest_digest
+        return self.verified
+
+
+def _open_experiment(experiment_id: str) -> DisposableWarehouse:
+    warehouse = DisposableWarehouse(":memory:")
+    warehouse.create_experiment(
+        domain_id="test",
+        node_id="n",
+        hostname="",
+        experiment_id=experiment_id,
+    )
+    return warehouse
+
+
+def _mae_qualifiers(stored: dict) -> dict:
+    payload = json.loads(stored["metrics"])
+    return next(item for item in payload["metrics"] if item["name"] == "MAE")
+
+
+def test_correct_reference_projects_bytes_and_keeps_metric_gaps() -> None:
+    """A matching manifest digest projects the bytes, not a handwritten attribute."""
+    row = _mae_row(performance=0.1)
+    row["metrics"] = {"MAE": {"value": 0.1, "unit": "z", "horizon": 96}}
+    envelope = build_archive(block=None, candidates=[row])
+    verified = verify_envelope(envelope)
+    object.__setattr__(verified, "manifest_digest", "ab" * 32)
+    assert digest_bytes(verified.manifest) == envelope.manifest_digest
+    warehouse = _open_experiment("e-ok")
+    inserted = project_from_reference(
+        warehouse,
+        _ReturnedArchive(verified),
+        manifest_digest=envelope.manifest_digest,
+        experiment_id="e-ok",
+    )
+    assert inserted == 1
+    stored = warehouse.get_rounds("e-ok")[0]
+    assert stored["performance"] == 0.1
+    assert json.loads(stored["parameters"]) == {"depth": 2}
+    payload = json.loads(stored["metrics"])
+    assert payload["chain_verified"] is False
+    assert payload["anchor"] == "UNANCHORED"
+    mae = _mae_qualifiers(stored)
+    assert mae["value"] == 0.1
+    assert mae["unit"] == "z"
+    assert mae["horizon"] == 96
+    assert mae["scale"] == "NOT_COMPARABLE"
+    assert mae["population"] == "NOT_COMPARABLE"
+    assert mae["reduction"] == "NOT_COMPARABLE"
+
+    bare = build_archive(block=None, candidates=[_mae_row(record_id="r-bare")])
+    other = _open_experiment("e-bare")
+    assert (
+        project_from_reference(
+            other,
+            _ReturnedArchive(verify_envelope(bare)),
+            manifest_digest=bare.manifest_digest,
+            experiment_id="e-bare",
+        )
+        == 1
+    )
+    bare_mae = _mae_qualifiers(other.get_rounds("e-bare")[0])
+    assert bare_mae["value"] == 0.1
+    for qualifier in ("scale", "unit", "horizon", "population", "reduction"):
+        assert bare_mae[qualifier] == "NOT_COMPARABLE"
+
+
+def test_wrong_reference_is_rejected_before_insert() -> None:
+    """Asking for A while the source returns B inserts nothing. The attribute is ignored."""
+    asked = build_archive(block=None, candidates=[_mae_row(performance=0.1)])
+    returned = build_archive(block=None, candidates=[_mae_row(performance=0.2)])
+    assert asked.manifest_digest != returned.manifest_digest
+    loaded = verify_envelope(returned)
+    object.__setattr__(loaded, "manifest_digest", asked.manifest_digest)
+    assert loaded.manifest_digest == asked.manifest_digest
+    assert digest_bytes(loaded.manifest) == returned.manifest_digest
+    warehouse = _open_experiment("e-wrong")
+
+    def refuse_insert(**kwargs):
+        raise AssertionError("inserted a different manifest")
+
+    warehouse.record_round = refuse_insert
+    with pytest.raises(ArchiveRefusal, match="DIGEST_MISMATCH"):
+        project_from_reference(
+            warehouse,
+            _ReturnedArchive(loaded),
+            manifest_digest=asked.manifest_digest,
+            experiment_id="e-wrong",
+        )
+    assert warehouse.get_rounds("e-wrong") == []
+
+    matched = _open_experiment("e-bytes")
+    inserted = project_from_reference(
+        matched,
+        _ReturnedArchive(loaded),
+        manifest_digest=returned.manifest_digest,
+        experiment_id="e-bytes",
+    )
+    assert inserted == 1
+    assert matched.get_rounds("e-bytes")[0]["performance"] == 0.2
+
+
+def test_mutated_record_dict_does_not_change_the_projected_row() -> None:
+    """A post-verify edit of the record dict is not the inserted row."""
+    envelope = build_archive(block=None, candidates=[_mae_row(performance=0.1)])
+    verified = verify_envelope(envelope)
+    verified.records[0]["performance"] = 999.0
+    verified.records[0]["parameters"] = {"depth": 999}
+    verified.records[0]["metrics"] = {"MAE": 999.0}
+    object.__setattr__(verified, "chain_verified", True)
+    warehouse = _open_experiment("e-mut")
+    inserted = project_from_reference(
+        warehouse,
+        _ReturnedArchive(verified),
+        manifest_digest=envelope.manifest_digest,
+        experiment_id="e-mut",
+    )
+    assert inserted == 1
+    stored = warehouse.get_rounds("e-mut")[0]
+    assert stored["performance"] == 0.1
+    assert json.loads(stored["parameters"]) == {"depth": 2}
+    payload = json.loads(stored["metrics"])
+    assert payload["chain_verified"] is False
+    mae = _mae_qualifiers(stored)
+    assert mae["value"] == 0.1
+    for qualifier in ("scale", "unit", "horizon", "population", "reduction"):
+        assert mae[qualifier] == "NOT_COMPARABLE"
+
+    broken = verify_envelope(envelope)
+    object.__setattr__(broken, "body", b"{}")
+    broken.records[0]["performance"] = 999.0
+    empty = _open_experiment("e-broken")
+
+    def refuse_insert(**kwargs):
+        raise AssertionError("inserted unverifiable bytes")
+
+    empty.record_round = refuse_insert
+    with pytest.raises(ArchiveRefusal, match="DIGEST_MISMATCH"):
+        project_from_reference(
+            empty,
+            _ReturnedArchive(broken),
+            manifest_digest=envelope.manifest_digest,
+            experiment_id="e-broken",
+        )
+    assert empty.get_rounds("e-broken") == []
+
+
+def test_missing_reference_file_inserts_nothing(tmp_path) -> None:
+    """A missing manifest file is a refusal. The directory is not a lake."""
+    envelope = build_archive(block=None, candidates=[_mae_row()])
+    root = tmp_path / "archive"
+    adapter = FileArchiveAdapter(root)
+    assert adapter.LABEL == "DISPOSABLE_FILE_NOT_LAKE"
+    adapter.put(envelope)
+    (root / "manifests" / envelope.manifest_digest).unlink()
+    warehouse = _open_experiment("e-missing")
+
+    def refuse_insert(**kwargs):
+        raise AssertionError("inserted from a missing file")
+
+    warehouse.record_round = refuse_insert
+    with pytest.raises(ArchiveRefusal, match="MISSING"):
+        project_from_reference(
+            warehouse,
+            adapter,
+            manifest_digest=envelope.manifest_digest,
+            experiment_id="e-missing",
+        )
+    assert warehouse.get_rounds("e-missing") == []
+
+
+def test_reference_retry_returns_previous_and_rejects_discrepancy(tmp_path) -> None:
+    """Same bytes keep the previous row. A changed compared column conflicts."""
+    row = _mae_row()
+    envelope = build_archive(block=None, candidates=[row])
+    adapter = FileArchiveAdapter(tmp_path)
+    receipt = adapter.put(envelope)
+    assert adapter.LABEL == "DISPOSABLE_FILE_NOT_LAKE"
+    warehouse = DisposableWarehouse(":memory:")
+    warehouse.create_experiment(domain_id="test", node_id="n", hostname="", experiment_id="e1")
+    warehouse.create_experiment(domain_id="test", node_id="n", hostname="", experiment_id="e2")
+    assert (
+        project_from_reference(
+            warehouse,
+            adapter,
+            manifest_digest=receipt.manifest_digest,
+            experiment_id="e1",
+        )
+        == 1
+    )
+    previous = warehouse.get_rounds("e1")[0]
+    assert (
+        project_from_reference(
+            warehouse,
+            adapter,
+            manifest_digest=receipt.manifest_digest,
+            experiment_id="e1",
+        )
+        == 0
+    )
+    replay = warehouse.get_rounds("e1")
+    assert len(replay) == 1
+    assert replay[0]["round_id"] == previous["round_id"] == "r1"
+    assert replay[0]["experiment_id"] == "e1"
+    assert replay[0]["performance"] == previous["performance"]
+    assert replay[0]["parameters"] == previous["parameters"]
+    assert replay[0]["metric_schema"] == previous["metric_schema"]
+    assert replay[0]["metrics"] == previous["metrics"]
+    with pytest.raises(ArchiveRefusal, match="CONFLICT"):
+        project_from_reference(
+            warehouse,
+            adapter,
+            manifest_digest=receipt.manifest_digest,
+            experiment_id="e2",
+        )
+    assert warehouse.get_rounds("e2") == []
+
+    for changes in (
+        {"attempt": 2},
+        {"performance": 0.2},
+        {"parameters": {"depth": 9}},
+        {"metrics": {"MAE": 0.9}},
+    ):
+        variant = build_archive(block=None, candidates=[{**row, **changes}])
+        with pytest.raises(ArchiveRefusal, match="CONFLICT"):
+            project_from_reference(
+                warehouse,
+                _ReturnedArchive(verify_envelope(variant)),
+                manifest_digest=variant.manifest_digest,
+                experiment_id="e1",
+            )
+        rows = warehouse.get_rounds("e1")
+        assert len(rows) == 1
+        assert rows[0]["round_id"] == previous["round_id"]
+        assert rows[0]["experiment_id"] == "e1"
+        assert rows[0]["performance"] == previous["performance"]
+        assert rows[0]["parameters"] == previous["parameters"]
+        assert rows[0]["metrics"] == previous["metrics"]
+    assert warehouse.get_rounds("e2") == []
+
+
+def test_reference_rollback_does_not_present_a_partial_close() -> None:
+    """A failure after the first reference row leaves no partial projection."""
+    envelope = build_archive(
+        block=None,
+        candidates=[
+            _mae_row(record_id="r1", performance=0.1),
+            _mae_row(record_id="r2", performance=0.3),
+        ],
+    )
+    verified = verify_envelope(envelope)
+    warehouse = _open_experiment("e-roll")
+    original = warehouse.record_round
+    calls = {"n": 0}
+
+    def stop_on_second(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ArchiveRefusal("MID_PROJECTION")
+        return original(**kwargs)
+
+    warehouse.record_round = stop_on_second
+    with pytest.raises(ArchiveRefusal, match="MID_PROJECTION"):
+        project_from_reference(
+            warehouse,
+            _ReturnedArchive(verified),
+            manifest_digest=envelope.manifest_digest,
+            experiment_id="e-roll",
+        )
+    assert calls["n"] == 2
+    assert warehouse.get_rounds("e-roll") == []
+
+
+def test_projection_count_is_not_a_truncated_read() -> None:
+    """get_rounds may stop at its limit. The projection count is every committed row."""
+    total = 1001
+    envelope = build_archive(
+        block=None,
+        candidates=[_mae_row(record_id=f"r{index}") for index in range(total)],
+    )
+    warehouse = _open_experiment("e-count")
+    inserted = project_from_reference(
+        warehouse,
+        _ReturnedArchive(verify_envelope(envelope)),
+        manifest_digest=envelope.manifest_digest,
+        experiment_id="e-count",
+    )
+    assert inserted == total
+    assert len(warehouse.get_rounds("e-count")) == 1000
+    assert len(warehouse.get_rounds("e-count", limit=1)) == 1
+    assert len(warehouse.get_rounds("e-count", limit=1)) < inserted

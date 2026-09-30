@@ -24,6 +24,8 @@ from doin_core.archive.body import (
     ArchiveEnvelope,
     ArchiveRefusal,
     VerifiedArchive,
+    digest_bytes,
+    verify_archive_bytes,
     verify_envelope,
 )
 
@@ -208,6 +210,14 @@ class DisposableWarehouse:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def _round_count(self, experiment_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM fact_round WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+        return int(row[0])
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -235,14 +245,53 @@ def project_from_reference(
     manifest_digest: str,
     experiment_id: str,
 ) -> int:
-    """Project from a file reference. The original envelope is not required."""
+    """Project the archive whose manifest bytes hash to ``manifest_digest``.
+
+    Records are parsed from those bytes. A mismatch is refused before any insert.
+    """
     load = getattr(source, "load_verified", None)
     if load is None:
         raise ArchiveRefusal("FILE_REFERENCE_REQUIRED")
-    verified = load(manifest_digest)
-    if not isinstance(verified, VerifiedArchive):
+    loaded = load(manifest_digest)
+    if not isinstance(loaded, VerifiedArchive):
         raise ArchiveRefusal("FILE_REFERENCE_REQUIRED")
+    verified = _rebuild_for_reference(loaded, manifest_digest)
     return _project_verified(warehouse, verified, experiment_id=experiment_id)
+
+
+def _rebuild_for_reference(loaded: VerifiedArchive, manifest_digest: str) -> VerifiedArchive:
+    """Re-parse body, manifest and sections. Do not read ``loaded.records``."""
+    manifest = loaded.manifest
+    # The requested digest is the hash of these bytes, not loaded.manifest_digest.
+    if digest_bytes(manifest) != manifest_digest:
+        raise ArchiveRefusal("DIGEST_MISMATCH")
+    body = loaded.body
+    if not isinstance(body, bytes):
+        raise ArchiveRefusal("DIGEST_REQUIRES_BYTES")
+    rebuilt = verify_archive_bytes(
+        body=body,
+        manifest=manifest,
+        sections=_section_bytes(loaded),
+    )
+    if rebuilt.chain_verified:
+        raise ArchiveRefusal("CHAIN_NOT_VERIFIED")
+    if digest_bytes(rebuilt.manifest) != manifest_digest or rebuilt.manifest_digest != manifest_digest:
+        raise ArchiveRefusal("DIGEST_MISMATCH")
+    return rebuilt
+
+
+def _section_bytes(loaded: VerifiedArchive) -> dict[str, bytes]:
+    sections: dict[str, bytes] = {}
+    for section in loaded.sections:
+        content = getattr(section, "content", None)
+        if not isinstance(content, bytes):
+            raise ArchiveRefusal("DIGEST_REQUIRES_BYTES")
+        digest = digest_bytes(content)
+        previous = sections.get(digest)
+        if previous is not None and previous != content:
+            raise ArchiveRefusal("DIGEST_MISMATCH")
+        sections[digest] = content
+    return sections
 
 
 def metric_contract(metrics: Any) -> list[dict[str, Any]]:
@@ -275,11 +324,11 @@ def _project_verified(
 ) -> int:
     if verified.chain_verified:
         raise ArchiveRefusal("CHAIN_NOT_VERIFIED")
-    before = len(warehouse.get_rounds(experiment_id))
     chain_height = 0
     if verified.anchor == "ANCHORED":
         chain_height = int(json.loads(verified.body)["header"]["index"])
     with warehouse.bulk():
+        before = warehouse._round_count(experiment_id)
         for seq, item in enumerate(verified.records):
             parameters = item["parameters"] if isinstance(item.get("parameters"), dict) else None
             provenance = item["provenance"] if "provenance" in item else _GAP
@@ -311,7 +360,9 @@ def _project_verified(
                 },
                 metric_schema="doin.archive_projection.v1",
             )
-    return len(warehouse.get_rounds(experiment_id)) - before
+        # get_rounds is capped. The caller needs the rows this transaction committed.
+        inserted = warehouse._round_count(experiment_id) - before
+    return inserted
 
 
 def _parameters_text(parameters: dict[str, Any] | None) -> str:
