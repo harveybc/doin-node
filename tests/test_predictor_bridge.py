@@ -54,12 +54,29 @@ def evaluate_candidate(config, train_path, validation_path, output_dir):
 '''
 
 
+SCORER_DOUBLE = '''
+import hashlib, json
+from pathlib import Path
+def verify(receipt_path, validation_path, output_path):
+    receipt = json.loads(Path(receipt_path).read_text())
+    model = Path(receipt['artifacts']['best_model']).read_bytes()
+    ok = hashlib.sha256(model).hexdigest() == receipt['digests']['model_sha256']
+    value = receipt['objective']['value'] if ok else None
+    Path(output_path).write_text(json.dumps(dict(
+        schema='modular.checkpoint.verification.v1', verdict='VERIFIED' if ok else 'REFUTED',
+        problems=[] if ok else ['model_sha256 mismatch'],
+        receipt_sha256=hashlib.sha256(Path(receipt_path).read_bytes()).hexdigest(),
+        objective=dict(receipt['objective'], rescored_value=value, receipt_value=receipt['objective']['value']))))
+'''
+
+
 @pytest.fixture
 def config(tmp_path):
     checkout = tmp_path / 'predictor checkout'
     (checkout / 'tools').mkdir(parents=True)
     (checkout / 'tools' / '__init__.py').write_text('')
     (checkout / 'tools' / 'modular_candidate_evaluator.py').write_text(DOUBLE)
+    (checkout / 'tools' / 'modular_checkpoint_scorer.py').write_text(SCORER_DOUBLE)
     for args in (["init", "-q"], ["add", "."],
                  ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
                   "commit", "-qm", "protocol double"]):
@@ -98,11 +115,36 @@ def test_overrides_and_independent_plugin_evaluation(config):
     params = plugin.last_parameters
     assert params['window'] == 32 and params['evaluator'] == {'seed': 17}
     assert config['candidate_config']['window'] == 16
+    trained_root = config['output_dir']
     config['output_dir'] += '-verification'
+    fresh = bridge(config)
+    with pytest.raises(CandidateEvaluationError, match='does not retrain'):
+        fresh.evaluate(params)  # no receipt reachable -> no silent retraining
+    config['receipt_roots'] = [trained_root]
     verifier = bridge(config)
     assert verifier.evaluate(params) == result['objective']['value']
+    assert not list(Path(config['output_dir']).glob('*/request.json'))  # nothing was trained
+    assert list(Path(config['output_dir']).glob('verify-*/verification.json'))
     with pytest.raises(ValueError, match='identified'):
         verifier.evaluate(params, {'unidentified': True})
+
+
+def test_tampered_checkpoint_is_refuted(config):
+    plugin = bridge(config)
+    result = plugin.evaluate_candidate()
+    Path(result['artifacts']['best_model']).write_bytes(b'tampered')
+    root = config['output_dir']
+    config['output_dir'] += '-verification'
+    config['receipt_roots'] = [root]
+    with pytest.raises(CandidateEvaluationError, match='refuted'):
+        bridge(config).evaluate(plugin.last_parameters)
+
+
+def test_device_threads_and_heartbeat_settings_validated(config):
+    for key, value in (('cpu_threads', 0), ('cuda_visible_devices', 0), ('heartbeat_interval', 61)):
+        bad = dict(config, **{key: value})
+        with pytest.raises(ValueError):
+            bridge(bad)
 
 
 @pytest.mark.parametrize('mode', ['error', 'nan', 'dry_run', 'unmeasured',
