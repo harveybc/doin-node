@@ -73,9 +73,14 @@ the repository's usual external-plugin layout requested for this handoff.
 - `optimize(current_best_params, current_best_performance)` measures the configured
   proposal and returns `(effective_parameters, objective_value)` only on improvement.
   Incumbent parameters are not proposals. No search loop is invented here.
-- `evaluate(parameters, data=None)` retrains via the same evaluator; it is **not**
-  independent checkpoint inference, a synthetic-data adapter, or consensus proof.
-  Use a separate output root to repeat a candidate for verification.
+- `evaluate(parameters, data=None)` **never retrains** (M04, 2026-09-30): it finds the
+  accepted receipt for the candidate identity under `output_dir`/`receipt_roots` and
+  calls `verify_checkpoint`, which runs predictor's `tools/modular_checkpoint_scorer.py`
+  in a fresh pinned process (compile=False, safe_mode, no fit, validation only) and
+  returns the rescored objective only on VERIFIED. No receipt means an error.
+  `--verify <accepted.json>` exposes the same path on the CLI. Optional settings:
+  `cuda_visible_devices`, `cpu_threads`, `heartbeat_interval` (<= 60 s), `receipt_roots`.
+  Real-engine acceptance: predictor `docs/audits/work_plan/SATOSHI_M04_DOIN_EXECUTION_2026_09_30.md`.
 - Duplicate canonical config/data/revision/interpreter identities are refused
   across instances, including failed reservations. Retry in a new output root.
 - The worker uses `-I`, explicit checkout import, CPU visibility, one-thread
