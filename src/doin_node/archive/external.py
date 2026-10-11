@@ -322,3 +322,47 @@ def canonical_references(
                     )
                 )
     return found
+
+
+def ingest_reference_spool(
+    spool: Any,
+    record_transaction: Callable[[Transaction], Any],
+    *,
+    known_tx_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Hand spooled reference transactions (``<tx_id>.json``) to consensus, once each.
+
+    Each file is parsed, its id re-derived and its reference checked before
+    ``record_transaction`` sees it; a refused file is moved to ``refused/`` with
+    the reason, an accepted one to ``ingested/``. Nothing is fetched and no
+    validation is skipped: blocks carrying these transactions still go through
+    ``Chain._validate_block``.
+    """
+    from pathlib import Path
+
+    root = Path(spool)
+    done, refused = root / "ingested", root / "refused"
+    done.mkdir(parents=True, exist_ok=True)
+    refused.mkdir(parents=True, exist_ok=True)
+    seen = known_tx_ids if known_tx_ids is not None else set()
+    summary: dict[str, Any] = {"ingested": 0, "already_known": 0, "refused": []}
+    for path in sorted(root.glob("*.json")):
+        try:
+            tx = Transaction.model_validate_json(path.read_bytes())
+            check_reference_transaction(tx)
+            if path.stem != tx.id:
+                raise ArchiveRefusal("SPOOL_NAME_IS_NOT_TX_ID")
+        except (ArchiveRefusal, ValueError) as exc:
+            reason = f"{type(exc).__name__}: {exc}"[:300]
+            (refused / (path.name + ".reason")).write_text(reason)
+            path.replace(refused / path.name)
+            summary["refused"].append({"file": path.name, "reason": reason})
+            continue
+        if tx.id in seen:
+            summary["already_known"] += 1
+        else:
+            record_transaction(tx)
+            seen.add(tx.id)
+            summary["ingested"] += 1
+        path.replace(done / path.name)
+    return summary

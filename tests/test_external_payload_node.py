@@ -231,3 +231,23 @@ def test_http_byte_store_client_round_trip_without_printing_the_token():
     assert "s3cret" not in repr(store) and "s3cret" not in json.dumps(store.describe())
     with pytest.raises(ArchiveRefusal, match="MISSING"):
         store.get_bytes("f" * 64)
+
+
+def test_reference_spool_ingest_validates_and_is_idempotent(tmp_path):
+    from doin_node.archive.external import ingest_reference_spool
+
+    store = MemoryStore()
+    archive = ExternalPayloadArchive({"cas": store}, write_store_id="cas")
+    ref = archive.store_body(_body(), mode="external_payload")
+    tx = build_reference_transaction(ref, peer_id="peer-1", timestamp=TS)
+    (tmp_path / f"{tx.id}.json").write_text(tx.model_dump_json())
+    forged = tx.model_copy(update={"payload": dict(ref, manifest_digest="e" * 64)})
+    (tmp_path / f"{'0' * 64}.json").write_text(forged.model_dump_json())
+    recorded = []
+    seen: set[str] = set()
+    out = ingest_reference_spool(tmp_path, recorded.append, known_tx_ids=seen)
+    assert out["ingested"] == 1 and len(out["refused"]) == 1
+    assert [t.id for t in recorded] == [tx.id]
+    (tmp_path / f"{tx.id}.json").write_text(tx.model_dump_json())   # replayed file
+    again = ingest_reference_spool(tmp_path, recorded.append, known_tx_ids=seen)
+    assert again["already_known"] == 1 and len(recorded) == 1
