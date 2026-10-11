@@ -198,6 +198,21 @@ class Chain:
         if block.hash != expected_hash:
             raise ChainError("Block hash mismatch")
 
+        # External-payload references: additional check only. The id must be
+        # bound to the reference payload and the payload must be well formed.
+        from doin_core.archive.body import ArchiveRefusal
+        from doin_core.archive.external import (
+            check_reference_transaction,
+            is_reference_transaction,
+        )
+
+        for tx in block.transactions:
+            if is_reference_transaction(tx):
+                try:
+                    check_reference_transaction(tx)
+                except ArchiveRefusal as exc:
+                    raise ChainError(f"Invalid external reference transaction: {exc}") from exc
+
     def save(self, path: str | Path | None = None) -> None:
         """Persist the chain to a JSON file."""
         save_path = Path(path) if path else self._default_path()
