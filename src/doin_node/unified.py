@@ -129,6 +129,62 @@ def _candidate_rejection_reason(result: dict[str, Any]) -> str | None:
     return None
 
 
+REPRODUCTION_FAILURE_POLICIES = ("reevaluate", "fail_closed")
+
+
+def _shared_improved(best_ever: Any, candidate: Any, higher_is_better: bool, tolerance: float) -> bool:
+    """Generation improvement test with an absolute tolerance (I6-N: 1e-4).
+
+    ``best_ever`` may be +/-inf (no champion yet). A candidate improves only by
+    MORE than ``tolerance`` in the domain's direction; equal is no improvement.
+    """
+    if tolerance < 0 or not math.isfinite(tolerance):
+        raise ValueError("improvement tolerance must be finite and >= 0")
+    if candidate is None:
+        return False
+    candidate = float(candidate)
+    if not math.isfinite(candidate):
+        return False
+    best = float(best_ever)
+    if not math.isfinite(best):
+        return True
+    return candidate > best + tolerance if higher_is_better else candidate < best - tolerance
+
+
+def _shared_reproduction_policy(optimization_config: dict[str, Any]) -> str:
+    """'reevaluate' keeps the historical behaviour; 'fail_closed' never repeats finished fits."""
+    policy = optimization_config.get("reproduction_failure_policy", "reevaluate")
+    if policy not in REPRODUCTION_FAILURE_POLICIES:
+        raise ValueError(f"unknown reproduction_failure_policy {policy!r}")
+    return policy
+
+
+def _shared_result_identity_mismatch(population_item: Any, result: dict[str, Any], strict: bool = False) -> bool:
+    """True when a result cannot be bound to the population entry it would be recorded for."""
+    expected = population_item.get("identity") if isinstance(population_item, dict) else None
+    supplied = result.get("candidate_identity")
+    if expected is None:
+        return False
+    if supplied is None:
+        return strict
+    return supplied != expected
+
+
+def _shared_role_refusal(plugin: Any, role: Any, optimization_config: dict[str, Any]) -> str | None:
+    """Ask the optimizer plugin to confirm the domain role (direction, seed) before any work."""
+    validate = getattr(plugin, "validate_domain_role", None)
+    if validate is None:
+        return None
+    try:
+        validate({
+            "higher_is_better": getattr(role, "higher_is_better", True),
+            "shared_population_seed": optimization_config.get("shared_population_seed"),
+        })
+    except Exception as exc:  # the plugin decides; the node only reports and refuses
+        return str(exc) or type(exc).__name__
+    return None
+
+
 def _shared_population_seed(domain_id: str, optimization_config: dict[str, Any]) -> int:
     configured = optimization_config.get(
         "shared_population_seed", optimization_config.get("ga_seed")
@@ -1598,6 +1654,18 @@ class UnifiedNode:
             cur_gen = self._shared_pop_generation.get(domain_id)
             if gen is not None and idx is not None and gen == cur_gen:
                 results = self._shared_pop_results.get(domain_id, {})
+                _pop_state = self._shared_pop_state.get(domain_id) or {}
+                _population = _pop_state.get("population", [])
+                _item = _population[idx] if isinstance(idx, int) and 0 <= idx < len(_population) else None
+                _role_cfg = getattr(self._domain_roles.get(domain_id), "optimization_config", {}) or {}
+                if _item is None or _shared_result_identity_mismatch(
+                    _item, candidate_data, strict=_role_cfg.get("i6n_swarm") is not None,
+                ):
+                    logger.warning(
+                        "[SHARED] Ignoring peer %s result for candidate %s gen=%s %s: identity not bound",
+                        message.sender_id[:12], idx, gen, domain_id,
+                    )
+                    return
                 if idx not in results:  # First result wins
                     _role = self._domain_roles.get(domain_id)
                     _hib_peer = getattr(_role, 'higher_is_better', False) if _role else False
@@ -1615,6 +1683,8 @@ class UnifiedNode:
                         "test_mae": candidate_data.get("test_mae"),
                         "test_naive_mae": candidate_data.get("test_naive_mae"),
                     }
+                    if candidate_data.get("candidate_identity"):
+                        results[idx]["candidate_identity"] = candidate_data["candidate_identity"]
                     self._shared_pop_results[domain_id] = results
                     # Also update population fitness for reproduction
                     pop_state = self._shared_pop_state.get(domain_id)
@@ -2217,6 +2287,16 @@ class UnifiedNode:
                 continue
 
             opt_cfg = role.optimization_config
+            refusal = _shared_role_refusal(plugin, role, opt_cfg)
+            if refusal is not None:
+                logger.error("[SHARED] Domain role refused by optimizer plugin for %s: %s", domain_id, refusal)
+                self._log_event("shared_role_refused", domain_id=domain_id, reason=refusal)
+                continue
+            try:
+                _shared_reproduction_policy(opt_cfg)
+            except ValueError as exc:
+                logger.error("[SHARED] Invalid shared policy for %s: %s", domain_id, exc)
+                continue
             shared_pop_size = opt_cfg.get("shared_population_size", 60)
             shared_patience = opt_cfg.get("optimization_patience", 5)
             bootstrap_seed = _shared_population_seed(domain_id, opt_cfg)
@@ -2538,6 +2618,16 @@ class UnifiedNode:
                     lease_stop.set()
                     await lease_task
 
+                if _shared_result_identity_mismatch(
+                    genome_data, result, strict=opt_cfg.get("i6n_swarm") is not None,
+                ):
+                    # Never record (or publish) a score under another candidate's index.
+                    result = {
+                        "fitness": _worst_fitness,
+                        "candidate_rejected": True,
+                        "candidate_rejected_reason": "candidate_identity_mismatch",
+                        "candidate_identity": genome_data.get("identity") if isinstance(genome_data, dict) else None,
+                    }
                 fitness = result.get("fitness", _worst_fitness)
                 rejection_reason = _candidate_rejection_reason(result)
                 if rejection_reason:
@@ -2693,12 +2783,9 @@ class UnifiedNode:
                     (max(eligible_fitnesses) if _hib else min(eligible_fitnesses))
                     if eligible_fitnesses else None
                 )
-                _gen_improved = (
-                    eligible_best is not None
-                    and (
-                        (eligible_best > best_fitness_ever)
-                        if _hib else (eligible_best < best_fitness_ever)
-                    )
+                _gen_improved = _shared_improved(
+                    best_fitness_ever, eligible_best, _hib,
+                    float(opt_cfg.get("improvement_tolerance", 0.0)),
                 )
                 if _gen_improved:
                     best_fitness_ever = eligible_best
@@ -2777,20 +2864,14 @@ class UnifiedNode:
                         ),
                     )
                 except Exception as _repro_err:
-                    logger.error(
-                        "[SHARED] reproduce_shared CRASHED gen=%d %s: %s — "
-                        "re-evaluating same generation",
-                        generation, domain_id, _repro_err,
+                    # fail_closed raises here: the domain stops with its results kept,
+                    # instead of clearing them and re-running finished fits.
+                    self._on_shared_reproduction_failure(
+                        domain_id, generation, _repro_err,
+                        _shared_reproduction_policy(opt_cfg),
                     )
-                    # Clear generation results and retry the same generation
-                    self._shared_pop_results[domain_id] = {}
-                    self._shared_pop_claims[domain_id] = set()
-                    self._shared_pop_claim_owners[domain_id] = {}
-                    self._shared_pop_claim_times[domain_id] = {}
-                    self._shared_pop_claim_result_counts[domain_id] = {}
                     gen_results = {}
                     claims = set()
-                    self._persist_shared_results(domain_id)
                     await asyncio.sleep(5)
                     continue
 
@@ -3018,6 +3099,7 @@ class UnifiedNode:
                     "train_naive_mae": result.get("train_naive_mae"),
                     "test_mae": result.get("test_mae"),
                     "test_naive_mae": result.get("test_naive_mae"),
+                    "candidate_identity": result.get("candidate_identity"),
                 },
             },
         )
@@ -5181,6 +5263,31 @@ class UnifiedNode:
 
     # ── Shared-population coordination API ─────────────────────
 
+    def _on_shared_reproduction_failure(
+        self, domain_id: str, generation: int, error: Exception, policy: str,
+    ) -> None:
+        """Handle a reproduce_shared exception according to the domain policy."""
+        if policy == "fail_closed":
+            logger.error(
+                "[SHARED] reproduce_shared FAILED gen=%d %s: %s — fail_closed: results kept, domain stopped",
+                generation, domain_id, error,
+            )
+            self._log_event("reproduction_failed_fail_closed", domain_id=domain_id,
+                            gen=generation, generation=generation, error=str(error))
+            raise RuntimeError(
+                f"reproduction of generation {generation} of {domain_id} failed (fail_closed): {error}"
+            )
+        logger.error(
+            "[SHARED] reproduce_shared CRASHED gen=%d %s: %s — re-evaluating same generation",
+            generation, domain_id, error,
+        )
+        self._shared_pop_results[domain_id] = {}
+        self._shared_pop_claims[domain_id] = set()
+        self._shared_pop_claim_owners[domain_id] = {}
+        self._shared_pop_claim_times[domain_id] = {}
+        self._shared_pop_claim_result_counts[domain_id] = {}
+        self._persist_shared_results(domain_id)
+
     def _shared_results_path(self, domain_id: str) -> Path:
         domain_key = hashlib.sha256(domain_id.encode()).hexdigest()[:16]
         return Path(self.config.data_dir) / f"shared-results-{domain_key}.json"
@@ -5199,6 +5306,9 @@ class UnifiedNode:
                 "candidate_rejected_reason"
             ),
         }
+        identity = result.get("candidate_identity")
+        if isinstance(identity, str) and identity:
+            snapshot["candidate_identity"] = identity
         for key in (
             "val_mae",
             "train_mae",
