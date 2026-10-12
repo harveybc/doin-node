@@ -312,6 +312,15 @@ def test_summary_card_counts_deduplicated_online_nodes_not_peer_routes() -> None
     assert "peerCount').textContent = peers.connected_count" not in html
 
 
+def test_campaign_cards_use_network_candidate_totals_for_island_mode() -> None:
+    html = _DASHBOARD.read_text()
+
+    assert '<p>Network Candidates</p>' in html
+    assert '<p>Local Position</p>' in html
+    assert "network.summary.local_candidate_evaluations" in html
+    assert "plannedSlots * onlineNodes" in html
+
+
 def test_blockchain_history_attributes_candidates_and_champions() -> None:
     def transaction(kind, peer_id, tx_id, performance=None):
         payload = {}

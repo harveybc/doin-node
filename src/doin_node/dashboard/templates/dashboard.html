@@ -111,7 +111,7 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-warning">
-              <div class="inner"><h3 id="totalEvalsCard">0</h3><p>Candidates Evaluated</p></div>
+              <div class="inner"><h3 id="totalEvalsCard">0</h3><p>Network Candidates</p></div>
               <div class="icon"><i class="fas fa-flask"></i></div>
             </div>
           </div>
@@ -123,7 +123,7 @@
           </div>
           <div class="col-lg-2 col-6">
             <div class="small-box bg-primary">
-              <div class="inner"><h3 id="remainingCard" style="font-size:1.2rem">--</h3><p>Remaining</p></div>
+              <div class="inner"><h3 id="remainingCard" style="font-size:1.2rem">--</h3><p>Local Position</p></div>
               <div class="icon"><i class="fas fa-tasks"></i></div>
             </div>
           </div>
@@ -1067,7 +1067,12 @@ async function refreshAll() {
     // Optimization config defaults from /api/optimization (first domain)
     const optDom = (opt && opt.domains && opt.domains.length > 0) ? opt.domains[0] : {};
     const prog = latEval || latGen || cand || {};
-    const totalEvals = parseInt(prog.total_evals || cand.total_evals || 0);
+    const networkEvals = Number(network && network.summary
+      ? network.summary.local_candidate_evaluations
+      : NaN);
+    const totalEvals = Number.isFinite(networkEvals)
+      ? networkEvals
+      : parseInt(prog.total_evals || cand.total_evals || 0);
     const curCand = parseInt(latEval ? (latEval.candidate_num || 0) : (cand.candidate_num || 0));
     const totCand = parseInt(latEval ? (latEval.total_candidates || 0) : (latGen ? (latGen.population_size || 20) : (cand.total_candidates || optDom.population_size || 20)));
     // Per-stage generation count (preferred) with fallback to total
@@ -1120,12 +1125,19 @@ async function refreshAll() {
           Math.min(genInStage, stagePlan[stageIndex]) * Math.max(totCand, 1) +
           Math.min(Math.max(generationEvaluated, 0), Math.max(totCand, 1)),
       );
-      const campaignCompleted = Number.isFinite(Number(campaign.campaign_candidates_completed))
-        ? Number(campaign.campaign_candidates_completed)
-        : inferredCompleted;
-      const campaignPlanned = Number.isFinite(Number(campaign.campaign_candidates_planned))
-        ? Number(campaign.campaign_candidates_planned)
-        : plannedSlots;
+      const onlineNodes = Math.max(1, Number(network && network.summary
+        ? network.summary.online_nodes
+        : 1));
+      const campaignCompleted = Number.isFinite(networkEvals)
+        ? networkEvals
+        : (Number.isFinite(Number(campaign.campaign_candidates_completed))
+          ? Number(campaign.campaign_candidates_completed)
+          : inferredCompleted);
+      const campaignPlanned = Number.isFinite(networkEvals)
+        ? plannedSlots * onlineNodes
+        : (Number.isFinite(Number(campaign.campaign_candidates_planned))
+          ? Number(campaign.campaign_candidates_planned)
+          : plannedSlots);
       const overallPct = campaignPlanned > 0
         ? (100 * Math.min(campaignPlanned, campaignCompleted) / campaignPlanned).toFixed(1)
         : '0.0';
@@ -1134,7 +1146,7 @@ async function refreshAll() {
       const eta = localOptimizationHistory.stage_eta_seconds;
       const runtimeText = rate != null ?
         `${Number(rate).toFixed(1)} cand/h | stage ETA ${eta != null ? fmtDuration(eta) : '--'}` :
-        'Rate and ETA pending';
+        `Planned maximum across ${onlineNodes} node(s); early stopping may finish sooner`;
       const runtimeElement = document.getElementById('progressRuntime');
       runtimeElement.textContent = runtimeText;
       runtimeElement.title = eta != null ?
