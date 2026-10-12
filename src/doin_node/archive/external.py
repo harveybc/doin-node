@@ -25,6 +25,7 @@ deployment, and ``chain_verified`` claims of the stage-1 shadow are untouched.
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -237,6 +238,35 @@ def build_reference_transaction(
     )
     check_reference_transaction(tx)
     return tx
+
+
+def spool_submitter(spool: Any) -> Callable[[Transaction], None]:
+    """Return an idempotent, fsyncing writer for the node reference spool.
+
+    The filename is the transaction identity. A retry with identical bytes is
+    a no-op; the same identity with different bytes is a hard conflict.
+    """
+    from pathlib import Path
+
+    root = Path(spool)
+    root.mkdir(parents=True, exist_ok=True)
+
+    def submit(tx: Transaction) -> None:
+        check_reference_transaction(tx)
+        data = tx.model_dump_json().encode("utf-8")
+        target = root / f"{tx.id}.json"
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            if target.read_bytes() != data:
+                raise ArchiveRefusal("SPOOL_CONFLICT: same tx id, different bytes")
+            return
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    return submit
 
 
 @dataclass(frozen=True)

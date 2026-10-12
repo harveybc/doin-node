@@ -28,7 +28,9 @@ import hashlib
 import json
 import logging
 import math
+import os
 import secrets
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -328,6 +330,16 @@ class UnifiedNodeConfig:
     archive_reference_spool: str = ""
     archive_spool_interval: float = 30.0
 
+    # Candidate callback publication. The default retains the historical
+    # CANDIDATE_EVALUATED payload; external_payload stores the complete I6N
+    # record outside the chain and spools only its verified reference.
+    candidate_archive_mode: str = "full_payload"
+    candidate_archive_root: str = ""
+    candidate_archive_store_id: str = ""
+    candidate_archive_store_url: str = ""
+    candidate_archive_token_env: str = ""
+    candidate_archive_pump_interval: float = 30.0
+
     # Storage backend: "sqlite" (production) or "json" (legacy/testing)
     storage_backend: str = "sqlite"
     db_path: str = ""  # Auto-derived from data_dir if empty
@@ -358,6 +370,26 @@ class UnifiedNodeConfig:
     fee_market_enabled: bool = True
     fee_config: FeeConfig = field(default_factory=FeeConfig)
 
+    def validate_candidate_archive(self) -> None:
+        if self.candidate_archive_mode not in ("full_payload", "external_payload"):
+            raise ValueError("candidate_archive_mode must be full_payload or external_payload")
+        if self.candidate_archive_pump_interval <= 0:
+            raise ValueError("candidate_archive_pump_interval must be positive")
+        if self.candidate_archive_mode == "full_payload":
+            return
+        required = {
+            "candidate_archive_root": self.candidate_archive_root,
+            "candidate_archive_store_id": self.candidate_archive_store_id,
+            "candidate_archive_store_url": self.candidate_archive_store_url,
+            "candidate_archive_token_env": self.candidate_archive_token_env,
+            "archive_reference_spool": self.archive_reference_spool,
+        }
+        missing = [name for name, value in required.items() if not isinstance(value, str) or not value]
+        if missing:
+            raise ValueError("external candidate archive requires " + ", ".join(missing))
+        if not self.candidate_archive_store_url.startswith(("http://", "https://")):
+            raise ValueError("candidate_archive_store_url must be HTTP(S)")
+
 
 @dataclass(frozen=True)
 class SharedClaimConfirmation:
@@ -384,6 +416,7 @@ class UnifiedNode:
         identity: PeerIdentity | None = None,
     ) -> None:
         self.config = config
+        config.validate_candidate_archive()
 
         # Identity: use provided, or load from file (persists across restarts)
         if identity:
@@ -490,7 +523,39 @@ class UnifiedNode:
         self._domain_stage_start_fitness: dict[str, float] = {}  # domain_id → fitness at start of current stage
         self._domain_patience: dict[str, tuple[int, int]] = {}  # domain_id → (no_improve_counter, patience_max)
         self._current_candidate: dict[str, Any] = {}  # current candidate being evaluated (local, per-machine)
+        self._optimization_terminal_path = Path(config.data_dir) / "optimization_terminals.json"
+        self._optimization_terminals = self._load_optimization_terminals()
         self._seen_candidate_tx_ids: set[str] = set()  # dedup candidate evaluation transactions
+        self._candidate_archive_publishers: dict[str, Any] = {}
+        self._candidate_archive_references: dict[str, dict[str, dict[str, Any]]] = {}
+        self._candidate_external_archive: Any | None = None
+        self._candidate_archive_submit: Any | None = None
+        if config.candidate_archive_mode == "external_payload":
+            from doin_node.archive.external import (
+                ExternalPayloadArchive,
+                HttpByteStore,
+                spool_submitter,
+            )
+
+            def token_provider() -> str:
+                token = os.environ.get(config.candidate_archive_token_env)
+                if not token:
+                    raise RuntimeError(
+                        f"TOKEN_ENV_MISSING: {config.candidate_archive_token_env}"
+                    )
+                return token
+
+            store = HttpByteStore(
+                config.candidate_archive_store_url,
+                token_provider=token_provider,
+            )
+            self._candidate_external_archive = ExternalPayloadArchive(
+                {config.candidate_archive_store_id: store},
+                write_store_id=config.candidate_archive_store_id,
+            )
+            self._candidate_archive_submit = spool_submitter(
+                config.archive_reference_spool
+            )
         self._start_time: float = time.time()
 
         # ── Shared-population state ──
@@ -934,6 +999,10 @@ class UnifiedNode:
             self._background_tasks.append(
                 asyncio.create_task(self._archive_spool_loop())
             )
+        if self.config.candidate_archive_mode == "external_payload":
+            self._background_tasks.append(
+                asyncio.create_task(self._candidate_archive_pump_loop())
+            )
 
         protocol = "gossipsub" if self.gossip else "flooding"
         storage = "sqlite" if self.chaindb else "json"
@@ -1017,6 +1086,187 @@ class UnifiedNode:
             except Exception:
                 logger.exception("[ARCHIVE] spool ingestion failed; retrying next interval")
             await asyncio.sleep(max(1.0, float(self.config.archive_spool_interval)))
+
+    def _candidate_archive_publisher(self, domain_id: str) -> Any:
+        publisher = self._candidate_archive_publishers.get(domain_id)
+        if publisher is not None:
+            return publisher
+        try:
+            from tools.i6n_archive.publisher import ArchivePublisher
+        except ImportError as exc:
+            raise RuntimeError(
+                "candidate_archive_mode=external_payload requires predictor's "
+                "tools.i6n_archive package in the node environment"
+            ) from exc
+        domain_root = Path(self.config.candidate_archive_root) / hashlib.sha256(
+            domain_id.encode("utf-8")
+        ).hexdigest()[:24]
+        publisher = ArchivePublisher(
+            domain_root,
+            store_id=self.config.candidate_archive_store_id,
+            domain_id=domain_id,
+            producer_peer_id=self.peer_id,
+            mode="external_payload",
+        )
+        self._candidate_archive_publishers[domain_id] = publisher
+        return publisher
+
+    def _pump_candidate_archive_outboxes_once(self) -> dict[str, Any]:
+        """Retry every durable candidate outbox without requiring an agent."""
+        from tools.i6n_archive.publisher import ArchivePublisher
+
+        summary: dict[str, Any] = {"outboxes": 0, "stored": 0, "submitted": 0, "errors": []}
+        root = Path(self.config.candidate_archive_root)
+        for path in sorted(root.glob("*/outbox.sqlite")):
+            publisher = ArchivePublisher.from_outbox(path)
+            try:
+                result = publisher.pump(
+                    self._candidate_external_archive,
+                    self._candidate_archive_submit,
+                )
+                summary["outboxes"] += 1
+                summary["stored"] += result["stored"]
+                summary["submitted"] += result["submitted"]
+                summary["errors"].extend(result["errors"])
+            finally:
+                publisher.outbox.close()
+        return summary
+
+    async def _candidate_archive_pump_loop(self) -> None:
+        while self._running:
+            try:
+                result = await asyncio.to_thread(
+                    self._pump_candidate_archive_outboxes_once
+                )
+                if result["stored"] or result["submitted"] or result["errors"]:
+                    self._log_event("candidate_archive_pump", **result)
+            except Exception:
+                logger.exception("[ARCHIVE] candidate outbox pump failed; retrying")
+            await asyncio.sleep(
+                max(1.0, float(self.config.candidate_archive_pump_interval))
+            )
+
+    @staticmethod
+    def _candidate_evaluation_data(candidate_info: dict[str, Any]) -> dict[str, Any]:
+        raw_metrics = candidate_info.get("metrics")
+        if not isinstance(raw_metrics, dict):
+            raw_metrics = {}
+        return {
+            "generation": candidate_info.get("generation"),
+            "candidate_in_gen": candidate_info.get("candidate_in_gen"),
+            "total_eval": candidate_info.get("total_eval"),
+            "stage": candidate_info.get("stage"),
+            "total_stages": candidate_info.get("total_stages"),
+            "stage_name": candidate_info.get("stage_name"),
+            "gen_in_stage": candidate_info.get("gen_in_stage"),
+            "n_generations_stage": candidate_info.get("n_generations_stage"),
+            "n_generations_total": candidate_info.get("n_generations_total"),
+            "population_size": candidate_info.get("population_size"),
+            "species_id": candidate_info.get("species_id"),
+            "complexity": candidate_info.get("complexity"),
+            "is_champion": candidate_info.get("is_champion"),
+            "fitness": candidate_info.get("fitness"),
+            "champion_fitness": candidate_info.get("champion_fitness"),
+            "parameters": candidate_info.get("parameters", {}),
+            "champion_parameters": candidate_info.get("champion_parameters", {}),
+            "train_mae": candidate_info.get("train_mae"),
+            "train_naive_mae": candidate_info.get("train_naive_mae"),
+            "val_mae": candidate_info.get("val_mae"),
+            "val_naive_mae": candidate_info.get("val_naive_mae"),
+            "test_mae": candidate_info.get("test_mae"),
+            "test_naive_mae": candidate_info.get("test_naive_mae"),
+            "metric_schema": raw_metrics.get("metric_schema"),
+            "metrics": raw_metrics,
+            "no_improve_counter": candidate_info.get("no_improve_counter"),
+            "optimization_patience": candidate_info.get("optimization_patience"),
+            "neat_species_count": candidate_info.get("neat_species_count"),
+            "neat_avg_complexity": candidate_info.get("neat_avg_complexity"),
+        }
+
+    def _candidate_evaluation_transaction(
+        self, domain_id: str, candidate_info: dict[str, Any]
+    ) -> Transaction:
+        """Build the historical full-payload transaction unchanged in shape."""
+        return Transaction(
+            tx_type=TransactionType.CANDIDATE_EVALUATED,
+            domain_id=domain_id,
+            peer_id=self.peer_id,
+            payload=self._candidate_evaluation_data(candidate_info),
+        )
+
+    def _archive_only_optimae_payload(
+        self, domain_id: str, optimae_id: str, parameters: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Return the hash-only champion payload when external archive mode is active."""
+        if self.config.candidate_archive_mode != "external_payload":
+            return None
+        from doin_core.archive.external import check_reference_payload
+
+        reference = parameters.get("_i6n_archive_reference")
+        checked = check_reference_payload(reference)
+        if checked["archive_mode"] != "external_payload":
+            raise RuntimeError("I6N champion reference must use external_payload")
+        return {
+            "optimae_id": optimae_id,
+            "candidate_archive_reference": checked,
+        }
+
+    def _publish_candidate_evaluation(
+        self,
+        domain_id: str,
+        candidate_info: dict[str, Any],
+        *,
+        loop: asyncio.AbstractEventLoop | None,
+    ) -> Any:
+        """Publish a candidate through the selected archive compatibility mode."""
+        if self.config.candidate_archive_mode == "external_payload":
+            role = self._domain_roles.get(domain_id)
+            if role is None:
+                raise ValueError(f"unknown archive domain: {domain_id}")
+            publisher = self._candidate_archive_publisher(domain_id)
+            recorded = publisher.record_island_candidate(
+                candidate_info, role.optimization_config
+            )
+            pumped = publisher.pump(
+                self._candidate_external_archive,
+                self._candidate_archive_submit,
+            )
+            if pumped["errors"]:
+                logger.warning(
+                    "[%s] candidate retained in durable outbox; external pump will retry: %s",
+                    domain_id,
+                    pumped["errors"],
+                )
+            item = publisher.outbox.item(recorded["item_id"])
+            reference = item.get("reference") if item else None
+            genotype = candidate_info.get("genotype_canonical_sha256")
+            if reference is not None and isinstance(genotype, str):
+                self._candidate_archive_references.setdefault(domain_id, {})[
+                    genotype
+                ] = reference
+            return dict(recorded, pump=pumped, reference=reference)
+
+        tx = self._candidate_evaluation_transaction(domain_id, candidate_info)
+        if tx.id in self._seen_candidate_tx_ids:
+            return tx
+        self._seen_candidate_tx_ids.add(tx.id)
+        self.consensus.record_transaction(tx)
+        if loop is not None:
+            future = asyncio.run_coroutine_threadsafe(
+                self._broadcast_candidate_evaluation(
+                    domain_id,
+                    tx.id,
+                    self.peer_id,
+                    dict(tx.payload),
+                    tx.timestamp.isoformat(),
+                ),
+                loop,
+            )
+            try:
+                future.result(timeout=10)
+            except Exception as exc:
+                logger.debug("Candidate eval broadcast error: %s", exc)
+        return tx
 
     def _has_transaction(self, tx_id: str) -> bool:
         if self.chaindb:
@@ -1510,27 +1760,31 @@ class UnifiedNode:
         # Record the full public metric vector. Legacy MAE columns remain for
         # older dashboards while generic consumers use champion_metrics.
         cm = getattr(data, 'champion_metrics', None) or {}
+        legacy_payload = {
+            "optimae_id": data.optimae_id,
+            "parameters": data.parameters,
+            "verified_performance": verified,
+            "effective_increment": effective_increment,
+            "reward_fraction": incentive_result.reward_fraction,
+            "quorum_agree_fraction": 1.0,
+            "incentive_reason": "auto_accept_no_synthetic_validation",
+            "val_mae": cm.get("val_mae"),
+            "train_mae": cm.get("train_mae"),
+            "val_naive_mae": cm.get("val_naive_mae"),
+            "train_naive_mae": cm.get("train_naive_mae"),
+            "test_mae": cm.get("test_mae"),
+            "test_naive_mae": cm.get("test_naive_mae"),
+            "champion_metrics": self._public_champion_metrics(cm),
+            **onchain_metrics,
+        }
+        chain_payload = self._archive_only_optimae_payload(
+            data.domain_id, data.optimae_id, data.parameters
+        ) or legacy_payload
         self.consensus.record_transaction(Transaction(
             tx_type=TransactionType.OPTIMAE_ACCEPTED,
             domain_id=data.domain_id,
             peer_id=sender_id,
-            payload={
-                "optimae_id": data.optimae_id,
-                "parameters": data.parameters,
-                "verified_performance": verified,
-                "effective_increment": effective_increment,
-                "reward_fraction": incentive_result.reward_fraction,
-                "quorum_agree_fraction": 1.0,  # Auto-accepted
-                "incentive_reason": "auto_accept_no_synthetic_validation",
-                "val_mae": cm.get("val_mae"),
-                "train_mae": cm.get("train_mae"),
-                "val_naive_mae": cm.get("val_naive_mae"),
-                "train_naive_mae": cm.get("train_naive_mae"),
-                "test_mae": cm.get("test_mae"),
-                "test_naive_mae": cm.get("test_naive_mae"),
-                "champion_metrics": self._public_champion_metrics(cm),
-                **onchain_metrics,
-            },
+            payload=chain_payload,
         ))
         self.vuw.update_from_block([{
             "tx_type": "optimae_accepted",
@@ -1750,6 +2004,12 @@ class UnifiedNode:
             return
 
         # ── Standard candidate evaluation (island mode) ──
+        if self.config.candidate_archive_mode == "external_payload":
+            logger.warning(
+                "[%s] rejected legacy full candidate broadcast while external archive mode is active",
+                domain_id,
+            )
+            return
         from doin_core.models.transaction import Transaction, TransactionType
         from datetime import datetime, timezone
         ts_str = payload.get("timestamp")
@@ -1933,21 +2193,25 @@ class UnifiedNode:
                     reported_performance=reported,
                 )
 
+            legacy_payload = {
+                "optimae_id": task.optimae_id,
+                "parameters": task.parameters,
+                "verified_performance": verified,
+                "effective_increment": effective_increment,
+                "reward_fraction": incentive_result.reward_fraction,
+                "quorum_agree_fraction": result.agree_fraction,
+                "incentive_reason": incentive_result.reason,
+                "champion_metrics": self._public_champion_metrics(task.metric_evidence),
+                **onchain_metrics,
+            }
+            chain_payload = self._archive_only_optimae_payload(
+                task.domain_id, task.optimae_id, task.parameters
+            ) or legacy_payload
             self.consensus.record_transaction(Transaction(
                 tx_type=TransactionType.OPTIMAE_ACCEPTED,
                 domain_id=task.domain_id,
                 peer_id=task.requester_id,
-                payload={
-                    "optimae_id": task.optimae_id,
-                    "parameters": task.parameters,  # On-chain for island model sync
-                    "verified_performance": verified,
-                    "effective_increment": effective_increment,
-                    "reward_fraction": incentive_result.reward_fraction,
-                    "quorum_agree_fraction": result.agree_fraction,
-                    "incentive_reason": incentive_result.reason,
-                    "champion_metrics": self._public_champion_metrics(task.metric_evidence),
-                    **onchain_metrics,
-                },
+                payload=chain_payload,
             ))
             self.vuw.update_from_block([{
                 "tx_type": "optimae_accepted",
@@ -2306,6 +2570,20 @@ class UnifiedNode:
                     self._current_candidate = {}
                 self._log_event("optimization_complete", domain_id=domain_id)
             except Exception:
+                role = self._domain_roles.get(domain_id)
+                if role and role.optimization_config.get("i6n_island_mode") is True:
+                    self._optimization_terminals[domain_id] = {
+                        "status": "FAILED",
+                        "island_id": role.optimization_config.get(
+                            "i6n_island_id", os.environ.get("I6N_ISLAND_ID")
+                        ),
+                        "horizon": role.optimization_config.get("i6n_horizon"),
+                        "seed": role.optimization_config.get(
+                            "ga_seed", role.optimization_config.get("seed")
+                        ),
+                        "failure_type": "OPTIMIZER_EXCEPTION",
+                    }
+                    self._persist_optimization_terminals()
                 logger.exception("Optimization error for %s", domain_id)
 
     # ── Shared-Population Optimizer Loop ─────────────────────────
@@ -3718,6 +3996,16 @@ class UnifiedNode:
                 return
 
             # Local champion is genuinely better than the known network best → broadcast
+            if node.config.candidate_archive_mode == "external_payload":
+                genotype = params.get("_i6n_genotype_sha256")
+                reference = node._candidate_archive_references.get(
+                    domain_id, {}
+                ).get(genotype)
+                if reference is None:
+                    raise RuntimeError(
+                        "I6N champion has no durable external candidate reference"
+                    )
+                params = dict(params, _i6n_archive_reference=reference)
             fut = _aio.run_coroutine_threadsafe(
                 node._broadcast_champion(domain_id, params, fitness, metrics, gen, stage_info),
                 loop,
@@ -4054,67 +4342,20 @@ class UnifiedNode:
                     exc_info=True,
                 )
 
-            # --- Blockchain: create transaction + broadcast to peers ---
-            try:
-                from doin_core.models.transaction import Transaction, TransactionType
-                import asyncio as _aio
-
-                candidate_data = {
-                    "generation": candidate_info.get("generation"),
-                    "candidate_in_gen": candidate_info.get("candidate_in_gen"),
-                    "total_eval": candidate_info.get("total_eval"),
-                    "stage": candidate_info.get("stage"),
-                    "total_stages": candidate_info.get("total_stages"),
-                    "stage_name": candidate_info.get("stage_name"),
-                    "gen_in_stage": candidate_info.get("gen_in_stage"),
-                    "n_generations_stage": candidate_info.get("n_generations_stage"),
-                    "n_generations_total": candidate_info.get("n_generations_total"),
-                    "population_size": candidate_info.get("population_size"),
-                    "species_id": candidate_info.get("species_id"),
-                    "complexity": candidate_info.get("complexity"),
-                    "is_champion": candidate_info.get("is_champion"),
-                    "fitness": candidate_info.get("fitness"),
-                    "champion_fitness": candidate_info.get("champion_fitness"),
-                    "parameters": candidate_info.get("parameters", {}),
-                    "champion_parameters": candidate_info.get("champion_parameters", {}),
-                    "train_mae": candidate_info.get("train_mae"),
-                    "train_naive_mae": candidate_info.get("train_naive_mae"),
-                    "val_mae": candidate_info.get("val_mae"),
-                    "val_naive_mae": candidate_info.get("val_naive_mae"),
-                    "test_mae": candidate_info.get("test_mae"),
-                    "test_naive_mae": candidate_info.get("test_naive_mae"),
-                    "metric_schema": raw_metrics.get("metric_schema"),
-                    "metrics": raw_metrics,
-                    "no_improve_counter": candidate_info.get("no_improve_counter"),
-                    "optimization_patience": candidate_info.get("optimization_patience"),
-                    "neat_species_count": candidate_info.get("neat_species_count"),
-                    "neat_avg_complexity": candidate_info.get("neat_avg_complexity"),
-                }
-
-                tx = Transaction(
-                    tx_type=TransactionType.CANDIDATE_EVALUATED,
-                    domain_id=domain_id,
-                    peer_id=node.peer_id,
-                    payload=candidate_data,
+            # Full mode preserves the historical transaction. External mode
+            # fails closed while creating the durable body, and never exposes
+            # candidate/config/metric fields to consensus or peer broadcasts.
+            if node.config.candidate_archive_mode == "external_payload":
+                node._publish_candidate_evaluation(
+                    domain_id, candidate_info, loop=loop
                 )
-                # Dedup locally
-                if tx.id not in node._seen_candidate_tx_ids:
-                    node._seen_candidate_tx_ids.add(tx.id)
-                    node.consensus.record_transaction(tx)
-                    # Broadcast to peers (async from sync thread)
-                    fut = _aio.run_coroutine_threadsafe(
-                        node._broadcast_candidate_evaluation(
-                            domain_id, tx.id, node.peer_id,
-                            candidate_data, tx.timestamp.isoformat(),
-                        ),
-                        loop,
+            else:
+                try:
+                    node._publish_candidate_evaluation(
+                        domain_id, candidate_info, loop=loop
                     )
-                    try:
-                        fut.result(timeout=10)
-                    except Exception as e:
-                        logger.debug("Candidate eval broadcast error: %s", e)
-            except Exception as e:
-                logger.debug("Candidate blockchain error: %s", e)
+                except Exception as exc:
+                    logger.debug("Candidate blockchain error: %s", exc)
 
         if hasattr(plugin, "set_candidate_evaluated_callback"):
             plugin.set_candidate_evaluated_callback(on_candidate_evaluated)
@@ -4147,6 +4388,13 @@ class UnifiedNode:
         if not math.isfinite(performance):
             return False
 
+        role = self._domain_roles[domain_id]
+        if role.optimization_config.get("i6n_island_mode") is True:
+            self._optimization_terminals[domain_id] = self._validated_island_terminal(
+                domain_id, plugin
+            )
+            self._persist_optimization_terminals()
+
         # Update domain best
         current_best = self._domain_best.get(domain_id, (None, None))
         if self._is_better(domain_id, performance, current_best[1]):
@@ -4157,6 +4405,102 @@ class UnifiedNode:
             domain_id, performance,
         )
         return True
+
+    def _load_optimization_terminals(self) -> dict[str, dict[str, Any]]:
+        """Load retained optimizer terminals; malformed state fails closed."""
+        path = self._optimization_terminal_path
+        if not path.exists():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("I6N optimization terminal state is unreadable") from exc
+        if (not isinstance(value, dict)
+                or any(not isinstance(key, str) or not isinstance(item, dict)
+                       for key, item in value.items())):
+            raise RuntimeError("I6N optimization terminal state is invalid")
+        return value
+
+    def _persist_optimization_terminals(self) -> None:
+        """Atomically retain explicit terminals across node restarts."""
+        path = self._optimization_terminal_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            prefix=".optimization-terminals-", suffix=".tmp", dir=path.parent
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(
+                    self._optimization_terminals, handle, sort_keys=True,
+                    separators=(",", ":"), allow_nan=False,
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _validated_island_terminal(
+        self, domain_id: str, plugin: Any
+    ) -> dict[str, Any]:
+        """Bind an explicit optimizer terminal to the node's sealed config."""
+        getter = getattr(plugin, "get_terminal_receipt", None)
+        if not callable(getter):
+            raise RuntimeError("I6N optimizer plugin has no explicit terminal API")
+        terminal = getter()
+        if not isinstance(terminal, dict):
+            raise RuntimeError("I6N optimizer did not return an explicit terminal")
+
+        role = self._domain_roles[domain_id]
+        config = role.optimization_config
+        config_json = json.dumps(
+            config, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        config_sha256 = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+        expected = {
+            "status": "COMPLETE",
+            "island_id": config.get("i6n_island_id", os.environ.get("I6N_ISLAND_ID")),
+            "horizon": config.get("i6n_horizon"),
+            "seed": config.get("ga_seed", config.get("seed")),
+        }
+        for key, value in expected.items():
+            if terminal.get(key) != value:
+                raise RuntimeError(f"I6N terminal {key} does not match the node config")
+        if terminal.get("stop_reason") not in {"patience", "generation_limit"}:
+            raise RuntimeError("I6N terminal has no governed stop reason")
+        generation = terminal.get("terminal_generation")
+        if type(generation) is not int or generation < 1:
+            raise RuntimeError("I6N terminal has an invalid generation")
+        for key in (
+            "champion_sha256", "plan_sha256", "contract_sha256",
+            "checkpoint_identity_sha256", "final_population_sha256",
+            "candidate_ledger_sha256",
+        ):
+            value = terminal.get(key)
+            if (not isinstance(value, str) or len(value) != 64
+                    or any(char not in "0123456789abcdef" for char in value)):
+                raise RuntimeError(f"I6N terminal has an invalid {key}")
+        champion_fitness = terminal.get("champion_fitness")
+        if (type(champion_fitness) not in (int, float)
+                or not math.isfinite(champion_fitness)):
+            raise RuntimeError("I6N terminal has an invalid champion_fitness")
+        evaluated = terminal.get("evaluated_candidate_count")
+        if type(evaluated) is not int or evaluated < 1:
+            raise RuntimeError("I6N terminal has an invalid evaluated_candidate_count")
+        plan = config.get("i6n_plan")
+        if not isinstance(plan, dict) or terminal["plan_sha256"] != plan.get("plan_sha256"):
+            raise RuntimeError("I6N terminal plan does not match the node config")
+        return {
+            **terminal,
+            "domain_id": domain_id,
+            "scientific_config_sha256": config_sha256,
+        }
 
     async def _broadcast_champion(
         self, domain_id: str, params: dict, fitness: float,
@@ -5909,6 +6253,7 @@ class UnifiedNode:
                 "seed": role.optimization_config.get(
                     "ga_seed", role.optimization_config.get("seed")),
                 "config_digest": hashlib.sha256(config_json.encode("utf-8")).hexdigest(),
+                "terminal": self._optimization_terminals.get(domain_id),
             }
         status: dict[str, Any] = {
             "status": "healthy",

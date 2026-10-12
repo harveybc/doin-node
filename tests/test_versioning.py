@@ -1,6 +1,12 @@
 from doin_node import versioning
 
 
+class _Result:
+    def __init__(self, stdout, returncode=0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
 def test_component_versions_cover_exact_campaign_components(
     monkeypatch,
     tmp_path,
@@ -39,3 +45,10 @@ def test_runtime_source_precedes_stale_editable_install(monkeypatch, tmp_path) -
     versions = versioning.compute_component_versions()
 
     assert versions["predictor"] == "b" * 40
+
+
+def test_dirty_checkout_cannot_report_a_clean_exact_commit(monkeypatch, tmp_path) -> None:
+    responses = iter([_Result("d" * 40 + "\n"), _Result(" M module.py\n")])
+    monkeypatch.setattr(versioning.subprocess, "run", lambda *_args, **_kwargs: next(responses))
+
+    assert versioning._git_short_hash(tmp_path) == "d" * 40 + "+dirty"

@@ -83,7 +83,22 @@ def _git_short_hash(path: Path) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     value = result.stdout.strip()
-    return value if result.returncode == 0 and value else None
+    if result.returncode != 0 or not value:
+        return None
+    try:
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=path,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return f"{value}+status-error"
+    if dirty.returncode != 0:
+        return f"{value}+status-error"
+    return f"{value}+dirty" if dirty.stdout.strip() else value
 
 
 def _editable_source(distribution_name: str) -> Path | None:

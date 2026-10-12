@@ -313,6 +313,20 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         ),
         archive_reference_spool=raw.get("archive_reference_spool", defaults.archive_reference_spool),
         archive_spool_interval=raw.get("archive_spool_interval", defaults.archive_spool_interval),
+        candidate_archive_mode=raw.get("candidate_archive_mode", defaults.candidate_archive_mode),
+        candidate_archive_root=raw.get("candidate_archive_root", defaults.candidate_archive_root),
+        candidate_archive_store_id=raw.get(
+            "candidate_archive_store_id", defaults.candidate_archive_store_id
+        ),
+        candidate_archive_store_url=raw.get(
+            "candidate_archive_store_url", defaults.candidate_archive_store_url
+        ),
+        candidate_archive_token_env=raw.get(
+            "candidate_archive_token_env", defaults.candidate_archive_token_env
+        ),
+        candidate_archive_pump_interval=raw.get(
+            "candidate_archive_pump_interval", defaults.candidate_archive_pump_interval
+        ),
         storage_backend=raw.get("storage_backend", defaults.storage_backend),
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),
