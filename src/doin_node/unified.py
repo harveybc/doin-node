@@ -1131,6 +1131,48 @@ class UnifiedNode:
         self._candidate_archive_publishers[domain_id] = publisher
         return publisher
 
+    def _restore_candidate_archive_references(self, domain_id: str) -> int:
+        """Rebuild the in-memory genotype/reference index from durable outbox bytes."""
+        from doin_core.archive.external import check_reference_payload
+
+        publisher = self._candidate_archive_publisher(domain_id)
+        restored: dict[str, dict[str, Any]] = {}
+        for item in publisher.outbox.items():
+            reference = item.get("reference")
+            if reference is None or not item["states"].get("OBJECT_DURABLE"):
+                continue
+            checked = check_reference_payload(reference)
+            body, manifest = publisher.outbox.bytes_of(item["item_id"])
+            body_digest = hashlib.sha256(body).hexdigest()
+            manifest_digest = hashlib.sha256(manifest).hexdigest()
+            if (body_digest != item["body_digest"]
+                    or manifest_digest != item["manifest_digest"]
+                    or checked["body_digest"] != body_digest
+                    or checked["manifest_digest"] != manifest_digest
+                    or checked["domain_id"] != domain_id
+                    or checked["payload_schema"] != "i6n.archive.island_candidate.v1"):
+                raise RuntimeError("durable candidate archive reference does not match outbox bytes")
+            envelope = json.loads(body)
+            if (envelope.get("schema") != "doin.external_payload_body.v1"
+                    or envelope.get("domain_id") != domain_id
+                    or envelope.get("payload_schema") != checked["payload_schema"]
+                    or not isinstance(envelope.get("payload"), dict)):
+                raise RuntimeError("durable candidate archive body has an invalid envelope")
+            payload = envelope["payload"]
+            genotype = payload.get("genotype_canonical_sha256")
+            if (payload.get("schema") != checked["payload_schema"]
+                    or payload.get("experiment") != domain_id
+                    or not isinstance(genotype, str)
+                    or len(genotype) != 64
+                    or any(char not in "0123456789abcdef" for char in genotype)):
+                raise RuntimeError("durable candidate archive body has an invalid identity")
+            prior = restored.get(genotype)
+            if prior is not None and prior != checked:
+                raise RuntimeError("durable candidate archive has conflicting genotype references")
+            restored[genotype] = checked
+        self._candidate_archive_references.setdefault(domain_id, {}).update(restored)
+        return len(restored)
+
     def _pump_candidate_archive_outboxes_once(self) -> dict[str, Any]:
         """Retry every durable candidate outbox without requiring an agent."""
         from tools.i6n_archive.publisher import ArchivePublisher
@@ -4021,6 +4063,11 @@ class UnifiedNode:
                 reference = node._candidate_archive_references.get(
                     domain_id, {}
                 ).get(genotype)
+                if reference is None:
+                    node._restore_candidate_archive_references(domain_id)
+                    reference = node._candidate_archive_references.get(
+                        domain_id, {}
+                    ).get(genotype)
                 if reference is None:
                     raise RuntimeError(
                         "I6N champion has no durable external candidate reference"

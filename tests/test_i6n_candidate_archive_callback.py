@@ -165,6 +165,58 @@ def test_external_mode_champion_transaction_contains_only_archive_reference(tmp_
     assert "parameters" not in payload and "metrics" not in payload
 
 
+def test_restart_restores_durable_candidate_reference_by_genotype(tmp_path):
+    role = _role()
+    node = UnifiedNode(UnifiedNodeConfig(
+        port=0,
+        data_dir=str(tmp_path / "node"),
+        domains=[role],
+        candidate_archive_mode="external_payload",
+        candidate_archive_root=str(tmp_path / "archive"),
+        candidate_archive_store_id="cas",
+        candidate_archive_store_url="http://lake.invalid",
+        candidate_archive_token_env="TEST_LAKE_TOKEN",
+        archive_reference_spool=str(tmp_path / "spool"),
+    ))
+    genotype = "a" * 64
+    external = build_external_body(
+        domain_id=role.domain_id,
+        producer_peer_id="peer-a",
+        payload_schema="i6n.archive.island_candidate.v1",
+        payload={
+            "schema": "i6n.archive.island_candidate.v1",
+            "experiment": role.domain_id,
+            "genotype_canonical_sha256": genotype,
+        },
+    )
+    reference = reference_payload(
+        external, mode="external_payload", store_id="cas"
+    )
+
+    class Outbox:
+        @staticmethod
+        def items():
+            return [{
+                "item_id": external.body_digest,
+                "body_digest": external.body_digest,
+                "manifest_digest": external.manifest_digest,
+                "reference": reference,
+                "states": {"OBJECT_DURABLE": {"ok": True}},
+            }]
+
+        @staticmethod
+        def bytes_of(_item_id):
+            return external.body, external.manifest
+
+    publisher = type("Publisher", (), {"outbox": Outbox()})()
+    node._candidate_archive_publishers[role.domain_id] = publisher
+
+    restored = node._restore_candidate_archive_references(role.domain_id)
+
+    assert restored == 1
+    assert node._candidate_archive_references[role.domain_id][genotype] == reference
+
+
 def test_legacy_full_mode_still_builds_the_original_candidate_transaction(tmp_path):
     role = _role()
     node = UnifiedNode(UnifiedNodeConfig(
