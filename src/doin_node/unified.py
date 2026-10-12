@@ -2364,9 +2364,11 @@ class UnifiedNode:
                 pop_state = plugin.create_shared_population(
                     shared_pop_size, seed=bootstrap_seed
                 )
-                pop_state["generation"] = 0
-                pop_state["stage_idx"] = 0
-                pop_state["no_improve_count"] = 0
+                # A plugin may hand back a durable later generation (I6-N: the campaign ledger's search
+                # state) so a node joining mid-run enters the CURRENT generation instead of a stale genesis.
+                pop_state.setdefault("generation", 0)
+                pop_state.setdefault("stage_idx", 0)
+                pop_state.setdefault("no_improve_count", 0)
                 pop_state["bootstrap_seed"] = bootstrap_seed
                 pop_state["bootstrap_domain_id"] = domain_id
                 _hib = getattr(role, 'higher_is_better', False)

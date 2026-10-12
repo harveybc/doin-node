@@ -146,3 +146,11 @@ def test_local_rejected_result_snapshot_is_persistable():
     snap = UnifiedNode._shared_result_snapshot({"fitness": float("inf"), "candidate_rejected": True,
                                                 "candidate_rejected_reason": "x"})
     assert snap["fitness"] is None and snap["candidate_rejected"] is True
+
+
+
+def test_genesis_keeps_a_plugin_supplied_later_generation():
+    import inspect
+    from doin_node import unified
+    source = inspect.getsource(unified.UnifiedNode._shared_optimizer_loop)
+    assert 'pop_state.setdefault("generation", 0)' in source and 'pop_state["generation"] = 0' not in source
