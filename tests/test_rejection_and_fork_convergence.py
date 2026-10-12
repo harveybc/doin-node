@@ -152,6 +152,41 @@ def _branch_block(genesis_hash: str, generator: str,
 
 class TestEqualHeightForkRepair:
     @pytest.mark.asyncio
+    async def test_periodic_anti_entropy_retries_a_missed_ahead_block(
+        self, tmp_path, monkeypatch
+    ):
+        """A transient announcement race must heal without another block."""
+        config = UnifiedNodeConfig(
+            port=8500, data_dir=str(tmp_path), discovery_enabled=False)
+        node = UnifiedNode(config)
+        node.chaindb.open()
+        node.chaindb.initialize("genesis")
+        node._peers["peer:9"] = object()
+        node.transport._session = object()
+        peer_status = ChainStatus(
+            chain_height=2, tip_hash="peer-tip", tip_index=1)
+        synced: list[str] = []
+
+        async def current_status(_session, endpoint):
+            assert endpoint == "peer:9"
+            return peer_status
+
+        async def record_sync(endpoint):
+            synced.append(endpoint)
+
+        monkeypatch.setattr(
+            "doin_node.unified.fetch_chain_status", current_status)
+        monkeypatch.setattr(node, "_sync_with_peer", record_sync)
+
+        try:
+            await node._sync_known_peers()
+            await node._sync_known_peers()
+
+            assert synced == ["peer:9", "peer:9"]
+        finally:
+            node.chaindb.close()
+
+    @pytest.mark.asyncio
     async def test_empty_divergent_range_returns_false(
         self, tmp_path, monkeypatch
     ):

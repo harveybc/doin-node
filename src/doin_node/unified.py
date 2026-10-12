@@ -5354,8 +5354,8 @@ class UnifiedNode:
             logger.exception("Sync error with %s", endpoint)
             self.sync_manager.record_sync_failure(endpoint)
 
-    async def _initial_sync(self) -> None:
-        """Sync with all known peers on startup."""
+    async def _sync_known_peers(self) -> None:
+        """Reconcile the local chain with every currently known peer."""
         session = self.transport._session
         if session is None:
             return
@@ -5375,6 +5375,10 @@ class UnifiedNode:
                 != (self._get_tip().hash if self._get_tip() else "")
             ):
                 await self._sync_with_peer(endpoint)
+
+    async def _initial_sync(self) -> None:
+        """Sync with all known peers on startup."""
+        await self._sync_known_peers()
 
     def _find_peer_endpoint(
         self,
@@ -5500,10 +5504,15 @@ class UnifiedNode:
             await asyncio.sleep(self.config.discovery_interval)
 
     async def _maintenance_loop(self) -> None:
-        """Periodic cleanup: expired commitments, decided quorums, fee market stats."""
+        """Periodic cleanup and chain anti-entropy reconciliation."""
         while self._running:
             self.commit_reveal.cleanup_expired()
             self.quorum.cleanup_decided()
+
+            # Announcements can race the peer's durable append. Polling the
+            # authoritative chain status makes a missed or deferred sync
+            # self-healing even when no later block is announced.
+            await self._sync_known_peers()
 
             # Log fee market stats periodically
             if self.fee_market:
