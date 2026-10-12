@@ -44,6 +44,14 @@ _COMPONENTS: dict[str, tuple[str, tuple[Path, ...]]] = {
             Path.home() / "gym-fx",
         ),
     ),
+    "predictor": (
+        "predictor",
+        (
+            Path.home() / "Documents" / "GitHub" / "predictor",
+            Path.home() / "predictor",
+            Path("/var/tmp/i6n-island-sequence/code/predictor"),
+        ),
+    ),
     "trading-contracts": (
         "trading-contracts",
         (
@@ -57,7 +65,7 @@ _COMPONENTS: dict[str, tuple[str, tuple[Path, ...]]] = {
 def _git_short_hash(path: Path) -> str | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             timeout=5,

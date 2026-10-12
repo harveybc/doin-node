@@ -2177,7 +2177,9 @@ class UnifiedNode:
 
             try:
                 logger.info("🧬 Starting optimization for %s", domain_id)
-                await self._run_full_optimization(domain_id, plugin)
+                completed = await self._run_full_optimization(domain_id, plugin)
+                if not completed:
+                    raise RuntimeError(f"optimizer returned no valid terminal for {domain_id}")
                 logger.info("✅ Optimization complete for %s", domain_id)
                 self._domain_converged.add(domain_id)
                 if self._current_candidate.get("domain_id") == domain_id:
@@ -3603,7 +3605,7 @@ class UnifiedNode:
                     if role and role.higher_is_better
                     else stage_start_fit - fitness
                 )
-                if improvement > stage_advance_threshold:
+                if current_stage < total_stages and improvement > stage_advance_threshold:
                     logger.info(
                         "🚀 [%s] Stage %d: improvement %.6f > threshold %.6f"
                         " — triggering network-wide stage advance!",
@@ -3968,7 +3970,7 @@ class UnifiedNode:
         if hasattr(plugin, "set_candidate_evaluated_callback"):
             plugin.set_candidate_evaluated_callback(on_candidate_evaluated)
 
-    async def _run_full_optimization(self, domain_id: str, plugin: Any) -> None:
+    async def _run_full_optimization(self, domain_id: str, plugin: Any) -> bool:
         """Run the full DEAP GA optimization in an executor thread."""
         current_best = self._domain_best.get(domain_id, (None, None))
 
@@ -3977,7 +3979,7 @@ class UnifiedNode:
         )
 
         if raw is None:
-            return
+            return False
 
         # Final result
         if isinstance(raw, tuple):
@@ -3986,7 +3988,15 @@ class UnifiedNode:
             parameters = raw.get("parameters", {})
             performance = raw.get("performance", 0.0)
         else:
-            return
+            return False
+        if not isinstance(parameters, dict) or not parameters:
+            return False
+        try:
+            performance = float(performance)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(performance):
+            return False
 
         # Update domain best
         current_best = self._domain_best.get(domain_id, (None, None))
@@ -3997,6 +4007,7 @@ class UnifiedNode:
             "🏁 Full optimization finished for %s: final_perf=%.6f",
             domain_id, performance,
         )
+        return True
 
     async def _broadcast_champion(
         self, domain_id: str, params: dict, fitness: float,
@@ -5054,11 +5065,22 @@ class UnifiedNode:
         from aiohttp import web
         tip = self._get_tip()
         height = self._get_height()
+        genesis = self._get_block(0) if height else None
+        finalized = (self._get_block(self.finality.finalized_height)
+                     if self.finality.finalized_height >= 0 else None)
+        genesis_hash = genesis.hash if genesis else ""
+        network_id = hashlib.sha256(json.dumps({
+            "genesis_hash": genesis_hash,
+            "domains": sorted(self._domain_roles),
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         return web.json_response({
             "chain_height": height,
             "tip_hash": tip.hash if tip else "",
             "tip_index": tip.header.index if tip else -1,
             "finalized_height": self.finality.finalized_height,
+            "finalized_hash": finalized.hash if finalized else "",
+            "genesis_hash": genesis_hash,
+            "network_id": network_id,
             "component_versions": self._component_versions,
         })
 
@@ -5683,6 +5705,18 @@ class UnifiedNode:
 
     async def _http_status(self, request) -> Any:
         from aiohttp import web
+        optimization = None
+        if len(self.optimizer_domains) == 1:
+            domain_id = self.optimizer_domains[0]
+            role = self._domain_roles[domain_id]
+            config_json = json.dumps(role.optimization_config, sort_keys=True,
+                                     separators=(",", ":"), allow_nan=False)
+            optimization = {
+                "domain_id": domain_id,
+                "seed": role.optimization_config.get(
+                    "ga_seed", role.optimization_config.get("seed")),
+                "config_digest": hashlib.sha256(config_json.encode("utf-8")).hexdigest(),
+            }
         status: dict[str, Any] = {
             "status": "healthy",
             "peer_id": self.peer_id[:12],
@@ -5712,6 +5746,7 @@ class UnifiedNode:
                 "pending_quorums": self.quorum.pending_count,
             },
             "optimizer_domains": self.optimizer_domains,
+            "optimization": optimization,
             "evaluator_domains": self.evaluator_domains,
             "coin": {
                 "total_supply": self.balance_tracker.total_supply,
