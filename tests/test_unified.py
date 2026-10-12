@@ -87,6 +87,57 @@ def test_shared_claim_lease_uses_configured_values() -> None:
     assert node._shared_claim_confirmation_rounds == 3
 
 
+def test_component_version_scope_limits_peer_identity(monkeypatch, tmp_path) -> None:
+    versions = {
+        "doin-node": "a" * 40,
+        "doin-core": "b" * 40,
+        "doin-plugins": "c" * 40,
+        "predictor": "d" * 40,
+        "agent-multi": "e" * 40,
+    }
+    monkeypatch.setattr(
+        UnifiedNode, "_compute_component_versions", staticmethod(lambda: versions)
+    )
+    node = UnifiedNode(UnifiedNodeConfig(
+        port=0,
+        data_dir=str(tmp_path),
+        discovery_enabled=False,
+        component_version_scope=[
+            "doin-node", "doin-core", "doin-plugins", "predictor"
+        ],
+    ))
+
+    assert node._component_versions == {
+        name: versions[name]
+        for name in ("doin-node", "doin-core", "doin-plugins", "predictor")
+    }
+
+
+@pytest.mark.parametrize(
+    ("scope", "message"),
+    [
+        (["predictor", "predictor"], "duplicates"),
+        (["unknown"], "unknown components"),
+        ("predictor", "list of nonempty strings"),
+    ],
+)
+def test_component_version_scope_rejects_invalid_values(
+    monkeypatch, tmp_path, scope, message
+) -> None:
+    monkeypatch.setattr(
+        UnifiedNode,
+        "_compute_component_versions",
+        staticmethod(lambda: {"predictor": "a" * 40}),
+    )
+    with pytest.raises(ValueError, match=message):
+        UnifiedNode(UnifiedNodeConfig(
+            port=0,
+            data_dir=str(tmp_path / message.replace(" ", "-")),
+            discovery_enabled=False,
+            component_version_scope=scope,
+        ))
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

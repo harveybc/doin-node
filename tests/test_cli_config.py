@@ -41,6 +41,7 @@ FULL_NODE = {
     "data_dir": "/tmp/xdata",
     "identity_file": "/tmp/x/id.pem",
     "bootstrap_peers": ["1.2.3.4:8470"],
+    "component_version_scope": ["doin-node", "predictor"],
     "target_block_time": 123.0,
     "initial_threshold": 0.5,
     "acceptance_tolerance": 2e-4,
@@ -129,6 +130,7 @@ def test_r05_every_top_level_field_materialized(tmp_path):
     assert cfg.data_dir == "/tmp/xdata"
     assert cfg.identity_file == "/tmp/x/id.pem"
     assert cfg.bootstrap_peers == ["1.2.3.4:8470"]
+    assert cfg.component_version_scope == ["doin-node", "predictor"]
     assert cfg.target_block_time == 123.0
     assert cfg.initial_threshold == 0.5
     assert cfg.acceptance_tolerance == 2e-4
@@ -385,6 +387,7 @@ def test_r05_empty_object_matches_defaults(tmp_path):
     default = UnifiedNodeConfig()
     for f in [
         "host", "port", "data_dir", "identity_file", "bootstrap_peers",
+        "component_version_scope",
         "target_block_time", "initial_threshold", "acceptance_tolerance",
         "quorum_min_evaluators", "quorum_fraction", "quorum_tolerance",
         "commit_reveal_max_age", "finality_confirmation_depth",

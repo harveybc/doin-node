@@ -278,6 +278,9 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         data_dir=raw.get("data_dir", defaults.data_dir),
         identity_file=raw.get("identity_file", defaults.identity_file),
         bootstrap_peers=raw.get("bootstrap_peers", defaults.bootstrap_peers),
+        component_version_scope=raw.get(
+            "component_version_scope", defaults.component_version_scope
+        ),
         domains=domain_roles,
         target_block_time=raw.get("target_block_time", defaults.target_block_time),
         initial_threshold=raw.get("initial_threshold", defaults.initial_threshold),

@@ -284,6 +284,9 @@ class UnifiedNodeConfig:
     data_dir: str = "./doin-data"
     identity_file: str = ""  # Auto-derived from data_dir if empty
     bootstrap_peers: list[str] = field(default_factory=list)
+    # Optional ordered subset used by the peer version handshake.  An empty
+    # list preserves the historical all-components contract.
+    component_version_scope: list[str] = field(default_factory=list)
 
     # Domain roles
     domains: list[DomainRole] = field(default_factory=list)
@@ -446,7 +449,24 @@ class UnifiedNode:
             self.chaindb = ChainDB(db_path)
 
         # ── Component versions (computed once, used for peer version handshake) ──
-        self._component_versions: dict[str, str] = self._compute_component_versions()
+        all_component_versions = self._compute_component_versions()
+        scope = config.component_version_scope
+        if not isinstance(scope, list) or any(
+            not isinstance(name, str) or not name for name in scope
+        ):
+            raise ValueError("component_version_scope must be a list of nonempty strings")
+        if len(scope) != len(set(scope)):
+            raise ValueError("component_version_scope must not contain duplicates")
+        unknown = sorted(set(scope) - set(all_component_versions))
+        if unknown:
+            raise ValueError(
+                "component_version_scope contains unknown components: "
+                + ", ".join(unknown)
+            )
+        self._component_versions: dict[str, str] = (
+            {name: all_component_versions[name] for name in scope}
+            if scope else all_component_versions
+        )
         logger.info("Component versions: %s", self._component_versions)
 
         # ── Plugin configs (computed after domain registration, used for peer plugin handshake) ──
