@@ -1708,11 +1708,20 @@ class UnifiedNode:
                     )
                     return
                 if idx not in results:  # First result wins
-                    _role = self._domain_roles.get(domain_id)
-                    _hib_peer = getattr(_role, 'higher_is_better', False) if _role else False
-                    _worst_peer = float("-inf") if _hib_peer else float("inf")
+                    _worst_peer = self._shared_worst_fitness(domain_id)
+                    _peer_fitness = candidate_data.get("fitness")
+                    try:
+                        _peer_fitness = float(_peer_fitness)
+                    except (TypeError, ValueError):
+                        _peer_fitness = float("nan")
+                    if not math.isfinite(_peer_fitness):
+                        # inf is not JSON: a rejected peer result arrives as null; it stays rejected/worst.
+                        _peer_fitness = _worst_peer
+                        candidate_data = dict(candidate_data, fitness=_worst_peer, candidate_rejected=True,
+                                              candidate_rejected_reason=candidate_data.get("candidate_rejected_reason")
+                                              or "peer_result_without_finite_fitness")
                     results[idx] = {
-                        "fitness": candidate_data.get("fitness", _worst_peer),
+                        "fitness": _peer_fitness,
                         "candidate_rejected": candidate_data.get("candidate_rejected", False),
                         "candidate_rejected_reason": candidate_data.get(
                             "candidate_rejected_reason"
@@ -1730,7 +1739,7 @@ class UnifiedNode:
                     # Also update population fitness for reproduction
                     pop_state = self._shared_pop_state.get(domain_id)
                     if pop_state and idx < len(pop_state.get("population", [])):
-                        pop_state["population"][idx]["fitness"] = candidate_data.get("fitness", _worst_peer)
+                        pop_state["population"][idx]["fitness"] = _peer_fitness
                     self._persist_shared_results(domain_id)
                     logger.info(
                         "[SHARED] Peer %s result: candidate %d/%s gen=%d fitness=%.6f %s",
@@ -3610,8 +3619,22 @@ class UnifiedNode:
                         or updated
                     )
                 elif state == "evaluated" and idx not in results:
+                    pop_state = self._shared_pop_state.get(domain_id) or {}
+                    population = pop_state.get("population", [])
+                    item = population[idx] if 0 <= idx < len(population) else None
+                    role_cfg = getattr(self._domain_roles.get(domain_id), "optimization_config", {}) or {}
+                    if item is None or _shared_result_identity_mismatch(
+                        item, c, strict=role_cfg.get("i6n_swarm") is not None,
+                    ):
+                        continue  # never record a polled score under another candidate's index
                     fitness = c.get("fitness")
-                    if fitness is not None:
+                    try:
+                        fitness = float(fitness)
+                    except (TypeError, ValueError):
+                        fitness = float("nan")
+                    if not math.isfinite(fitness) and c.get("candidate_rejected"):
+                        fitness = self._shared_worst_fitness(domain_id)
+                    if math.isfinite(fitness) or c.get("candidate_rejected"):
                         results[idx] = {
                             "fitness": fitness,
                             "candidate_rejected": c.get("candidate_rejected", False),
@@ -3619,7 +3642,8 @@ class UnifiedNode:
                                 "candidate_rejected_reason"
                             ),
                         }
-                        pop_state = self._shared_pop_state.get(domain_id)
+                        if c.get("candidate_identity"):
+                            results[idx]["candidate_identity"] = c["candidate_identity"]
                         if pop_state and idx < len(pop_state.get("population", [])):
                             pop_state["population"][idx]["fitness"] = fitness
                         updated = True
@@ -5304,6 +5328,10 @@ class UnifiedNode:
 
     # ── Shared-population coordination API ─────────────────────
 
+    def _shared_worst_fitness(self, domain_id: str) -> float:
+        role = self._domain_roles.get(domain_id)
+        return float("-inf") if (role and getattr(role, "higher_is_better", False)) else float("inf")
+
     def _on_shared_reproduction_failure(
         self, domain_id: str, generation: int, error: Exception, policy: str,
     ) -> None:
@@ -5335,9 +5363,17 @@ class UnifiedNode:
 
     @staticmethod
     def _shared_result_snapshot(result: dict[str, Any]) -> dict[str, Any]:
-        fitness = float(result["fitness"])
+        raw = result.get("fitness")
+        try:
+            fitness = float(raw)
+        except (TypeError, ValueError):
+            fitness = float("nan")
+        rejected = bool(result.get("candidate_rejected", False))
         if not math.isfinite(fitness):
-            raise ValueError("shared result fitness must be finite")
+            # A rejected candidate has no score: persisted as null and restored as the domain's worst.
+            if not rejected:
+                raise ValueError("shared result fitness must be finite unless the candidate is rejected")
+            fitness = None
         snapshot: dict[str, Any] = {
             "fitness": fitness,
             "candidate_rejected": bool(
@@ -5433,6 +5469,8 @@ class UnifiedNode:
                         f"shared-results candidate index {index} out of range"
                     )
                 result = self._shared_result_snapshot(dict(raw_result))
+                if result["fitness"] is None:
+                    result["fitness"] = self._shared_worst_fitness(domain_id)
                 restored[index] = result
                 population[index]["fitness"] = result["fitness"]
 
@@ -5599,6 +5637,8 @@ class UnifiedNode:
                 entry["candidate_rejected_reason"] = _candidate_rejection_reason(
                     results[i]
                 )
+                if results[i].get("candidate_identity"):
+                    entry["candidate_identity"] = results[i]["candidate_identity"]
             candidates.append(entry)
 
         return web.json_response({

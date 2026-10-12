@@ -120,3 +120,29 @@ def test_archive_spool_hook_records_each_reference_once(tmp_path, monkeypatch):
     monkeypatch.setattr(node.consensus, "record_transaction", lambda tx: calls.append(tx.id))
     assert node.ingest_archive_spool_once()["ingested"] == 2
     assert calls == ["tx-a"]  # tx-b already on chain: never re-recorded
+
+
+@pytest.mark.asyncio
+async def test_rejected_peer_result_without_numeric_fitness_is_recorded_as_worst(tmp_path):
+    """Two-node smoke regression: a peer's rejected candidate arrives with fitness null (inf is not JSON);
+    it must be recorded as a rejected worst result, persisted, and never crash generation completion."""
+    node, domain = _node(tmp_path, 8616)
+    msg = Message(msg_type=MessageType.CANDIDATE_EVALUATION, sender_id="peer-b", payload={
+        "tx_id": "t9", "domain_id": domain, "peer_id": "peer-b",
+        "candidate_data": {"_shared_result": True, "generation": 0, "candidate_idx": 0, "fitness": None,
+                           "candidate_rejected": True, "candidate_rejected_reason": "folds not complete",
+                           "candidate_identity": "a" * 64}})
+    await node._handle_candidate_evaluation(msg, "peer-b")
+    recorded = node._shared_pop_results[domain][0]
+    assert recorded["candidate_rejected"] is True and recorded["fitness"] == float("inf")
+    node._persist_shared_results(domain)
+    again, _ = _node(tmp_path, 8617)
+    assert again._restore_shared_results(domain) == 1
+    restored = again._shared_pop_results[domain][0]
+    assert restored["fitness"] == float("inf") and restored["candidate_rejected"] is True
+
+
+def test_local_rejected_result_snapshot_is_persistable():
+    snap = UnifiedNode._shared_result_snapshot({"fitness": float("inf"), "candidate_rejected": True,
+                                                "candidate_rejected_reason": "x"})
+    assert snap["fitness"] is None and snap["candidate_rejected"] is True
