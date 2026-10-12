@@ -323,6 +323,11 @@ class UnifiedNodeConfig:
     shared_claim_settle_seconds: float = 1.0
     shared_claim_confirmation_rounds: int = 2
 
+    # External-payload archive (lane D): spooled reference transactions written by the
+    # predictor publisher's pump are ingested here; each id/reference is re-checked first.
+    archive_reference_spool: str = ""
+    archive_spool_interval: float = 30.0
+
     # Storage backend: "sqlite" (production) or "json" (legacy/testing)
     storage_backend: str = "sqlite"
     db_path: str = ""  # Auto-derived from data_dir if empty
@@ -925,6 +930,11 @@ class UnifiedNode:
             asyncio.create_task(self._maintenance_loop())
         )
 
+        if self.config.archive_reference_spool:
+            self._background_tasks.append(
+                asyncio.create_task(self._archive_spool_loop())
+            )
+
         protocol = "gossipsub" if self.gossip else "flooding"
         storage = "sqlite" if self.chaindb else "json"
         logger.info(
@@ -976,6 +986,37 @@ class UnifiedNode:
         if self.chaindb:
             return self.chaindb.get_blocks_range(from_idx, to_idx)
         return self.chain.get_blocks_range(from_idx, to_idx)
+
+    def ingest_archive_spool_once(self) -> dict[str, Any] | None:
+        """Hand spooled external-payload reference transactions to consensus once each."""
+        try:
+            from doin_node.archive.external import ingest_reference_spool
+        except ImportError:
+            logger.error("[ARCHIVE] archive_reference_spool set but doin_node.archive.external is not installed")
+            return None
+        known = getattr(self, "_archive_known_tx_ids", None)
+        if known is None:
+            known = self._archive_known_tx_ids = set()
+
+        def record(tx: Any) -> None:
+            if self._has_transaction(tx.id):
+                return
+            self.consensus.record_transaction(tx)
+
+        summary = ingest_reference_spool(self.config.archive_reference_spool, record, known_tx_ids=known)
+        if summary.get("ingested") or summary.get("refused"):
+            self._log_event("archive_spool_ingested", **{k: summary.get(k) for k in ("ingested", "already_known")},
+                            refused=len(summary.get("refused") or []))
+        return summary
+
+    async def _archive_spool_loop(self) -> None:
+        while self._running:
+            try:
+                if self.ingest_archive_spool_once() is None:
+                    return
+            except Exception:
+                logger.exception("[ARCHIVE] spool ingestion failed; retrying next interval")
+            await asyncio.sleep(max(1.0, float(self.config.archive_spool_interval)))
 
     def _has_transaction(self, tx_id: str) -> bool:
         if self.chaindb:

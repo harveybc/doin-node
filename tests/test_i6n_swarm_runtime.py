@@ -97,3 +97,26 @@ def test_fail_closed_reproduction_keeps_results_and_stops(tmp_path):
     assert node._shared_pop_results[domain] == {0: {"fitness": 0.25}}
     node._on_shared_reproduction_failure(domain, 0, ValueError("boom"), "reevaluate")
     assert node._shared_pop_results[domain] == {}
+
+
+def test_archive_spool_hook_records_each_reference_once(tmp_path, monkeypatch):
+    import sys
+    import types
+    calls = []
+
+    def ingest_reference_spool(spool, record_transaction, *, known_tx_ids=None):
+        for tx_id in ("tx-a", "tx-b", "tx-a"):
+            if tx_id in known_tx_ids:
+                continue
+            record_transaction(SimpleNamespace(id=tx_id))
+            known_tx_ids.add(tx_id)
+        return {"ingested": 2, "already_known": 1, "refused": []}
+
+    fake = types.ModuleType("doin_node.archive.external")
+    fake.ingest_reference_spool = ingest_reference_spool
+    monkeypatch.setitem(sys.modules, "doin_node.archive.external", fake)
+    node = UnifiedNode(UnifiedNodeConfig(port=8615, data_dir=str(tmp_path), archive_reference_spool=str(tmp_path)))
+    monkeypatch.setattr(node, "_has_transaction", lambda tx_id: tx_id == "tx-b")
+    monkeypatch.setattr(node.consensus, "record_transaction", lambda tx: calls.append(tx.id))
+    assert node.ingest_archive_spool_once()["ingested"] == 2
+    assert calls == ["tx-a"]  # tx-b already on chain: never re-recorded

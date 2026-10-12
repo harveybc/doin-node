@@ -311,6 +311,8 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
             "shared_claim_confirmation_rounds",
             defaults.shared_claim_confirmation_rounds,
         ),
+        archive_reference_spool=raw.get("archive_reference_spool", defaults.archive_reference_spool),
+        archive_spool_interval=raw.get("archive_spool_interval", defaults.archive_spool_interval),
         storage_backend=raw.get("storage_backend", defaults.storage_backend),
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),
