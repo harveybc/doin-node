@@ -4527,7 +4527,13 @@ class UnifiedNode:
         metrics: dict, gen: int, stage_info: dict,
     ) -> None:
         """Broadcast a new local champion to the DOIN network (commit→reveal)."""
-        rejection = _candidate_rejection_reason(dict(metrics or {}))
+        metrics = dict(metrics or {})
+        # Optimizer callbacks carry fitness as a dedicated argument.  Validate
+        # the complete candidate evidence instead of incorrectly requiring the
+        # metrics mapping to duplicate that field.
+        candidate_evidence = dict(metrics)
+        candidate_evidence["fitness"] = fitness
+        rejection = _candidate_rejection_reason(candidate_evidence)
         if rejection is not None:
             # AUD-F1-20260805-109: a rejected/failed result must never be
             # announced as a champion, whatever its numeric fitness.
@@ -4537,8 +4543,6 @@ class UnifiedNode:
             )
             return
         performance = fitness  # Use raw fitness; comparison respects higher_is_better per domain
-        metrics = dict(metrics or {})
-
         # Include trained model in broadcast parameters for evaluator verification (inference-only)
         model_b64 = metrics.pop("_model_b64", None)
         if model_b64:

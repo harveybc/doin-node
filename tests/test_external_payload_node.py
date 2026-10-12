@@ -246,8 +246,67 @@ def test_reference_spool_ingest_validates_and_is_idempotent(tmp_path):
     recorded = []
     seen: set[str] = set()
     out = ingest_reference_spool(tmp_path, recorded.append, known_tx_ids=seen)
-    assert out["ingested"] == 1 and len(out["refused"]) == 1
+    assert out["ingested"] == 1 and out["recovered"] == 0 and len(out["refused"]) == 1
     assert [t.id for t in recorded] == [tx.id]
     (tmp_path / f"{tx.id}.json").write_text(tx.model_dump_json())   # replayed file
     again = ingest_reference_spool(tmp_path, recorded.append, known_tx_ids=seen)
-    assert again["already_known"] == 1 and len(recorded) == 1
+    assert again["already_known"] == 2 and len(recorded) == 1
+
+
+def test_reference_spool_recovers_ingested_transaction_after_restart(tmp_path):
+    from doin_node.archive.external import ingest_reference_spool
+
+    store = MemoryStore()
+    archive = ExternalPayloadArchive({"cas": store}, write_store_id="cas")
+    ref = archive.store_body(_body(), mode="external_payload")
+    tx = build_reference_transaction(ref, peer_id="peer-1", timestamp=TS)
+    (tmp_path / f"{tx.id}.json").write_text(tx.model_dump_json())
+
+    before_restart = []
+    ingest_reference_spool(tmp_path, before_restart.append, known_tx_ids=set())
+    assert [item.id for item in before_restart] == [tx.id]
+
+    after_restart = []
+    fresh_known_ids: set[str] = set()
+    recovered = ingest_reference_spool(
+        tmp_path,
+        after_restart.append,
+        known_tx_ids=fresh_known_ids,
+    )
+    assert recovered["ingested"] == 1
+    assert recovered["recovered"] == 1
+    assert recovered["already_known"] == 0
+    assert [item.id for item in after_restart] == [tx.id]
+
+    repeated = ingest_reference_spool(
+        tmp_path,
+        after_restart.append,
+        known_tx_ids=fresh_known_ids,
+    )
+    assert repeated["ingested"] == 0
+    assert repeated["recovered"] == 0
+    assert repeated["already_known"] == 1
+    assert [item.id for item in after_restart] == [tx.id]
+
+
+def test_reference_spool_does_not_replay_ingested_transaction_already_known(tmp_path):
+    from doin_node.archive.external import ingest_reference_spool
+
+    store = MemoryStore()
+    archive = ExternalPayloadArchive({"cas": store}, write_store_id="cas")
+    ref = archive.store_body(_body(), mode="external_payload")
+    tx = build_reference_transaction(ref, peer_id="peer-1", timestamp=TS)
+    ingested = tmp_path / "ingested"
+    ingested.mkdir()
+    (ingested / f"{tx.id}.json").write_text(tx.model_dump_json())
+
+    recorded = []
+    result = ingest_reference_spool(
+        tmp_path,
+        recorded.append,
+        known_tx_ids={tx.id},
+    )
+    assert result["ingested"] == 0
+    assert result["recovered"] == 0
+    assert result["already_known"] == 1
+    assert recorded == []

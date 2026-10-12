@@ -73,6 +73,41 @@ class TestIndependentRejection:
             {"fitness": -1e9, "_eval_error": "crashed"}, 0, {})
         assert calls == [], "rejected candidate reached broadcast"
 
+    @pytest.mark.asyncio
+    async def test_separate_numeric_fitness_allows_champion_broadcast(
+        self, tmp_path, monkeypatch
+    ):
+        """The optimizer callback supplies fitness separately from metrics."""
+        config = UnifiedNodeConfig(
+            port=8499, data_dir=str(tmp_path), discovery_enabled=False)
+        node = UnifiedNode(config)
+        calls: list[tuple[str, object]] = []
+
+        async def handle_commit(message, _peer):
+            calls.append(("commit", message))
+
+        async def handle_reveal(message, _peer):
+            calls.append(("reveal", message))
+
+        async def broadcast(message):
+            calls.append(("broadcast", message))
+
+        async def no_sleep(_delay):
+            return None
+
+        node._handle_optimae_commit = handle_commit
+        node._handle_optimae_reveal = handle_reveal
+        node._broadcast = broadcast
+        monkeypatch.setattr("doin_node.unified.asyncio.sleep", no_sleep)
+
+        await node._broadcast_champion(
+            "test-domain", {"p": 1}, -0.01,
+            {"val_mae": 0.9, "val_naive_mae": 1.0}, 0, {"stage": 1})
+
+        assert [kind for kind, _ in calls] == [
+            "commit", "broadcast", "reveal", "broadcast"
+        ]
+
 
 class TestDeterministicTieBreak:
     def test_equal_weight_tie_breaks_by_lowest_hash_any_order(self):

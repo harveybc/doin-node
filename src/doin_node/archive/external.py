@@ -360,13 +360,16 @@ def ingest_reference_spool(
     *,
     known_tx_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Hand spooled reference transactions (``<tx_id>.json``) to consensus, once each.
+    """Hand spooled reference transactions (``<tx_id>.json``) to consensus.
 
     Each file is parsed, its id re-derived and its reference checked before
     ``record_transaction`` sees it; a refused file is moved to ``refused/`` with
-    the reason, an accepted one to ``ingested/``. Nothing is fetched and no
-    validation is skipped: blocks carrying these transactions still go through
-    ``Chain._validate_block``.
+    the reason, an accepted one to ``ingested/``. Files already in ``ingested/``
+    are reconsidered after a restart so references that had only reached the
+    in-memory pending set are recovered. ``known_tx_ids`` prevents replay of
+    references already known by the caller and deduplicates both directories
+    within one pass. Nothing is fetched and no validation is skipped: blocks
+    carrying these transactions still go through ``Chain._validate_block``.
     """
     from pathlib import Path
 
@@ -375,8 +378,15 @@ def ingest_reference_spool(
     done.mkdir(parents=True, exist_ok=True)
     refused.mkdir(parents=True, exist_ok=True)
     seen = known_tx_ids if known_tx_ids is not None else set()
-    summary: dict[str, Any] = {"ingested": 0, "already_known": 0, "refused": []}
-    for path in sorted(root.glob("*.json")):
+    summary: dict[str, Any] = {
+        "ingested": 0,
+        "recovered": 0,
+        "already_known": 0,
+        "refused": [],
+    }
+    paths = [*sorted(done.glob("*.json")), *sorted(root.glob("*.json"))]
+    for path in paths:
+        recovering = path.parent == done
         try:
             tx = Transaction.model_validate_json(path.read_bytes())
             check_reference_transaction(tx)
@@ -394,5 +404,8 @@ def ingest_reference_spool(
             record_transaction(tx)
             seen.add(tx.id)
             summary["ingested"] += 1
-        path.replace(done / path.name)
+            if recovering:
+                summary["recovered"] += 1
+        if not recovering:
+            path.replace(done / path.name)
     return summary

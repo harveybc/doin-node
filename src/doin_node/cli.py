@@ -417,7 +417,7 @@ def setup_plugins(node: UnifiedNode) -> None:
 
         if role.evaluate and not role.has_synthetic_data:
             print(f"  ⚠️  Domain {domain_id} has NO synthetic data — "
-                  f"optimae will have ZERO consensus weight!")
+                  f"optimae use reduced consensus weight")
 
 
 async def run_node(node: UnifiedNode) -> None:
