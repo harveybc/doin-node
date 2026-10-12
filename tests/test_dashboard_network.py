@@ -110,7 +110,7 @@ def test_local_monitor_is_compact_and_human_labeled() -> None:
         "100.64.0.10:8470", "127.0.0.1:8470", "192.168.1.10:8470",
     ]
     assert snapshot["versions"] == _PACKAGE_VERSIONS
-    assert "predictor" not in snapshot["versions"]
+    assert snapshot["versions"]["predictor"] == _PACKAGE_VERSIONS["predictor"]
 
 
 def test_stage_eta_requires_enough_runtime_evidence() -> None:
@@ -302,6 +302,14 @@ def test_dashboard_exposes_network_as_initial_monitoring_view() -> None:
     assert '>Stage ETA<' in html
     assert "train_validation_l1_score" in html
     assert "not weekly or annual return" in html
+
+
+def test_summary_card_counts_deduplicated_online_nodes_not_peer_routes() -> None:
+    html = _DASHBOARD.read_text()
+
+    assert '<p>Nodes Online</p>' in html
+    assert "peerCount').textContent = summary.online_nodes" in html
+    assert "peerCount').textContent = peers.connected_count" not in html
 
 
 def test_blockchain_history_attributes_candidates_and_champions() -> None:

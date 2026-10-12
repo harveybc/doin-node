@@ -99,7 +99,7 @@
         <div class="row summary-row">
           <div class="col-lg-2 col-6">
             <div class="small-box bg-info">
-              <div class="inner"><h3 id="peerCount">0</h3><p>Peers</p></div>
+              <div class="inner"><h3 id="peerCount">0</h3><p>Nodes Online</p></div>
               <div class="icon"><i class="fas fa-server"></i></div>
             </div>
           </div>
@@ -631,6 +631,7 @@ function renderNetwork(network, metrics) {
   const summary = network.summary;
   const localMember = (network.members || []).find(member => member.is_local);
   localOptimizationHistory = (localMember && localMember.optimization_history) || {};
+  document.getElementById('peerCount').textContent = summary.online_nodes;
   document.getElementById('networkOnline').textContent = `${summary.online_nodes}/${summary.total_nodes}`;
   document.getElementById('networkCandidates').textContent = summary.active_candidates;
   document.getElementById('networkLocalEvaluations').textContent = summary.local_candidate_evaluations ?? '--';
@@ -652,7 +653,7 @@ function renderNetwork(network, metrics) {
     networkBadge.style.display = 'none';
   }
 
-  const versionOrder = ['agent-multi', 'doin-core', 'doin-node', 'doin-plugins', 'gym-fx', 'trading-contracts'];
+    const versionOrder = ['agent-multi', 'doin-core', 'doin-node', 'doin-plugins', 'predictor', 'gym-fx', 'trading-contracts'];
   body.innerHTML = (network.members || []).map(member => {
     const online = member.status === 'online';
     const mismatches = member.version_mismatches || {};
@@ -776,6 +777,7 @@ async function refreshAll() {
       if (v['doin-core'])    parts.push('core:' + v['doin-core']);
       if (v['doin-node'])    parts.push('node:' + v['doin-node']);
       if (v['doin-plugins'])  parts.push('plugins:' + v['doin-plugins']);
+      if (v['predictor'])     parts.push('predictor:' + v['predictor']);
       if (v['gym-fx'])       parts.push('gym-fx:' + v['gym-fx']);
       if (v['trading-contracts']) parts.push('contracts:' + v['trading-contracts']);
       document.getElementById('versionInfo').textContent = parts.join(' | ');
@@ -784,7 +786,6 @@ async function refreshAll() {
 
   // Peers
   if (peers) {
-    document.getElementById('peerCount').textContent = peers.connected_count;
     const tb = document.getElementById('peerTableBody');
     tb.innerHTML = peers.peers.map(p => {
       const cls = p.connected ? 'badge-connected' : (p.source === 'lan' ? 'badge-lan' : 'badge-known');
