@@ -160,6 +160,36 @@ class TestHandleIncoming:
         assert "peer-2" in targets
 
     @pytest.mark.asyncio
+    async def test_relay_excludes_transport_peer_but_preserves_handler_address(self, populated_gs):
+        gs = populated_gs
+        gs._topics["blocks"].mesh = {"peer-0", "peer-1"}
+        handler = AsyncMock()
+        gs.on_message(MessageType.BLOCK_ANNOUNCEMENT, handler)
+        original = make_message(sender="original-author", payload={"block": 7})
+        relayed = original.model_copy(update={
+            "payload": {
+                **original.payload,
+                "_forwarder_id": "local",
+                "_sender_port": 18572,
+            }
+        })
+        gs._send_fn.reset_mock()
+
+        await gs.handle_incoming(
+            original,
+            "100.107.204.49",
+            transport_peer_id="peer-0",
+            forward_message=relayed,
+        )
+
+        handler.assert_awaited_once_with(original, "100.107.204.49")
+        assert [call.args[0] for call in gs._send_fn.await_args_list] == ["peer-1"]
+        sent = gs._send_fn.await_args_list[0].args[1]["data"]
+        assert sent["sender_id"] == "original-author"
+        assert sent["payload"]["_forwarder_id"] == "local"
+        assert sent["payload"]["_sender_port"] == 18572
+
+    @pytest.mark.asyncio
     async def test_updates_peer_score(self, populated_gs):
         gs = populated_gs
         msg = make_message()

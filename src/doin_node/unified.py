@@ -1567,8 +1567,25 @@ class UnifiedNode:
                              sender, sender_port, routing_peer_id[:12])
 
         if self.gossip:
-            # GossipSub handles dedup, dispatch, and mesh forwarding
-            await self.gossip.handle_incoming(message, sender)
+            # Preserve the logical author for protocol handlers while stamping
+            # this node as the physical relay for the next hop.  Gossip meshes
+            # are keyed by peer ID, not transport IP, so exclusion must use the
+            # peer that actually delivered the message.
+            forward_message = message.model_copy(
+                update={"payload": {
+                    **(message.payload or {}),
+                    "_forwarder_id": self.peer_id,
+                    "_sender_port": self.config.port,
+                    "_component_versions": self._component_versions,
+                    "_plugin_configs": self._plugin_configs,
+                }}
+            )
+            await self.gossip.handle_incoming(
+                message,
+                sender,
+                transport_peer_id=routing_peer_id,
+                forward_message=forward_message,
+            )
         else:
             # Legacy flooding
             should_forward = await self.flooding.handle_incoming(message, sender)

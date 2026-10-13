@@ -10,6 +10,7 @@ Tests the full integration of all security systems:
 import asyncio
 import json
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -551,6 +552,33 @@ def test_block_sync_route_can_prefer_the_direct_forwarder() -> None:
     assert node._find_peer_endpoint(
         "100.99.54.79", "original-author", prefer_from_addr=True,
     ) == "100.99.54.79:8470"
+
+
+@pytest.mark.asyncio
+async def test_gossip_relay_keeps_author_and_routes_by_physical_forwarder() -> None:
+    node = make_node(port=18572)
+    node.add_peer("100.99.54.79", 18572, peer_id="relay-peer")
+    node.gossip.handle_incoming = AsyncMock(return_value=True)
+    message = Message(
+        msg_type=MessageType.CHAMPION_REQUEST,
+        sender_id="original-author",
+        payload={
+            "domain_id": "test-domain",
+            "request_id": "request-1",
+            "_forwarder_id": "relay-peer",
+            "_sender_port": 18572,
+        },
+    )
+
+    await node._on_transport_message(message, "100.99.54.79")
+
+    args = node.gossip.handle_incoming.await_args
+    assert args.args == (message, "100.99.54.79")
+    assert args.kwargs["transport_peer_id"] == "relay-peer"
+    forwarded = args.kwargs["forward_message"]
+    assert forwarded.sender_id == "original-author"
+    assert forwarded.payload["_forwarder_id"] == node.peer_id
+    assert forwarded.payload["_sender_port"] == 18572
 
 
 def test_optimizer_round_uses_thread_safe_chain_height_snapshot() -> None:
