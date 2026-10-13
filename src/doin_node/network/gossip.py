@@ -278,16 +278,26 @@ class GossipSub:
         return sent
 
     async def handle_incoming(
-        self, message: Message, from_peer: str,
+        self,
+        message: Message,
+        from_peer: str,
+        *,
+        transport_peer_id: str | None = None,
+        forward_message: Message | None = None,
     ) -> bool:
         """Handle an incoming message from a peer.
+
+        ``from_peer`` remains the physical address passed to protocol handlers.
+        ``transport_peer_id`` identifies the mesh peer that delivered the
+        message, which can differ from its logical author after relaying.
 
         Returns True if the message was new (not seen before).
         """
         msg_id = self._message_id(message)
+        transport_peer = transport_peer_id or from_peer
 
         # Update peer score
-        score = self._peer_scores.get(from_peer)
+        score = self._peer_scores.get(transport_peer)
         if score:
             score.messages_delivered += 1
             score.last_seen = time.time()
@@ -311,8 +321,8 @@ class GossipSub:
         state = self._topics.get(topic)
         if state:
             for peer_id in list(state.mesh):
-                if peer_id != from_peer and peer_id != self.peer_id:
-                    await self._send_message(peer_id, message)
+                if peer_id != transport_peer and peer_id != self.peer_id:
+                    await self._send_message(peer_id, forward_message or message)
 
         return True
 
