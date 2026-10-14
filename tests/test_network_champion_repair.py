@@ -144,6 +144,19 @@ def branch(parent, score, work, ident, peer="origin"):
                  weighted_performance_sum=work, threshold=1e-8), transactions=[tx])
 
 
+def test_import_rejects_empty_block_and_inflated_work(tmp_path):
+    node = make_node(tmp_path, "work-validation")
+    empty = branch(node._get_tip(), -0.1, 0.1, "empty")
+    empty.transactions.clear()
+    empty.header.merkle_root = compute_merkle_root([])
+    assert node._validate_and_append_blocks([empty]) == 0
+    first = branch(node._get_tip(), -0.1, 0.1, "first")
+    assert node._validate_and_append_blocks([first]) == 1
+    forged = branch(node._get_tip(), -0.100000001, 1e12, "forged")
+    assert node._validate_and_append_blocks([forged]) == 0
+    assert node._get_tip().hash == first.hash
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [False, True])
 async def test_peer_fork_validated_before_rollback(tmp_path, monkeypatch, invalid):

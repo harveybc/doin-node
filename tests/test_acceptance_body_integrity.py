@@ -269,7 +269,7 @@ async def test_fork_adoption_invalid_suffix_restores_local_branch(
             return blocks
 
         local = branch("local-peer", 1.0)
-        peer = branch("remote-peer", 10.0)
+        peer = branch("remote-peer", 1.1)
         assert node.chaindb.append_blocks(local) == 2
         before = snapshot(node.chaindb)[0]
         peer[-1].transactions[0].payload["parameters"]["seed"] = 99

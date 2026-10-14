@@ -1351,7 +1351,7 @@ class UnifiedNode:
 
     def _append_block(self, block: Block) -> None:
         best, seen = self._committed_champion_state()
-        advance_champions(block, best, seen, self._champion_directions())
+        advance_champions(block, best, seen, self._champion_directions(), **self._champion_work_policy())
         if self.chaindb:
             self.chaindb.append_block(block)
         else:
@@ -1363,7 +1363,7 @@ class UnifiedNode:
         for block in blocks:
             try:
                 next_best, next_seen = advance_champions(
-                    block, best, seen, self._champion_directions()
+                    block, best, seen, self._champion_directions(), **self._champion_work_policy()
                 )
             except ValueError as exc:
                 logger.warning("Block #%d champion transition rejected: %s", block.header.index, exc)
@@ -1378,6 +1378,16 @@ class UnifiedNode:
 
     def _champion_directions(self) -> dict[str, bool]:
         return {key: role.higher_is_better for key, role in self._domain_roles.items()}
+
+    def _champion_work_policy(self) -> dict[str, dict[str, float]]:
+        """Bound peer work by the same domain weights and incentive bonus cap."""
+        return {
+            "max_work_multipliers": {
+                key: role.incentive_config.max_bonus_multiplier
+                for key, role in self._domain_roles.items()
+            },
+            "domain_weights": {key: domain.weight for key, domain in self._domains.items()},
+        }
 
     def _committed_champion_state(self, height: int | None = None):
         """Project committed scores, never using uncommitted local announcements.
@@ -5135,7 +5145,8 @@ class UnifiedNode:
             best, seen = self._committed_champion_state(common + 1)
             for block in blocks:
                 probe.append_block(block)
-                best, seen = advance_champions(block, best, seen, self._champion_directions())
+                best, seen = advance_champions(block, best, seen, self._champion_directions(),
+                                               **self._champion_work_policy())
             return True
         except (ValueError, ChainError) as exc:
             logger.warning("Rejected peer branch before rollback: %s", exc)
