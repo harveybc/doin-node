@@ -330,6 +330,7 @@ def load_config(config_path: str, overrides: dict[str, Any]) -> UnifiedNodeConfi
         candidate_archive_pump_interval=raw.get(
             "candidate_archive_pump_interval", defaults.candidate_archive_pump_interval
         ),
+        require_champion_work_proof=raw.get('require_champion_work_proof', defaults.require_champion_work_proof),
         storage_backend=raw.get("storage_backend", defaults.storage_backend),
         db_path=raw.get("db_path", defaults.db_path),
         snapshot_interval=raw.get("snapshot_interval", defaults.snapshot_interval),

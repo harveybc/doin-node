@@ -158,6 +158,22 @@ def test_import_rejects_empty_block_and_inflated_work(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_strict_work_proof_is_replayed_by_independent_receivers(tmp_path):
+    nodes = [make_node(tmp_path, f'work-node-{i}') for i in range(4)]
+    for node in nodes:
+        node.config.require_champion_work_proof = True
+    await reveal_to(nodes, nodes[0].peer_id, -0.1, 'first-work')
+    for node in nodes[1:]:
+        copy_blocks(nodes[0], node)
+    await reveal_to(nodes, nodes[2].peer_id, -0.2, 'second-work')
+    for i in (0, 1, 3):
+        copy_blocks(nodes[2], nodes[i])
+    assert all(n._get_height() == 3 for n in nodes)
+    expected = [b.model_dump_json() for b in nodes[0].chain.blocks]
+    assert all([b.model_dump_json() for b in n.chain.blocks] == expected for n in nodes)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [False, True])
 async def test_peer_fork_validated_before_rollback(tmp_path, monkeypatch, invalid):
     node = make_node(tmp_path, "node")

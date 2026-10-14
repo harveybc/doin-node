@@ -32,7 +32,7 @@ import os
 import secrets
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -343,6 +343,7 @@ class UnifiedNodeConfig:
     candidate_archive_store_url: str = ""
     candidate_archive_token_env: str = ""
     candidate_archive_pump_interval: float = 30.0
+    require_champion_work_proof: bool = False
 
     # Storage backend: "sqlite" (production) or "json" (legacy/testing)
     storage_backend: str = "sqlite"
@@ -1283,7 +1284,7 @@ class UnifiedNode:
             # consumed by fork choice even when genotype/metrics are external.
             **{key: value for key, value in (acceptance or {}).items() if key in {
                 "verified_performance", "effective_increment", "raw_increment", "reward_fraction",
-                "quorum_agree_fraction", "incentive_reason",
+                "quorum_agree_fraction", "incentive_reason", "work_proof",
             }},
         }
 
@@ -1352,6 +1353,7 @@ class UnifiedNode:
     def _append_block(self, block: Block) -> None:
         best, seen = self._committed_champion_state()
         advance_champions(block, best, seen, self._champion_directions(), **self._champion_work_policy())
+        self._validate_exact_champion_work(block)
         if self.chaindb:
             self.chaindb.append_block(block)
         else:
@@ -1365,6 +1367,7 @@ class UnifiedNode:
                 next_best, next_seen = advance_champions(
                     block, best, seen, self._champion_directions(), **self._champion_work_policy()
                 )
+                self._validate_exact_champion_work(block)
             except ValueError as exc:
                 logger.warning("Block #%d champion transition rejected: %s", block.header.index, exc)
                 break
@@ -1383,11 +1386,33 @@ class UnifiedNode:
         """Bound peer work by the same domain weights and incentive bonus cap."""
         return {
             "max_work_multipliers": {
-                key: role.incentive_config.max_bonus_multiplier
+                key: role.incentive_config.max_bonus_multiplier * self._domains[key].weight
+                     * (1 + self.vuw.config.progress_cap) * (1.0 if role.has_synthetic_data else 0.5)
                 for key, role in self._domain_roles.items()
             },
             "domain_weights": {key: domain.weight for key, domain in self._domains.items()},
         }
+
+    def _work_domains(self) -> dict[str, dict[str, Any]]:
+        return {key: dict(weight=self._domains[key].weight,
+                          has_synthetic_data=role.has_synthetic_data,
+                          higher_is_better=role.higher_is_better,
+                          incentive=asdict(role.incentive_config))
+                for key, role in self._domain_roles.items()}
+
+    def _derive_exact_champion_work(self, domain_id, optimizer_id, verified, reported, parents=None):
+        from doin_core.consensus.champion_work import derive_work
+        blocks = self._get_blocks_range(0, self._get_height() - 1) if parents is None else parents
+        stamp = max(time.time(), blocks[-1].header.timestamp.timestamp())
+        return derive_work(blocks, self._work_domains(), domain_id=domain_id,
+                           optimizer_id=optimizer_id, verified=verified, reported=reported,
+                           timestamp=stamp)
+
+    def _validate_exact_champion_work(self, block, parents=None):
+        if self.config.require_champion_work_proof and block.header.index > 0:
+            from doin_core.consensus.champion_work import validate_work
+            blocks = self._get_blocks_range(0, self._get_height() - 1) if parents is None else parents
+            validate_work(block, blocks, self._work_domains())
 
     def _committed_champion_state(self, height: int | None = None):
         """Project committed scores, never using uncommitted local announcements.
@@ -1421,6 +1446,12 @@ class UnifiedNode:
         """
         from doin_node.archive.champion import resolve_champion_payload
 
+        if getattr(self.config, 'require_champion_work_proof', False):
+            parents = []
+            for index in range(self._get_height()):
+                block = self._get_block(index)
+                self._validate_exact_champion_work(block, parents)
+                parents.append(block)
         recovered: dict[str, tuple[dict[str, Any], float]] = {}
         metrics: dict[str, dict[str, Any]] = {}
         for i in range(self._get_height()):
@@ -1850,6 +1881,12 @@ class UnifiedNode:
         weights = self.vuw.compute_weights()
         domain_weight = weights.get(data.domain_id, 0.0)
 
+        proof = None
+        if self.config.require_champion_work_proof:
+            proof = self._derive_exact_champion_work(data.domain_id, sender_id, verified, reported)
+            raw_increment, domain_weight, rep_factor = (
+                proof['raw_increment'], proof['domain_weight'], proof['reputation_factor'])
+
         incentive_result = evaluate_verification_incentive(
             reported_performance=reported,
             verified_performance=verified,
@@ -1906,6 +1943,7 @@ class UnifiedNode:
             "reward_fraction": incentive_result.reward_fraction,
             "quorum_agree_fraction": 1.0,
             "incentive_reason": "auto_accept_no_synthetic_validation",
+            **({'work_proof': proof} if proof is not None else {}),
             "val_mae": cm.get("val_mae"),
             "train_mae": cm.get("train_mae"),
             "val_naive_mae": cm.get("val_naive_mae"),
@@ -2278,6 +2316,12 @@ class UnifiedNode:
             weights = self.vuw.compute_weights()
             domain_weight = weights.get(task.domain_id, 0.0)
 
+            proof = None
+            if self.config.require_champion_work_proof:
+                proof = self._derive_exact_champion_work(task.domain_id, task.requester_id, verified, reported)
+                raw_increment, domain_weight, rep_factor = (
+                    proof['raw_increment'], proof['domain_weight'], proof['reputation_factor'])
+
             incentive_result = evaluate_verification_incentive(
                 reported_performance=reported,
                 verified_performance=verified,
@@ -2325,6 +2369,7 @@ class UnifiedNode:
                 "reward_fraction": incentive_result.reward_fraction,
                 "quorum_agree_fraction": result.agree_fraction,
                 "incentive_reason": incentive_result.reason,
+                **({'work_proof': proof} if proof is not None else {}),
                 "champion_metrics": self._public_champion_metrics(task.metric_evidence),
                 **onchain_metrics,
             }
@@ -2505,6 +2550,9 @@ class UnifiedNode:
         best, seen = self._committed_champion_state()
         retained = []
         rebased = {}
+        proofs = {}
+        parents = self._get_blocks_range(0, self._get_height() - 1)
+        virtual_transactions = []
         for record in records:
             key = (record.domain_id, record.optimae_id)
             if (record.optimizer_id == self.peer_id and key not in seen
@@ -2513,7 +2561,27 @@ class UnifiedNode:
                 gain = performance_gain(record.performance, best.get(record.domain_id),
                                         self._domain_roles[record.domain_id].higher_is_better)
                 old_gain = record.payload.get("raw_increment")
-                if old_gain is not None and gain != old_gain:
+                if self.config.require_champion_work_proof:
+                    source_proof = record.payload.get('work_proof')
+                    if not isinstance(source_proof, dict):
+                        raise ValueError('CHAMPION_WORK_PROOF_REQUIRED')
+                    proof = self._derive_exact_champion_work(
+                        record.domain_id, record.optimizer_id, record.performance,
+                        source_proof['reported_performance'], parents)
+                    gain, effective = proof['raw_increment'], proof['effective_increment']
+                    proofs[key] = proof
+                    rebased[key] = (gain, effective)
+                    projected = Transaction(tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                        domain_id=record.domain_id, peer_id=record.optimizer_id,
+                        payload=dict(record.payload, raw_increment=gain, effective_increment=effective,
+                                     increment=effective, work_proof=proof))
+                    virtual_transactions.append(projected)
+                    header = tip.header.model_copy(update={
+                        'timestamp': datetime.fromtimestamp(proof['timestamp'], timezone.utc)})
+                    parents = self._get_blocks_range(0, self._get_height() - 1) + [
+                        tip.model_copy(update={'header': header, 'transactions': list(virtual_transactions)})]
+                    record.payload.update(raw_increment=gain, effective_increment=effective, increment=effective)
+                elif old_gain is not None and gain != old_gain:
                     old_gain = finite_score(old_gain)
                     if old_gain <= 0:
                         raise ValueError("INVALID_PENDING_WORK_BASELINE")
@@ -2537,6 +2605,8 @@ class UnifiedNode:
                     tx.payload["increment"] = work
                 if "effective_increment" in tx.payload:
                     tx.payload.update(effective_increment=work, raw_increment=gain)
+                    if key in proofs:
+                        tx.payload['work_proof'] = proofs[key]
                 tx.id = tx.compute_id()
         increments: dict[str, float] = {}
         contributors = [c for c in self._block_contributors if c.role != "optimizer"]
@@ -5143,10 +5213,13 @@ class UnifiedNode:
             for index in range(1, common + 1):
                 probe.append_block(self._get_block(index))
             best, seen = self._committed_champion_state(common + 1)
+            parents = [self._get_block(index) for index in range(common + 1)]
             for block in blocks:
                 probe.append_block(block)
                 best, seen = advance_champions(block, best, seen, self._champion_directions(),
                                                **self._champion_work_policy())
+                self._validate_exact_champion_work(block, parents)
+                parents.append(block)
             return True
         except (ValueError, ChainError) as exc:
             logger.warning("Rejected peer branch before rollback: %s", exc)

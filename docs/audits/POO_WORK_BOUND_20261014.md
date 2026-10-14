@@ -17,6 +17,13 @@ body-integrity fixture used fictitious work=10 for an improvement=1. It now
 uses work=1.1, within the existing incentive cap, so it still exercises the
 intended invalid-body rejection rather than the new earlier work rejection.
 
-CPU evidence: core 328 passed; node 626 passed, 29 warnings. Fresh production
+The fresh fleet additionally requires `doin.champion_work.v1`. Each node
+replays the VUW and reputation factors from the committed parent chain,
+counting paired acceptance records once. Reputation decay uses committed
+block/proof timestamps, never the receiver's wall clock. Existing incentive
+formulas derive effective work; the block header must equal its exact weighted
+sum. Local tracker observations do not enter this consensus calculation.
+
+CPU evidence: core 336 passed; node 627 passed, 37 warnings. Fresh production
 identities require the reviewed node/core pins together. The old fleet is
 drained separately and its history is retained without rewriting any block.
