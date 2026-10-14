@@ -1429,9 +1429,12 @@ class UnifiedNode:
                 recovered[domain_id] = (projected["parameters"], verified)
                 metrics[domain_id] = {"performance": verified, **projected["champion_metrics"]}
         # Replace atomically, including removal of a champion from a lost fork.
+        previous = self._domain_best
         self._domain_best = recovered
         self._domain_champion_metrics = metrics
-        for domain_id, (parameters, _) in recovered.items():
+        for domain_id, (parameters, score) in recovered.items():
+            if previous.get(domain_id) == (parameters, score):
+                continue
             plugin = self._optimizer_plugins.get(domain_id)
             if plugin and hasattr(plugin, "set_network_champion"):
                 plugin.set_network_champion(parameters)
@@ -1786,9 +1789,8 @@ class UnifiedNode:
     async def _auto_accept_optimae(self, data: Any, sender_id: str) -> None:
         """Auto-accept an optimae without synthetic data verification.
 
-        Used when synthetic_data_validation=False. Records the acceptance on-chain,
-        updates domain best, distributes rewards, and triggers block generation —
-        same as the full quorum path but skipping evaluator verification.
+        Used when synthetic_data_validation=False. The proposal remains pending
+        until a generated block is committed; only then can it become champion.
         """
         import math
 
@@ -1914,36 +1916,7 @@ class UnifiedNode:
         if self.fee_market:
             self.fee_market.resolve_optimae(data.optimae_id, accepted=True)
 
-        # Update domain best
-        current_best = self._domain_best.get(data.domain_id, (None, None))
-        if self._is_better(data.domain_id, verified, current_best[1]):
-            prev_best = current_best[1]
-            self._domain_best[data.domain_id] = (data.parameters, verified)
-
-            # Update champion metrics from originator (if attached to reveal)
-            cm = getattr(data, 'champion_metrics', None) or {}
-            if cm:
-                self._domain_champion_metrics[data.domain_id] = {
-                    "round": -1,
-                    "performance": verified,
-                    "parameters": data.parameters,
-                    **self._public_champion_metrics(cm),
-                }
-
-            is_remote = sender_id != self.peer_id
-            if is_remote:
-                logger.info(
-                    "🏝️  MIGRATION: auto-accepted from peer %s for %s: %.6f → %.6f",
-                    sender_id[:12], data.domain_id,
-                    prev_best if prev_best is not None else float('-inf'),
-                    verified,
-                )
-                # Inject into optimizer plugin's population
-                plugin = self._optimizer_plugins.get(data.domain_id)
-                if plugin and hasattr(plugin, "set_network_champion"):
-                    plugin.set_network_champion(data.parameters)
-
-        # Try to generate a block
+        # A verified proposal is pending work, not a network champion.
         await self.try_generate_block()
 
     async def _handle_optimae_announcement(self, message: Message, from_peer: str) -> None:
@@ -2355,27 +2328,6 @@ class UnifiedNode:
             # Resolve optimae stake (full refund on accept)
             if self.fee_market:
                 self.fee_market.resolve_optimae(task.optimae_id, accepted=True)
-
-            # Update domain best from accepted optimae (critical for island model!)
-            # This ensures nodes pick up champions from OTHER nodes, not just their own.
-            current_best = self._domain_best.get(task.domain_id, (None, None))
-            if self._is_better(task.domain_id, verified, current_best[1]):
-                prev_best = current_best[1]
-                self._domain_best[task.domain_id] = (task.parameters, verified)
-                is_remote = task.requester_id != self.peer_id
-                if is_remote:
-                    logger.info(
-                        "🏝️  MIGRATION: adopted champion from peer %s for %s: %.6f → %.6f (Δ%.6f)",
-                        task.requester_id[:12], task.domain_id,
-                        prev_best if prev_best is not None else float('-inf'),
-                        verified,
-                        verified - (prev_best or 0),
-                    )
-                else:
-                    logger.info(
-                        "⚡ Domain %s new local best: %.6f (from our own optimae)",
-                        task.domain_id, verified,
-                    )
 
             logger.info(
                 "Optimae %s ACCEPTED (median=%.4f, reward=%.2f, eff=%.4f, rep=%.2f) — %s",
@@ -4140,17 +4092,12 @@ class UnifiedNode:
             # causing a cascade of auto-rejections and wasted bandwidth.
             current_net_best = node._domain_best.get(domain_id, (None, None))
             if not node._is_better(domain_id, fitness, current_net_best[1]):
-                net_params, net_perf = current_net_best
+                _, net_perf = current_net_best
                 logger.info(
                     "[%s] Local champion (%.6f) does not beat network best (%.6f)"
-                    " — skipping broadcast, injecting network champion",
+                    " — skipping broadcast",
                     domain_id, fitness, net_perf,
                 )
-                # Inject the superior network champion so the optimizer benefits immediately
-                if net_params is not None:
-                    p = node._optimizer_plugins.get(domain_id)
-                    if p and hasattr(p, "set_network_champion"):
-                        p.set_network_champion(net_params)
                 return
 
             # Local champion is genuinely better than the known network best → broadcast
@@ -4864,9 +4811,6 @@ class UnifiedNode:
         if trusted_score != committed.get(domain_id):
             trusted_params, trusted_score = None, None
         plugin = self._optimizer_plugins.get(domain_id)
-        if trusted_params:
-            if plugin and hasattr(plugin, "set_network_champion"):
-                plugin.set_network_champion(trusted_params)
 
         # Reset stage-start fitness for the new stage (the champion's fitness
         # becomes the baseline for the next stage's improvement threshold)

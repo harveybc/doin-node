@@ -1,13 +1,18 @@
 """Synthetic acceptance projection contracts; no services or live state."""
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
 from doin_core.archive.body import ArchiveRefusal, digest_bytes
 from doin_core.archive.external import build_external_body
+from doin_core.crypto.hashing import compute_merkle_root
+from doin_core.models import Block, BlockHeader, Transaction, TransactionType
 from doin_node.archive.champion import resolve_champion_payload
 from doin_node.archive.external import ExternalPayloadArchive
+from doin_node.dashboard.routes import _blockchain_metrics_payload
+from doin_node.storage.chaindb import ChainDB
 from tools.i6n_archive import records
 from tools.i6n_search_space import GENOTYPE_SCHEMA
 
@@ -98,6 +103,42 @@ def archived(candidate, *, mode="external_payload", domain=DOMAIN, schema=None):
     )
     reference = archive.store_body(external, mode=mode)
     return archive, store, {"optimae_id": "synthetic-accepted", "candidate_archive_reference": reference}
+
+
+def test_dashboard_reads_compact_acceptance_pair_and_flags_regression(tmp_path, candidate):
+    archive, _, evidence = archived(candidate)
+    db = ChainDB(tmp_path / "chain.sqlite")
+    db.open()
+    genesis = db.initialize()
+    for index, score in enumerate((-0.2, -0.1), start=1):
+        ident = f"accepted-{index}"
+        work = Transaction(tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                           domain_id=DOMAIN, peer_id="origin",
+                           payload={"optimae_id": ident, "performance": score,
+                                    "increment": 0.01})
+        reference = Transaction(tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                                domain_id=DOMAIN, peer_id="origin",
+                                payload={**evidence, "optimae_id": ident})
+        block = Block(header=BlockHeader(
+            index=index, previous_hash=genesis.hash,
+            merkle_root=compute_merkle_root([work.id, reference.id]),
+            generator_id="origin", weighted_performance_sum=0.01,
+            threshold=0.001), transactions=[work, reference])
+        db.append_block(block)
+        genesis = block
+    try:
+        node = SimpleNamespace(
+            config=SimpleNamespace(domains=[SimpleNamespace(domain_id=DOMAIN, higher_is_better=False)]),
+            chaindb=db, _candidate_external_archive=archive,
+        )
+        result = _blockchain_metrics_payload(node)
+        assert [row["performance"] for row in result["metrics"]] == [-0.2, -0.1]
+        assert [row["is_improvement"] for row in result["metrics"]] == [True, False]
+        assert [row["val_mae"] for row in result["metrics"]] == [0.8, 0.8]
+        assert result["champion_improvements"] == 1
+        assert result["invalid_acceptance_count"] == 1
+    finally:
+        db.close()
 
 
 def test_legacy_projection_is_detached_and_public():

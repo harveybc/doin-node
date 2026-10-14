@@ -135,6 +135,8 @@
           </div>
         </div>
 
+        <div id="chainContractAlert" class="alert alert-danger" role="alert" style="display:none"></div>
+
         <!-- Charts + Training -->
         <div class="row charts-row">
           <!-- NDA Performance History -->
@@ -1157,6 +1159,19 @@ async function refreshAll() {
 
   // Metrics → Charts (from blockchain via /api/metrics — identical on all synced nodes)
   renderChampionHistory(metrics);
+  const contractAlert = document.getElementById('chainContractAlert');
+  const invalidAcceptances = Number(metrics?.invalid_acceptance_count || 0);
+  const unavailableBodies = Number(metrics?.archive_failures || 0);
+  const missingHistory = Number(document.getElementById('chainHeight').textContent) > 1 && !metrics?.metrics?.length;
+  if (invalidAcceptances || unavailableBodies || missingHistory) {
+    contractAlert.style.display = 'block';
+    contractAlert.textContent = missingHistory
+      ? 'Chain history is not readable; champion plots are unavailable.'
+      : `Chain contract not certified: ${invalidAcceptances} accepted records did not improve the champion; ${unavailableBodies} archived bodies could not be verified. The plot shows numerical improvements only, not proof that historical blocks were valid.`;
+  } else {
+    contractAlert.style.display = 'none';
+    contractAlert.textContent = '';
+  }
   if (metrics && metrics.metrics && metrics.metrics.length > 0) {
     const chainMetrics = metrics.metrics;
     const championMetrics = chainMetrics.filter(metric => metric.is_improvement);

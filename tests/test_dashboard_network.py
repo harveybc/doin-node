@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from doin_core.models import Transaction, TransactionType
 
 from doin_node.dashboard.routes import (
     _PACKAGE_VERSIONS,
@@ -326,15 +327,16 @@ def test_blockchain_history_attributes_candidates_and_champions() -> None:
         payload = {}
         if performance is not None:
             payload = {
+                "optimae_id": tx_id,
                 "verified_performance": performance,
+                "parameters": {},
                 "champion_metrics": {"validation_selection_score": performance},
             }
-        return SimpleNamespace(
-            tx_type=SimpleNamespace(value=kind),
+        return Transaction(
+            tx_type=TransactionType(kind),
             peer_id=peer_id,
             domain_id="trading-domain",
             payload=payload,
-            id=tx_id,
             timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
         )
 
@@ -397,6 +399,8 @@ def test_blockchain_history_attributes_candidates_and_champions() -> None:
     assert payload["metrics"][1]["improvement_num"] == 2
     assert payload["metrics"][1]["peer_id"] == "peer-beta-fu"
     assert payload["metrics"][1]["generator_id"] == "generator-be"
+    assert payload["invalid_acceptance_count"] == 1
+    assert 'id="chainContractAlert"' in _DASHBOARD.read_text()
 
 
 @pytest.mark.asyncio

@@ -840,8 +840,13 @@ async def _api_evaluations(request: web.Request) -> web.Response:
 
 def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
     """Build durable candidate and champion history from the local chain."""
+    from doin_core.consensus.champion import acceptance_records
+    from doin_node.archive.champion import resolve_champion_payload
+
     metrics: list[dict] = []
     candidate_counts: dict[str, dict[str, Any]] = {}
+    invalid_acceptance_count = 0
+    archive_failures = 0
 
     # Determine higher_is_better per domain
     hib_map: dict[str, bool] = {}
@@ -856,6 +861,7 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
         running_best: dict[str, float] = {}
         acceptance_index: dict[str, int] = {}
         improvement_index: dict[str, int] = {}
+        seen_optimae: set[tuple[str, str]] = set()
 
         for i in range(height):
             block = node.chaindb.get_block(i)
@@ -882,24 +888,39 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
                     domains[tx.domain_id] = domains.get(tx.domain_id, 0) + 1
                     continue
 
-                if tx_type_val != "optimae_accepted":
-                    continue
-
-                domain_id = tx.domain_id
-                perf = tx.payload.get("verified_performance")
-                if perf is None:
-                    continue
-
+            for record in acceptance_records(block):
+                domain_id = record.domain_id
+                perf = record.performance
                 hib = hib_map.get(domain_id, False)
                 prev = running_best.get(domain_id)
+                identity = (domain_id, record.optimae_id)
+                duplicate = identity in seen_optimae
+                seen_optimae.add(identity)
                 is_improvement = (
-                    prev is None
+                    not duplicate and (prev is None
                     or (hib and perf > prev)
-                    or (not hib and perf < prev)
+                    or (not hib and perf < prev))
                 )
                 if is_improvement:
                     running_best[domain_id] = perf
                     improvement_index[domain_id] = improvement_index.get(domain_id, 0) + 1
+                else:
+                    invalid_acceptance_count += 1
+
+                try:
+                    projected = resolve_champion_payload(
+                        record.payload, domain_id,
+                        getattr(node, "_candidate_external_archive", None),
+                        verified_performance=perf,
+                    )
+                    champion_metrics = projected["champion_metrics"]
+                    archive_status = "VERIFIED"
+                except Exception:
+                    logger.warning("Unable to resolve archived champion at block %d", i,
+                                   exc_info=True)
+                    champion_metrics = {}
+                    archive_status = "UNAVAILABLE"
+                    archive_failures += 1
 
                 seq = acceptance_index.get(domain_id, 0) + 1
                 acceptance_index[domain_id] = seq
@@ -913,24 +934,24 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
                     "acceptance_num": seq,
                     "improvement_num": improvement_index.get(domain_id),
                     "block_index": block.header.index,
-                    "transaction_id": str(tx.id)[:16] if getattr(tx, "id", None) else "",
+                    "optimae_id": record.optimae_id,
                     "domain_id": domain_id,
                     "performance": perf,
                     "best_performance": running_best[domain_id],
                     "previous_best_performance": prev,
                     "is_improvement": is_improvement,
-                    "peer_id": peer_id,
+                    "duplicate_optimae": duplicate,
+                    "archive_status": archive_status,
+                    "peer_id": str(record.optimizer_id)[:12],
                     "generator_id": str(block.header.generator_id)[:12],
                     "timestamp": block_ts_str,
-                    "val_mae": (tx.payload.get("champion_metrics") or {}).get("val_mae", tx.payload.get("val_mae")),
-                    "train_mae": (tx.payload.get("champion_metrics") or {}).get("train_mae", tx.payload.get("train_mae")),
-                    "val_naive_mae": (tx.payload.get("champion_metrics") or {}).get("val_naive_mae", tx.payload.get("val_naive_mae")),
-                    "train_naive_mae": (tx.payload.get("champion_metrics") or {}).get("train_naive_mae", tx.payload.get("train_naive_mae")),
-                    "test_mae": (tx.payload.get("champion_metrics") or {}).get("test_mae", tx.payload.get("test_mae")),
-                    "test_naive_mae": (tx.payload.get("champion_metrics") or {}).get("test_naive_mae", tx.payload.get("test_naive_mae")),
-                    "metric_evidence": _compact_metric_evidence(
-                        tx.payload.get("champion_metrics")
-                    ),
+                    "val_mae": champion_metrics.get("val_mae"),
+                    "train_mae": champion_metrics.get("train_mae"),
+                    "val_naive_mae": champion_metrics.get("val_naive_mae"),
+                    "train_naive_mae": champion_metrics.get("train_naive_mae"),
+                    "test_mae": champion_metrics.get("test_mae"),
+                    "test_naive_mae": champion_metrics.get("test_naive_mae"),
+                    "metric_evidence": _compact_metric_evidence(champion_metrics),
                 })
 
         # Apply limit (keep latest)
@@ -949,6 +970,8 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
             "by_peer": counts,
         },
         "champion_improvements": sum(improvement_index.values()),
+        "invalid_acceptance_count": invalid_acceptance_count,
+        "archive_failures": archive_failures,
     }
 
 

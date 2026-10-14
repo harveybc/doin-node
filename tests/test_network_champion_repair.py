@@ -76,6 +76,39 @@ async def test_adopted_superior_block_removes_pending_work(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_pending_optimum_is_not_network_champion_or_migration(tmp_path):
+    node = make_node(tmp_path, "pending-only")
+    node.consensus.state.threshold = 100
+    migrations = []
+    node._optimizer_plugins[DOMAIN] = type("Observer", (), {
+        "set_network_champion": lambda self, params: migrations.append(params),
+    })()
+    await reveal_to([node], node.peer_id, -0.2, "pending-only")
+    assert node._get_height() == 1
+    assert DOMAIN not in node._domain_best
+    assert migrations == []
+
+
+@pytest.mark.asyncio
+async def test_stage_message_does_not_repeat_champion_migration(tmp_path):
+    node = make_node(tmp_path, "stage-no-migration")
+    migrations = []
+    node._optimizer_plugins[DOMAIN] = type("Observer", (), {
+        "set_network_champion": lambda self, params: migrations.append(params),
+    })()
+    await reveal_to([node], node.peer_id, -0.2, "committed")
+    assert node._get_height() == 2
+    assert len(migrations) == 1
+    msg = Message(msg_type=MessageType.STAGE_COMPLETE, sender_id="peer",
+                  payload={"domain_id": DOMAIN, "stage": 1, "total_stages": 2,
+                           "champion_fitness": -0.2, "champion_params": {"seed": 42}})
+    await node._handle_stage_complete(msg, "fixture")
+    assert len(migrations) == 1
+    node._update_domain_best_from_chain()
+    assert len(migrations) == 1
+
+
+@pytest.mark.asyncio
 async def test_pending_improvement_rebases_work_against_new_parent(tmp_path):
     local, other = make_node(tmp_path, "local"), make_node(tmp_path, "other")
     local.consensus.state.threshold = 100

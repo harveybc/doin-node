@@ -10,11 +10,13 @@
     "R5": "Archive references recover exact parameters without losing consensus fields",
     "R6": "Restart and peer synchronization recover committed champion state",
     "R7": "Fork candidates are validated before local rollback",
-    "R8": "Independent nodes converge to identical blocks, not locally reminted copies"
+    "R8": "Independent nodes converge to identical blocks, not locally reminted copies",
+    "R9": "Only a newly committed block migrates a champion into an optimizer",
+    "R10": "Dashboard joins compact acceptance records, verifies archived metrics and discloses invalid historical acceptances"
   },
-  "evidence": ["NETWORK_CHAMPION_CONTRACT_20261013.md", "POO_REPAIR_RETURN_20261013.md", "../../tests/test_network_champion_contract_audit.py"],
+  "evidence": ["NETWORK_CHAMPION_CONTRACT_20261013.md", "POO_REPAIR_RETURN_20261013.md", "POO_MIGRATION_DASHBOARD_ADDENDUM_20261014.md", "../../tests/test_network_champion_contract_audit.py", "../../tests/test_network_champion_repair.py", "../../tests/test_archive_champion_projection.py"],
   "constraints": ["No live services, history or fitness changes", "No private data or TEST reads", "Protocol semantics reside in doin-core", "CPU-only synthetic tests"],
-  "verification": {"node_passed": 620, "core_passed": 322, "node_warnings": 26, "core_revision": "2c42883"},
-  "next_allowed_actions": ["Prepare coordinated deployment with pinned node/core", "Verify historic archive availability and unpruned state", "Preserve historical evidence", "Validate fleet equality after coordinated deployment"],
+  "verification": {"node_passed": 623, "core_passed": 322, "node_warnings": 29, "core_revision": "2c42883"},
+  "next_allowed_actions": ["Verify archive availability on each participant", "Prepare coordinated deployment with pinned node/core", "Preserve historical evidence", "Validate fleet equality and one genuine improvement after coordinated deployment"],
   "deployment": "NOT_DEPLOYED"
 }
