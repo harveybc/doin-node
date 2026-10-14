@@ -321,6 +321,13 @@ def test_campaign_cards_use_network_candidate_totals_for_island_mode() -> None:
     assert "plannedSlots * onlineNodes" in html
 
 
+def test_hash_only_charts_render_every_block_champion() -> None:
+    html = _DASHBOARD.read_text()
+
+    assert "metrics.series_grain === 'block_champion'" in html
+    assert "? m.performance : m.best_performance" in html
+
+
 def test_blockchain_history_attributes_candidates_and_champions() -> None:
     def transaction(kind, peer_id, tx_id, performance=None):
         payload = {}
@@ -392,11 +399,132 @@ def test_blockchain_history_attributes_candidates_and_champions() -> None:
     ]
     assert payload["champion_improvements"] == 2
     assert len(payload["metrics"]) == 2
-    assert payload["metrics"][0]["is_improvement"] is False
+    assert payload["metrics"][0]["is_improvement"] is True
     assert payload["metrics"][1]["is_improvement"] is True
     assert payload["metrics"][1]["improvement_num"] == 2
     assert payload["metrics"][1]["peer_id"] == "peer-beta-fu"
     assert payload["metrics"][1]["generator_id"] == "generator-be"
+
+
+def test_hash_only_history_resolves_one_champion_per_block() -> None:
+    def transaction(peer_id, tx_id, digest):
+        return SimpleNamespace(
+            tx_type=SimpleNamespace(value="candidate_evaluated"),
+            peer_id=peer_id,
+            domain_id="trading-domain",
+            payload={
+                "archive_mode": "external_payload",
+                "body_digest": digest,
+            },
+            id=tx_id,
+            timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+        )
+
+    summaries = {
+        "a": {
+            "fitness": 0.10,
+            "aggregate_metrics": {
+                "inner_mae": 0.8, "train_mae": 0.7,
+                "inner_naive_mae": 1.0, "train_naive_mae": 0.9,
+            },
+        },
+        "b": {
+            "fitness": 0.15,
+            "aggregate_metrics": {
+                "inner_mae": 0.7, "train_mae": 0.6,
+                "inner_naive_mae": 1.0, "train_naive_mae": 0.9,
+            },
+        },
+        "c": {
+            "fitness": 0.12,
+            "aggregate_metrics": {
+                "inner_mae": 0.75, "train_mae": 0.65,
+                "inner_naive_mae": 1.0, "train_naive_mae": 0.9,
+            },
+        },
+    }
+
+    class Archive:
+        def __init__(self):
+            self.calls = []
+
+        def resolve(self, reference):
+            digest = reference["body_digest"]
+            self.calls.append(digest)
+            return SimpleNamespace(payload=summaries[digest])
+
+    blocks = [
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=0, generator_id="genesis",
+                timestamp=datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[],
+        ),
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=1, generator_id="generator-a",
+                timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[
+                transaction("peer-a", "tx-a", "a"),
+                transaction("peer-b", "tx-b", "b"),
+            ],
+        ),
+        SimpleNamespace(
+            header=SimpleNamespace(
+                index=2, generator_id="generator-b",
+                timestamp=datetime(2026, 7, 13, 13, 0, tzinfo=timezone.utc),
+            ),
+            transactions=[transaction("peer-c", "tx-c", "c")],
+        ),
+    ]
+    node = _node()
+    node.chaindb = SimpleNamespace(
+        height=len(blocks), get_block=lambda index: blocks[index]
+    )
+    node._candidate_external_archive = Archive()
+
+    payload = _blockchain_metrics_payload(node)
+
+    assert payload["series_grain"] == "block_champion"
+    assert payload["external_block_champions"] == 2
+    assert payload["unresolved_archive_references"] == 0
+    assert [row["block_index"] for row in payload["metrics"]] == [1, 2]
+    assert [row["performance"] for row in payload["metrics"]] == [0.15, 0.12]
+    assert [row["best_performance"] for row in payload["metrics"]] == [0.15, 0.15]
+    assert [row["is_improvement"] for row in payload["metrics"]] == [True, False]
+    assert payload["metrics"][0]["val_mae"] == 0.7
+    assert payload["metrics"][0]["archive_body_digest"] == "b"
+
+    # A second dashboard refresh uses verified in-process summaries.
+    _blockchain_metrics_payload(node)
+    assert node._candidate_external_archive.calls == ["a", "b", "c"]
+
+
+def test_hash_only_history_reports_unresolved_references_without_fabricating_points() -> None:
+    tx = SimpleNamespace(
+        tx_type=SimpleNamespace(value="candidate_evaluated"),
+        peer_id="peer-a",
+        domain_id="trading-domain",
+        payload={"archive_mode": "external_payload", "body_digest": "missing"},
+        id="tx-a",
+        timestamp=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+    )
+    block = SimpleNamespace(
+        header=SimpleNamespace(index=0, generator_id="generator-a", timestamp=tx.timestamp),
+        transactions=[tx],
+    )
+    node = _node()
+    node.chaindb = SimpleNamespace(height=1, get_block=lambda _index: block)
+    node._candidate_external_archive = SimpleNamespace(
+        resolve=lambda _reference: (_ for _ in ()).throw(LookupError("missing"))
+    )
+
+    payload = _blockchain_metrics_payload(node)
+
+    assert payload["metrics"] == []
+    assert payload["unresolved_archive_references"] == 1
 
 
 @pytest.mark.asyncio

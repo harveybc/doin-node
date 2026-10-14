@@ -1159,9 +1159,12 @@ async function refreshAll() {
   renderChampionHistory(metrics);
   if (metrics && metrics.metrics && metrics.metrics.length > 0) {
     const chainMetrics = metrics.metrics;
-    const championMetrics = chainMetrics.filter(metric => metric.is_improvement);
+    const championMetrics = metrics.series_grain === 'block_champion'
+      ? chainMetrics.filter(metric => metric.series_grain === 'block_champion')
+      : chainMetrics.filter(metric => metric.is_improvement);
 
-    // Performance history — one point per actual on-chain improvement.
+    // Hash-only mode: one running-champion point per block. Legacy inline
+    // mode: one point per accepted on-chain improvement.
     const ndaLabels = [];
     const ndaData = [];
     const championMeta = [];
@@ -1169,7 +1172,9 @@ async function refreshAll() {
       if (m.best_performance == null) continue;
       const finder = resolvePeerLabel(m.peer_id);
       ndaLabels.push(`B${m.block_index} ${finder}`);
-      ndaData.push(parseFloat(m.best_performance));
+      ndaData.push(parseFloat(
+        metrics.series_grain === 'block_champion' ? m.performance : m.best_performance
+      ));
       championMeta.push({finder, generator: resolvePeerLabel(m.generator_id), block: m.block_index});
     }
     perfChart.data.labels = ndaLabels;

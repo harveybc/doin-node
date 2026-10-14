@@ -62,6 +62,59 @@ def _compact_metric_evidence(metrics: dict[str, Any] | None) -> dict[str, Any]:
     return {key: source[key] for key in _DASHBOARD_METRIC_KEYS if source.get(key) is not None}
 
 
+def _external_candidate_summary(
+    node: Any,
+    reference: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve one hash-only candidate and retain dashboard-safe metrics."""
+    archive = getattr(node, "_candidate_external_archive", None)
+    digest = reference.get("body_digest")
+    if archive is None or not isinstance(digest, str) or not digest:
+        return None
+
+    cache = getattr(node, "_dashboard_external_candidate_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(node, "_dashboard_external_candidate_cache", cache)
+    if digest in cache:
+        return cache[digest]
+
+    try:
+        resolved = archive.resolve(reference)
+        payload = resolved.payload
+        if not isinstance(payload, dict):
+            return None
+        performance = payload.get("fitness")
+        if not isinstance(performance, (int, float)) or not math.isfinite(performance):
+            return None
+        aggregate = payload.get("aggregate_metrics") or {}
+        if not isinstance(aggregate, dict):
+            aggregate = {}
+        summary = {
+            "performance": float(performance),
+            "val_mae": aggregate.get("inner_mae"),
+            "train_mae": aggregate.get("train_mae"),
+            "val_naive_mae": aggregate.get("inner_naive_mae"),
+            "train_naive_mae": aggregate.get("train_naive_mae"),
+            "test_mae": None,
+            "test_naive_mae": None,
+            "metric_evidence": _compact_metric_evidence(
+                payload.get("metric_evidence")
+            ),
+            "body_digest": digest,
+        }
+    except Exception:
+        logger.warning(
+            "Unable to resolve dashboard candidate archive %s",
+            digest[:12],
+            exc_info=True,
+        )
+        return None
+
+    cache[digest] = summary
+    return summary
+
+
 def _dashboard_transaction_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Redact model bytes and large traces from the monitoring API only."""
     result = dict(payload)
@@ -842,6 +895,8 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
     """Build durable candidate and champion history from the local chain."""
     metrics: list[dict] = []
     candidate_counts: dict[str, dict[str, Any]] = {}
+    unresolved_references = 0
+    external_block_champions = 0
 
     # Determine higher_is_better per domain
     hib_map: dict[str, bool] = {}
@@ -852,15 +907,65 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
 
     if node.chaindb:
         height = node.chaindb.height
-        # Track running best per domain
         running_best: dict[str, float] = {}
         acceptance_index: dict[str, int] = {}
         improvement_index: dict[str, int] = {}
+
+        def append_point(
+            block: Any,
+            domain_id: str,
+            tx: Any,
+            selected: dict[str, Any],
+            *,
+            series_grain: str,
+        ) -> None:
+            perf = selected["performance"]
+            hib = hib_map.get(domain_id, False)
+            prev = running_best.get(domain_id)
+            is_improvement = (
+                prev is None
+                or (hib and perf > prev)
+                or (not hib and perf < prev)
+            )
+            if is_improvement:
+                running_best[domain_id] = perf
+                improvement_index[domain_id] = improvement_index.get(domain_id, 0) + 1
+
+            seq = acceptance_index.get(domain_id, 0) + 1
+            acceptance_index[domain_id] = seq
+            block_ts = block.header.timestamp
+            block_ts_str = block_ts.isoformat() if hasattr(block_ts, "isoformat") else str(block_ts)
+            metrics.append({
+                "champion_num": seq,
+                "acceptance_num": seq,
+                "improvement_num": improvement_index.get(domain_id),
+                "block_index": block.header.index,
+                "transaction_id": str(tx.id)[:16] if getattr(tx, "id", None) else "",
+                "domain_id": domain_id,
+                "performance": perf,
+                "best_performance": running_best[domain_id],
+                "previous_best_performance": prev,
+                "is_improvement": is_improvement,
+                "peer_id": str(tx.peer_id)[:12],
+                "generator_id": str(block.header.generator_id)[:12],
+                "timestamp": block_ts_str,
+                "val_mae": selected.get("val_mae"),
+                "train_mae": selected.get("train_mae"),
+                "val_naive_mae": selected.get("val_naive_mae"),
+                "train_naive_mae": selected.get("train_naive_mae"),
+                "test_mae": selected.get("test_mae"),
+                "test_naive_mae": selected.get("test_naive_mae"),
+                "metric_evidence": selected.get("metric_evidence", {}),
+                "archive_body_digest": selected.get("body_digest"),
+                "series_grain": series_grain,
+            })
 
         for i in range(height):
             block = node.chaindb.get_block(i)
             if block is None:
                 continue
+            block_candidates: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
+            accepted: dict[tuple[str, str], dict[str, Any]] = {}
             for tx in block.transactions:
                 tx_type_val = tx.tx_type.value if hasattr(tx.tx_type, "value") else str(tx.tx_type)
                 peer_id = str(tx.peer_id)[:12]
@@ -880,58 +985,101 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
                     count["last_timestamp"] = ts_str
                     domains = count["domains"]
                     domains[tx.domain_id] = domains.get(tx.domain_id, 0) + 1
+                    if tx.payload.get("archive_mode") in {"external_payload", "full_payload"}:
+                        summary = _external_candidate_summary(node, tx.payload)
+                        if summary is None:
+                            unresolved_references += 1
+                        else:
+                            block_candidates.setdefault(tx.domain_id, []).append((tx, summary))
                     continue
 
                 if tx_type_val != "optimae_accepted":
                     continue
 
                 domain_id = tx.domain_id
-                perf = tx.payload.get("verified_performance")
-                if perf is None:
-                    continue
-
-                hib = hib_map.get(domain_id, False)
-                prev = running_best.get(domain_id)
-                is_improvement = (
-                    prev is None
-                    or (hib and perf > prev)
-                    or (not hib and perf < prev)
+                optimae_id = str(
+                    tx.payload.get("optimae_id")
+                    or getattr(tx, "id", "")
                 )
-                if is_improvement:
-                    running_best[domain_id] = perf
-                    improvement_index[domain_id] = improvement_index.get(domain_id, 0) + 1
+                item = accepted.setdefault(
+                    (domain_id, optimae_id), {"tx": tx, "payload": {}}
+                )
+                item["tx"] = tx
+                item["payload"].update(tx.payload)
+                perf = tx.payload.get(
+                    "verified_performance", tx.payload.get("performance")
+                )
+                if isinstance(perf, (int, float)) and math.isfinite(perf):
+                    item["performance"] = float(perf)
+                reference = tx.payload.get("candidate_archive_reference")
+                if isinstance(reference, dict):
+                    item["reference"] = reference
 
-                seq = acceptance_index.get(domain_id, 0) + 1
-                acceptance_index[domain_id] = seq
+            # In hash-only mode each accepted optimum is split into a compact
+            # performance transaction and a reference transaction. Rejoin both
+            # halves by optimae_id and emit one verified point per block/domain.
+            accepted_by_domain: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
+            for (domain_id, _optimae_id), item in accepted.items():
+                selected: dict[str, Any] | None = None
+                reference = item.get("reference")
+                if reference is not None:
+                    selected = _external_candidate_summary(node, reference)
+                    if selected is None:
+                        unresolved_references += 1
+                        continue
+                    declared = item.get("performance")
+                    if declared is not None and not math.isclose(
+                        declared, selected["performance"], rel_tol=0.0, abs_tol=1e-15
+                    ):
+                        unresolved_references += 1
+                        continue
+                    selected = {**selected, "performance": declared if declared is not None else selected["performance"]}
+                elif item.get("performance") is not None:
+                    payload = item["payload"]
+                    evidence = payload.get("champion_metrics") or {}
+                    selected = {
+                        "performance": item["performance"],
+                        "val_mae": evidence.get("val_mae", payload.get("val_mae")),
+                        "train_mae": evidence.get("train_mae", payload.get("train_mae")),
+                        "val_naive_mae": evidence.get("val_naive_mae", payload.get("val_naive_mae")),
+                        "train_naive_mae": evidence.get("train_naive_mae", payload.get("train_naive_mae")),
+                        "test_mae": evidence.get("test_mae", payload.get("test_mae")),
+                        "test_naive_mae": evidence.get("test_naive_mae", payload.get("test_naive_mae")),
+                        "metric_evidence": _compact_metric_evidence(evidence),
+                    }
+                if selected is not None:
+                    accepted_by_domain.setdefault(domain_id, []).append((item["tx"], selected))
 
-                # Block timestamp
-                block_ts = block.header.timestamp
-                block_ts_str = block_ts.isoformat() if hasattr(block_ts, "isoformat") else str(block_ts)
+            emitted_domains: set[str] = set()
+            for domain_id, candidates in accepted_by_domain.items():
+                hib = hib_map.get(domain_id, False)
+                selected_tx, selected = (
+                    max(candidates, key=lambda item: item[1]["performance"])
+                    if hib else
+                    min(candidates, key=lambda item: item[1]["performance"])
+                )
+                grain = "block_champion" if selected.get("body_digest") else "accepted_optimum"
+                append_point(block, domain_id, selected_tx, selected, series_grain=grain)
+                emitted_domains.add(domain_id)
+                if grain == "block_champion":
+                    external_block_champions += 1
 
-                metrics.append({
-                    "champion_num": seq,
-                    "acceptance_num": seq,
-                    "improvement_num": improvement_index.get(domain_id),
-                    "block_index": block.header.index,
-                    "transaction_id": str(tx.id)[:16] if getattr(tx, "id", None) else "",
-                    "domain_id": domain_id,
-                    "performance": perf,
-                    "best_performance": running_best[domain_id],
-                    "previous_best_performance": prev,
-                    "is_improvement": is_improvement,
-                    "peer_id": peer_id,
-                    "generator_id": str(block.header.generator_id)[:12],
-                    "timestamp": block_ts_str,
-                    "val_mae": (tx.payload.get("champion_metrics") or {}).get("val_mae", tx.payload.get("val_mae")),
-                    "train_mae": (tx.payload.get("champion_metrics") or {}).get("train_mae", tx.payload.get("train_mae")),
-                    "val_naive_mae": (tx.payload.get("champion_metrics") or {}).get("val_naive_mae", tx.payload.get("val_naive_mae")),
-                    "train_naive_mae": (tx.payload.get("champion_metrics") or {}).get("train_naive_mae", tx.payload.get("train_naive_mae")),
-                    "test_mae": (tx.payload.get("champion_metrics") or {}).get("test_mae", tx.payload.get("test_mae")),
-                    "test_naive_mae": (tx.payload.get("champion_metrics") or {}).get("test_naive_mae", tx.payload.get("test_naive_mae")),
-                    "metric_evidence": _compact_metric_evidence(
-                        tx.payload.get("champion_metrics")
-                    ),
-                })
+            # A candidate reference is a fallback only when a block has no
+            # accepted optimum reference for that domain.
+            for domain_id, candidates in block_candidates.items():
+                if domain_id in emitted_domains:
+                    continue
+                hib = hib_map.get(domain_id, False)
+                selected_tx, selected = (
+                    max(candidates, key=lambda item: item[1]["performance"])
+                    if hib else
+                    min(candidates, key=lambda item: item[1]["performance"])
+                )
+                append_point(
+                    block, domain_id, selected_tx, selected,
+                    series_grain="block_champion",
+                )
+                external_block_champions += 1
 
         # Apply limit (keep latest)
         if len(metrics) > limit:
@@ -949,6 +1097,11 @@ def _blockchain_metrics_payload(node: Any, limit: int = 500) -> dict[str, Any]:
             "by_peer": counts,
         },
         "champion_improvements": sum(improvement_index.values()),
+        "series_grain": (
+            "block_champion" if external_block_champions else "accepted_optimum"
+        ),
+        "external_block_champions": external_block_champions,
+        "unresolved_archive_references": unresolved_references,
     }
 
 
