@@ -255,11 +255,16 @@ class TestSnapshots:
 # ── Pruning ──────────────────────────────────────────────────────
 
 class TestPruning:
-    def test_prune_transactions(self, seeded_db):
+    def test_prune_transactions(self, seeded_db, caplog):
+        before = seeded_db.get_blocks_range(0, seeded_db.height - 1)
+        changes = seeded_db._conn.total_changes
         pruned = seeded_db.prune_transactions_before(2)
-        assert pruned == 1  # block 1 had 1 tx
-        assert seeded_db.get_transactions(1) == []
-        assert len(seeded_db.get_transactions(2)) == 1
+        # Consensus replay and Merkle reconstruction still require every body.
+        assert pruned == 0
+        assert "Pruning disabled" in caplog.text
+        assert seeded_db._conn.total_changes == changes
+        assert seeded_db.get_blocks_range(0, seeded_db.height - 1) == before
+        assert len(seeded_db.get_transactions(1)) == 1
 
     def test_prune_none(self, seeded_db):
         assert seeded_db.prune_transactions_before(0) == 0

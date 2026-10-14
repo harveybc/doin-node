@@ -1,0 +1,20 @@
+{
+  "initiative": "network-champion-contract-repair",
+  "current_stage": "system-verification-complete-isolated",
+  "production_modified": false,
+  "requirements": {
+    "R1": "Only the originating optimizer contributes mintable accepted work",
+    "R2": "Imported accepted optima strictly improve the committed domain champion",
+    "R3": "Accepted optimum identities cannot receive work twice",
+    "R4": "Accepted payload changes invalidate transaction integrity",
+    "R5": "Archive references recover exact parameters without losing consensus fields",
+    "R6": "Restart and peer synchronization recover committed champion state",
+    "R7": "Fork candidates are validated before local rollback",
+    "R8": "Independent nodes converge to identical blocks, not locally reminted copies"
+  },
+  "evidence": ["NETWORK_CHAMPION_CONTRACT_20261013.md", "POO_REPAIR_RETURN_20261013.md", "../../tests/test_network_champion_contract_audit.py"],
+  "constraints": ["No live services, history or fitness changes", "No private data or TEST reads", "Protocol semantics reside in doin-core", "CPU-only synthetic tests"],
+  "verification": {"node_passed": 620, "core_passed": 322, "node_warnings": 26, "core_revision": "2c42883"},
+  "next_allowed_actions": ["Prepare coordinated deployment with pinned node/core", "Verify historic archive availability and unpruned state", "Preserve historical evidence", "Validate fleet equality after coordinated deployment"],
+  "deployment": "NOT_DEPLOYED"
+}

@@ -4,7 +4,7 @@ Replaces the JSON chain file with a proper database that supports:
   - O(1) block lookup by index or hash
   - Efficient range queries for sync
   - State snapshots at finality checkpoints
-  - Pruning of old transaction bodies
+  - Retention of transaction bodies for consensus replay and block reconstruction
   - Concurrent read access (WAL mode)
   - Crash recovery (SQLite transactions)
 
@@ -26,6 +26,8 @@ from typing import Any
 from doin_core.models.block import Block, BlockHeader
 from doin_core.models.transaction import Transaction
 from doin_core.crypto.hashing import compute_merkle_root
+
+from doin_node.blockchain.chain import validate_accepted_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +298,9 @@ class ChainDB:
         if block.hash != block.header.compute_hash():
             raise ValueError("Block hash mismatch")
 
+        for tx in block.transactions:
+            validate_accepted_transaction(tx)
+
     # ── Transaction queries ──────────────────────────────────────
 
     def get_transactions(self, block_index: int) -> list[Transaction]:
@@ -393,20 +398,22 @@ class ChainDB:
     # ── Pruning ──────────────────────────────────────────────────
 
     def prune_transactions_before(self, block_index: int) -> int:
-        """Remove transaction bodies before a given block height.
+        """Retain all transaction bodies; legacy pruning requests return zero.
 
-        Keeps block headers intact for chain validation.
-        Only prune blocks that have a state snapshot after them.
+        Consensus replays accepted identities and scores from transactions, and
+        block reconstruction needs every transaction to reproduce the Merkle
+        root. State snapshots do not replace either requirement. Keep this API
+        as an explicit no-op until the protocol supports verifiable pruning.
+
+        Bodies deleted by older versions cannot be recovered from headers or
+        snapshots; this method does not repair already-pruned databases.
         """
         assert self._conn is not None
-        cursor = self._conn.execute(
-            "DELETE FROM transactions WHERE block_index < ?", (block_index,)
+        logger.warning(
+            "Pruning disabled: retaining all transaction bodies before block %d "
+            "for consensus history and Merkle reconstruction", block_index,
         )
-        pruned = cursor.rowcount
-        if pruned:
-            self._conn.execute("PRAGMA incremental_vacuum")
-            logger.info("Pruned %d transactions before block %d", pruned, block_index)
-        return pruned
+        return 0
 
     # ── Peer storage ─────────────────────────────────────────────
 
@@ -499,7 +506,7 @@ class ChainDB:
 
     def _row_to_transaction(self, row: sqlite3.Row) -> Transaction:
         from doin_core.models.transaction import TransactionType
-        return Transaction(
+        tx = Transaction(
             id=row["tx_id"],
             tx_type=TransactionType(row["tx_type"]),
             domain_id=row["domain_id"],
@@ -507,3 +514,5 @@ class ChainDB:
             payload=json.loads(row["payload"]),
             timestamp=row["timestamp"],
         )
+        validate_accepted_transaction(tx)
+        return tx

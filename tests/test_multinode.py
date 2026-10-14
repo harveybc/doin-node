@@ -53,6 +53,7 @@ def make_node_config(
         port=port,
         data_dir=f"/tmp/doin-test-{port}",
         bootstrap_peers=[f"127.0.0.1:{p}" for p in peer_ports],
+        discovery_enabled=False,
         domains=[DomainRole(
             domain_id="quadratic",
             optimize=optimize,
@@ -281,6 +282,14 @@ class TestMultiNode:
                 performance_increment=0.5,
             )
             node_a.consensus.record_optimae(optimae)
+            node_a.consensus.record_transaction(Transaction(
+                tx_type=TransactionType.OPTIMAE_ACCEPTED,
+                domain_id=optimae.domain_id, peer_id=optimae.optimizer_id,
+                payload={"optimae_id": optimae.id,
+                         "verified_performance": optimae.verified_performance,
+                         "effective_increment": optimae.performance_increment,
+                         "parameters": optimae.parameters},
+            ))
 
             # Force block generation
             block = await node_a.try_generate_block()
@@ -297,8 +306,10 @@ class TestMultiNode:
             async with ClientSession(timeout=ClientTimeout(total=5)) as session:
                 async with session.get("http://127.0.0.1:18477/chain/status") as resp:
                     data = await resp.json()
-                    # B should have caught up (or at least have genesis)
-                    assert data["chain_height"] >= 1
+                    assert data["chain_height"] == node_a._get_height() == 2
+                    assert data["tip_hash"] == block.hash
+            assert node_b._get_block(1).model_dump_json() == block.model_dump_json()
+            assert node_b._domain_best["quadratic"] == ({"x": TARGET}, -0.5)
 
         finally:
             await stop_node(node_a)

@@ -805,6 +805,7 @@ class TestForkChoiceIntegration:
             port=8497,
             data_dir=str(tmp_path),
             discovery_enabled=False,
+            domains=[DomainRole(domain_id="test-domain", higher_is_better=True)],
         )
         node = UnifiedNode(config)
         node.chaindb.open()
@@ -815,7 +816,8 @@ class TestForkChoiceIntegration:
                 tx_type=TransactionType.OPTIMAE_ACCEPTED,
                 domain_id="test-domain",
                 peer_id=generator,
-                payload={"effective_increment": increment},
+                payload={"effective_increment": increment, "optimae_id": generator,
+                         "verified_performance": increment, "parameters": {"seed": 42}},
             )
             header = BlockHeader(
                 index=1,

@@ -49,6 +49,7 @@ from doin_core.consensus import (
     evaluate_verification_incentive,
 )
 from doin_core.crypto.identity import PeerIdentity
+from doin_core.consensus.champion import acceptance_records, advance_champions, finite_score, performance_gain
 from doin_core.models import (
     BalanceTracker,
     Block,
@@ -918,6 +919,10 @@ class UnifiedNode:
                 self.chain.initialize("genesis")
                 self.chain.save()
 
+        # Recover even when every peer already has the same tip. Optimization
+        # must not start with an empty champion after a caught-up restart.
+        self._update_domain_best_from_chain()
+
         # Wire gossip send function to transport
         if self.gossip:
             self.gossip.set_send_fn(self._gossip_send)
@@ -1257,7 +1262,8 @@ class UnifiedNode:
         )
 
     def _archive_only_optimae_payload(
-        self, domain_id: str, optimae_id: str, parameters: dict[str, Any]
+        self, domain_id: str, optimae_id: str, parameters: dict[str, Any],
+        acceptance: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Return the hash-only champion payload when external archive mode is active."""
         if self.config.candidate_archive_mode != "external_payload":
@@ -1268,9 +1274,17 @@ class UnifiedNode:
         checked = check_reference_payload(reference)
         if checked["archive_mode"] != "external_payload":
             raise RuntimeError("I6N champion reference must use external_payload")
+        if checked["domain_id"] != domain_id:
+            raise RuntimeError("champion reference domain mismatch")
         return {
             "optimae_id": optimae_id,
             "candidate_archive_reference": checked,
+            # Consensus evidence is not the candidate body: keep the fields
+            # consumed by fork choice even when genotype/metrics are external.
+            **{key: value for key, value in (acceptance or {}).items() if key in {
+                "verified_performance", "effective_increment", "raw_increment", "reward_fraction",
+                "quorum_agree_fraction", "incentive_reason",
+            }},
         }
 
     def _publish_candidate_evaluation(
@@ -1336,15 +1350,52 @@ class UnifiedNode:
         return self.chain.has_transaction(tx_id)
 
     def _append_block(self, block: Block) -> None:
+        best, seen = self._committed_champion_state()
+        advance_champions(block, best, seen, self._champion_directions())
         if self.chaindb:
             self.chaindb.append_block(block)
         else:
             self.chain.append_block(block)
 
     def _validate_and_append_blocks(self, blocks: list[Block]) -> int:
-        if self.chaindb:
-            return self.chaindb.append_blocks(blocks)
-        return self.chain.validate_and_append_blocks(blocks)
+        best, seen = self._committed_champion_state()
+        appended = 0
+        for block in blocks:
+            try:
+                next_best, next_seen = advance_champions(
+                    block, best, seen, self._champion_directions()
+                )
+            except ValueError as exc:
+                logger.warning("Block #%d champion transition rejected: %s", block.header.index, exc)
+                break
+            count = (self.chaindb.append_blocks([block]) if self.chaindb
+                     else self.chain.validate_and_append_blocks([block]))
+            if not count:
+                break
+            best, seen = next_best, next_seen
+            appended += count
+        return appended
+
+    def _champion_directions(self) -> dict[str, bool]:
+        return {key: role.higher_is_better for key, role in self._domain_roles.items()}
+
+    def _committed_champion_state(self, height: int | None = None):
+        """Project committed scores, never using uncommitted local announcements.
+
+        Legacy repeated/regressing records are retained as historical evidence;
+        they cannot lower the baseline against which new blocks are checked.
+        """
+        best: dict[str, float] = {}
+        seen: set[tuple[str, str]] = set()
+        for i in range(self._get_height() if height is None else height):
+            block = self._get_block(i)
+            if block is None:
+                raise ValueError("MISSING_COMMITTED_BLOCK")
+            for record in acceptance_records(block):
+                seen.add((record.domain_id, record.optimae_id))
+                if self._is_better(record.domain_id, record.performance, best.get(record.domain_id)):
+                    best[record.domain_id] = record.performance
+        return best, seen
 
     def _save_chain(self) -> None:
         if not self.chaindb:
@@ -1358,37 +1409,32 @@ class UnifiedNode:
         starting point for our next optimization round.
         Also restores the complete public champion metric vector from the chain.
         """
-        height = self._get_height()
-        for i in range(height):
+        from doin_node.archive.champion import resolve_champion_payload
+
+        recovered: dict[str, tuple[dict[str, Any], float]] = {}
+        metrics: dict[str, dict[str, Any]] = {}
+        for i in range(self._get_height()):
             block = self._get_block(i)
             if block is None:
-                continue
-            for tx in block.transactions:
-                if tx.tx_type == TransactionType.OPTIMAE_ACCEPTED:
-                    domain_id = tx.domain_id
-                    verified = tx.payload.get("verified_performance")
-                    parameters = tx.payload.get("parameters")
-                    if verified is not None and parameters is not None:
-                        current = self._domain_best.get(domain_id, (None, None))
-                        if self._is_better(domain_id, verified, current[1]):
-                            self._domain_best[domain_id] = (parameters, verified)
-                            # New transactions carry a generic vector. Keep the
-                            # legacy MAE fields readable for old chains.
-                            cm = tx.payload.get("champion_metrics") or {
-                                k: tx.payload.get(k) for k in [
-                                    "val_mae", "train_mae", "val_naive_mae",
-                                    "train_naive_mae", "test_mae", "test_naive_mae",
-                                ] if tx.payload.get(k) is not None
-                            }
-                            if cm:
-                                self._domain_champion_metrics[domain_id] = {
-                                    "performance": verified,
-                                    **cm,
-                                }
-                            logger.info(
-                                "⚡ Synced champion for %s: perf=%.6f (from block #%d)",
-                                domain_id, verified, block.header.index,
-                            )
+                raise ValueError("MISSING_COMMITTED_BLOCK")
+            for record in acceptance_records(block):
+                domain_id, verified = record.domain_id, record.performance
+                current = recovered.get(domain_id, (None, None))
+                if not self._is_better(domain_id, verified, current[1]):
+                    continue
+                projected = resolve_champion_payload(
+                    record.payload, domain_id, self._candidate_external_archive,
+                    verified_performance=verified,
+                )
+                recovered[domain_id] = (projected["parameters"], verified)
+                metrics[domain_id] = {"performance": verified, **projected["champion_metrics"]}
+        # Replace atomically, including removal of a champion from a lost fork.
+        self._domain_best = recovered
+        self._domain_champion_metrics = metrics
+        for domain_id, (parameters, _) in recovered.items():
+            plugin = self._optimizer_plugins.get(domain_id)
+            if plugin and hasattr(plugin, "set_network_champion"):
+                plugin.set_network_champion(parameters)
 
     # ================================================================
     # Network abstraction (gossipsub or flooding)
@@ -1566,6 +1612,11 @@ class UnifiedNode:
     async def _handle_optimae_reveal(self, message: Message, from_peer: str) -> None:
         """Handle Phase 2: reveal — validate hash, validate seed, start quorum."""
         data = OptimaeReveal.model_validate(message.payload)
+        try:
+            finite_score(data.reported_performance)
+        except ValueError:
+            logger.warning("Rejected nonfinite optimum score")
+            return
 
         reveal = Reveal(
             commitment_hash=data.commitment_hash,
@@ -1603,32 +1654,13 @@ class UnifiedNode:
         role = self._domain_roles.get(data.domain_id)
         skip_validation = role and not role.synthetic_data_validation
 
-        # ── Optimistic adoption (island model) ──────────────────────
-        # Only when using full validation (consensus runs in parallel).
-        # When skipping validation, auto-accept handles domain_best update.
-        if not skip_validation and message.sender_id != self.peer_id:
-            current_best = self._domain_best.get(data.domain_id, (None, None))
-            if self._is_better(data.domain_id, data.reported_performance, current_best[1]):
-                self._domain_best[data.domain_id] = (data.parameters, data.reported_performance)
-                # Update champion metrics from reveal
-                cm = getattr(data, 'champion_metrics', None) or {}
-                if cm:
-                    self._domain_champion_metrics[data.domain_id] = {
-                        "performance": data.reported_performance,
-                        **self._public_champion_metrics(cm),
-                    }
-                logger.info(
-                    "🏝️  MIGRATION: optimistic adopt from peer %s for %s: %.6f → %.6f",
-                    message.sender_id[:12], data.domain_id,
-                    current_best[1] if current_best[1] is not None else float('-inf'),
-                    data.reported_performance,
-                )
-                # Inject into optimizer plugin's population (migration IN)
-                plugin = self._optimizer_plugins.get(data.domain_id)
-                if plugin and hasattr(plugin, "set_network_champion"):
-                    plugin.set_network_champion(data.parameters)
-
         if skip_validation:
+            if message.sender_id != self.peer_id:
+                # A trusted reveal is eligible evidence, not a committed
+                # champion. The originator's announced block drives adoption.
+                self._log_event("trusted_reveal_waiting_for_block", domain_id=data.domain_id,
+                                optimae_id=data.optimae_id, peer=message.sender_id)
+                return
             # Auto-accept/reject based on reported performance vs current best
             current_best = self._domain_best.get(data.domain_id, (None, None))
             is_better = self._is_better(data.domain_id, data.reported_performance, current_best[1])
@@ -1760,8 +1792,19 @@ class UnifiedNode:
         """
         import math
 
-        reported = data.reported_performance
+        reported = finite_score(data.reported_performance)
         verified = reported  # Trust reported performance
+
+        # A receiver validates the reveal but adopts the originator's block.
+        # Never enqueue remote acceptance work, rewards or a local replacement.
+        if sender_id != self.peer_id:
+            return
+        best, seen = self._committed_champion_state()
+        if ((data.domain_id, data.optimae_id) in seen
+                or not self._is_better(data.domain_id, verified, best.get(data.domain_id))
+                or not self._is_better(data.domain_id, verified,
+                                       self._domain_best.get(data.domain_id, (None, None))[1])):
+            return
 
         # Reputation
         self.reputation.record_optimae_accepted(sender_id)
@@ -1771,7 +1814,10 @@ class UnifiedNode:
         # Incentive
         role = self._domain_roles.get(data.domain_id)
         incentive_cfg = role.incentive_config if role else IncentiveConfig()
-        raw_increment = abs(reported)
+        raw_increment = performance_gain(
+            verified, self._domain_best.get(data.domain_id, (None, best.get(data.domain_id)))[1],
+            role.higher_is_better if role else True,
+        )
         weights = self.vuw.compute_weights()
         domain_weight = weights.get(data.domain_id, 0.0)
 
@@ -1827,6 +1873,7 @@ class UnifiedNode:
             "parameters": data.parameters,
             "verified_performance": verified,
             "effective_increment": effective_increment,
+            "raw_increment": raw_increment,
             "reward_fraction": incentive_result.reward_fraction,
             "quorum_agree_fraction": 1.0,
             "incentive_reason": "auto_accept_no_synthetic_validation",
@@ -1840,7 +1887,7 @@ class UnifiedNode:
             **onchain_metrics,
         }
         chain_payload = self._archive_only_optimae_payload(
-            data.domain_id, data.optimae_id, data.parameters
+            data.domain_id, data.optimae_id, data.parameters, legacy_payload
         ) or legacy_payload
         self.consensus.record_transaction(Transaction(
             tx_type=TransactionType.OPTIMAE_ACCEPTED,
@@ -2195,6 +2242,17 @@ class UnifiedNode:
             ))
 
         if result.accepted:
+            # Peers return verification votes; only the submitting optimizer
+            # converts the agreed result into mintable accepted work.
+            if task.requester_id != self.peer_id:
+                return
+            best, seen = self._committed_champion_state()
+            verified = finite_score(result.median_performance)
+            if ((task.domain_id, task.optimae_id) in seen
+                    or not self._is_better(task.domain_id, verified, best.get(task.domain_id))
+                    or not self._is_better(task.domain_id, verified,
+                                           self._domain_best.get(task.domain_id, (None, None))[1])):
+                return
             # Optimae accepted by quorum — compute incentive-adjusted reward
             self.reputation.record_optimae_accepted(task.requester_id)
 
@@ -2207,8 +2265,11 @@ class UnifiedNode:
             # the median verified performance may be slightly different
             # from reported — the incentive model handles this gracefully
             reported = task.reported_performance or 0
-            verified = result.median_performance or 0
-            raw_increment = abs(reported)  # Base increment from the optimization
+            verified = finite_score(result.median_performance)
+            raw_increment = performance_gain(
+                verified, self._domain_best.get(task.domain_id, (None, best.get(task.domain_id)))[1],
+                role.higher_is_better if role else True,
+            )
 
             rep_score = self.reputation.get_score(task.requester_id)
             import math
@@ -2260,6 +2321,7 @@ class UnifiedNode:
                 "parameters": task.parameters,
                 "verified_performance": verified,
                 "effective_increment": effective_increment,
+                "raw_increment": raw_increment,
                 "reward_fraction": incentive_result.reward_fraction,
                 "quorum_agree_fraction": result.agree_fraction,
                 "incentive_reason": incentive_result.reason,
@@ -2267,7 +2329,7 @@ class UnifiedNode:
                 **onchain_metrics,
             }
             chain_payload = self._archive_only_optimae_payload(
-                task.domain_id, task.optimae_id, task.parameters
+                task.domain_id, task.optimae_id, task.parameters, legacy_payload
             ) or legacy_payload
             self.consensus.record_transaction(Transaction(
                 tx_type=TransactionType.OPTIMAE_ACCEPTED,
@@ -2411,7 +2473,7 @@ class UnifiedNode:
                 logger.debug("Failed to send champion response to %s", endpoint)
 
     async def _handle_champion_response(self, message: Message, from_peer: str) -> None:
-        """Handle a champion response from a peer — update domain best if better."""
+        """A peer hint triggers chain sync; it cannot overwrite committed state."""
         payload = message.payload
         domain_id = payload.get("domain_id", "")
         if not payload.get("has_champion"):
@@ -2421,24 +2483,12 @@ class UnifiedNode:
         if perf is None or params is None:
             return
 
-        current_best = self._domain_best.get(domain_id, (None, None))
-        if self._is_better(domain_id, perf, current_best[1]):
-            self._domain_best[domain_id] = (params, perf)
-            logger.info(
-                "🏝️  Champion synced from peer %s for %s: perf=%.6f",
-                message.sender_id[:12], domain_id, perf,
-            )
-            # Update champion metrics from peer (authoritative from originator)
-            cm = payload.get("champion_metrics")
-            if cm and isinstance(cm, dict):
-                self._domain_champion_metrics[domain_id] = {
-                    "performance": perf,
-                    **self._public_champion_metrics(cm),
-                }
-            # Also inject into optimizer plugin if running
-            plugin = self._optimizer_plugins.get(domain_id)
-            if plugin and hasattr(plugin, "set_network_champion"):
-                plugin.set_network_champion(params)
+        endpoint = self._find_peer_endpoint(from_peer, message.sender_id)
+        if endpoint and self.transport._session:
+            status = await fetch_chain_status(self.transport._session, endpoint)
+            if status is not None:
+                self.sync_manager.update_peer_status(endpoint, status)
+                await self._sync_with_peer(endpoint)
 
     async def _request_champions_from_peers(self) -> None:
         """Request current best champion for each domain from all connected peers."""
@@ -2463,7 +2513,66 @@ class UnifiedNode:
     # Block generation (with finality + anchoring)
     # ================================================================
 
+    def _prune_stale_pending_optimae(self) -> None:
+        """Drop work superseded by an adopted block before attempting to mint."""
+        tip = self._get_tip()
+        if tip is None:
+            return
+        pending = self.consensus.state.pending_transactions
+        view = tip.model_copy(update={"transactions": pending})
+        records = acceptance_records(view)
+        if not records:
+            return
+        best, seen = self._committed_champion_state()
+        retained = []
+        rebased = {}
+        for record in records:
+            key = (record.domain_id, record.optimae_id)
+            if (record.optimizer_id == self.peer_id and key not in seen
+                    and self._is_better(record.domain_id, record.performance, best.get(record.domain_id))):
+                retained.append(record)
+                gain = performance_gain(record.performance, best.get(record.domain_id),
+                                        self._domain_roles[record.domain_id].higher_is_better)
+                old_gain = record.payload.get("raw_increment")
+                if old_gain is not None and gain != old_gain:
+                    old_gain = finite_score(old_gain)
+                    if old_gain <= 0:
+                        raise ValueError("INVALID_PENDING_WORK_BASELINE")
+                    effective = finite_score(record.payload["effective_increment"]) * gain / old_gain
+                    rebased[key] = (gain, effective)
+                    record.payload.update(raw_increment=gain, effective_increment=effective, increment=effective)
+                seen.add(key)
+                best[record.domain_id] = record.performance
+        if len(retained) == len(records) and not rebased:
+            return
+        keys = {(r.domain_id, r.optimae_id) for r in retained}
+        self.consensus.state.pending_transactions = [
+            tx for tx in pending if tx.tx_type != TransactionType.OPTIMAE_ACCEPTED
+            or (tx.domain_id, tx.payload.get("optimae_id")) in keys
+        ]
+        for tx in self.consensus.state.pending_transactions:
+            key = (tx.domain_id, tx.payload.get("optimae_id"))
+            if tx.tx_type == TransactionType.OPTIMAE_ACCEPTED and key in rebased:
+                gain, work = rebased[key]
+                if "increment" in tx.payload:
+                    tx.payload["increment"] = work
+                if "effective_increment" in tx.payload:
+                    tx.payload.update(effective_increment=work, raw_increment=gain)
+                tx.id = tx.compute_id()
+        increments: dict[str, float] = {}
+        contributors = [c for c in self._block_contributors if c.role != "optimizer"]
+        for record in retained:
+            work = finite_score(record.payload.get("effective_increment", record.payload.get("increment", 0)))
+            increments[record.domain_id] = increments.get(record.domain_id, 0) + work * self._domains[record.domain_id].weight
+            contributors.append(ContributorWork(
+                peer_id=record.optimizer_id, role="optimizer", domain_id=record.domain_id,
+                effective_increment=work, reward_fraction=record.payload.get("reward_fraction", 1),
+            ))
+        self.consensus.state.pending_increments = increments
+        self._block_contributors = contributors
+
     async def try_generate_block(self) -> Block | None:
+        self._prune_stale_pending_optimae()
         can = self.consensus.can_generate_block()
         ws = sum(self.consensus.state.pending_increments.values())
         logger.info(
@@ -2505,6 +2614,7 @@ class UnifiedNode:
 
         self._append_block(block)
         self._save_chain()
+        self._update_domain_best_from_chain()
 
         # Update finality
         depth_block_hash = None
@@ -3119,12 +3229,6 @@ class UnifiedNode:
                 # which is only updated at generation end from gen_best across ALL results)
                 _cur_best = self._domain_best.get(domain_id, (None, _worst_fitness))[1]
                 if not rejection_reason and self._is_better(domain_id, fitness, _cur_best):
-                    self._domain_best[domain_id] = (result.get("hyper_dict", {}), fitness)
-                    self._domain_champion_metrics[domain_id] = {
-                        "round": generation,
-                        "performance": fitness,
-                        **{k: v for k, v in result.items() if k not in ("fitness", "hyper_dict", "_model_b64")},
-                    }
                     logger.info("[SHARED] 🏆 New champion! fitness=%.6f gen=%d", fitness, generation)
 
                     # Broadcast champion via commit-reveal for dashboard/chain
@@ -3354,7 +3458,7 @@ class UnifiedNode:
                     continue
                 for tx in reversed(block.transactions):
                     if (tx.domain_id == domain_id and
-                        tx.tx_type == TransactionType.OPTIMAE_ACCEPTED and
+                        tx.tx_type in (TransactionType.OPTIMAE_ACCEPTED, TransactionType.DOMAIN_UPDATED) and
                         tx.payload.get("_shared_population")):
                         logger.info("[SHARED] Recovered state from block %d for %s", i, domain_id)
                         return tx.payload["_shared_population"]
@@ -3378,15 +3482,13 @@ class UnifiedNode:
                     f"{population_fingerprint}"
                 ).encode()
             ).hexdigest(),
-            tx_type=TransactionType.OPTIMAE_ACCEPTED,
+            tx_type=TransactionType.DOMAIN_UPDATED,
             domain_id=domain_id,
             peer_id=self.peer_id,
             payload={
                 "_shared_population": pop_state,
                 "_shared_population_fingerprint": population_fingerprint,
                 "_shared_population_seed": pop_state.get("bootstrap_seed"),
-                "performance": pop_state.get("best_fitness_ever", 0.0),
-                "increment": 0.01,
             },
             timestamp=datetime.now(timezone.utc),
         )
@@ -3410,15 +3512,9 @@ class UnifiedNode:
 
         self.consensus.record_transaction(tx)
 
-        # Accumulate increment so block generation threshold can be met
-        domain_weight = self.vuw.compute_weights().get(domain_id, 1.0)
-        increment = 0.01 * domain_weight
-        self.consensus.state.pending_increments[domain_id] = (
-            self.consensus.state.pending_increments.get(domain_id, 0.0) + increment
-        )
         logger.info(
-            "[SHARED] Recorded gen %d population in chain for %s (increment=%.6f)",
-            pop_state.get("generation", 0), domain_id, increment,
+            "[SHARED] Queued gen %d population metadata for %s (no optimization credit)",
+            pop_state.get("generation", 0), domain_id,
         )
 
         await self.try_generate_block()
@@ -4462,10 +4558,8 @@ class UnifiedNode:
             )
             self._persist_optimization_terminals()
 
-        # Update domain best
-        current_best = self._domain_best.get(domain_id, (None, None))
-        if self._is_better(domain_id, performance, current_best[1]):
-            self._domain_best[domain_id] = (parameters, performance)
+        # Final optimizer results are not a separate acceptance route. Local
+        # champion callbacks submit through commit/reveal and consensus.
 
         logger.info(
             "🏁 Full optimization finished for %s: final_perf=%.6f",
@@ -4764,22 +4858,20 @@ class UnifiedNode:
             champion_fitness if champion_fitness is not None else float("nan"),
         )
 
-        # Inject the stage champion into our optimizer's next generation
+        # Stage-control messages cannot override committed champion evidence.
+        committed, _ = self._committed_champion_state()
+        trusted_params, trusted_score = self._domain_best.get(domain_id, (None, None))
+        if trusted_score != committed.get(domain_id):
+            trusted_params, trusted_score = None, None
         plugin = self._optimizer_plugins.get(domain_id)
-        if champion_params:
+        if trusted_params:
             if plugin and hasattr(plugin, "set_network_champion"):
-                plugin.set_network_champion(champion_params)
-
-        # Update domain best if this champion is better
-        if champion_params and champion_fitness is not None:
-            current_best = self._domain_best.get(domain_id, (None, None))
-            if self._is_better(domain_id, champion_fitness, current_best[1]):
-                self._domain_best[domain_id] = (champion_params, champion_fitness)
+                plugin.set_network_champion(trusted_params)
 
         # Reset stage-start fitness for the new stage (the champion's fitness
         # becomes the baseline for the next stage's improvement threshold)
-        if champion_fitness is not None:
-            self._domain_stage_start_fitness[domain_id] = champion_fitness
+        if trusted_score is not None:
+            self._domain_stage_start_fitness[domain_id] = trusted_score
             logger.info(
                 "[%s] Stage-start fitness reset to %.6f for next stage",
                 domain_id, champion_fitness,
@@ -5043,72 +5135,55 @@ class UnifiedNode:
     async def _attempt_chain_reorg(
         self, session, endpoint: str
     ) -> bool:
-        """Detect a chain fork with *endpoint* and reorganise if the peer
-        has a strictly longer chain.
-
-        Returns True if a rollback was performed and the caller should
-        retry the sync loop, False otherwise.
-        """
-        if not self.chaindb:
-            logger.warning("Chain reorg requires chaindb — skipping")
-            return False
-
-        our_height = self._get_height()
+        """A longer fork also needs validation and heaviest-work selection."""
         state = self.sync_manager.peers.get(endpoint)
-        peer_height = state.their_height if state else 0
-
-        # Only reorg when the peer is strictly ahead
-        if peer_height <= our_height:
-            logger.debug(
-                "Reorg skipped: peer %s not ahead (%d vs %d)",
-                endpoint, peer_height, our_height,
-            )
+        if state is None or state.their_height <= self._get_height():
             return False
-
-        common = await self._find_common_ancestor(session, endpoint, our_height)
-
-        # Safety: never roll back past finalised blocks
-        if common < self.finality.finalized_height:
-            logger.warning(
-                "Cannot reorg past finalized height %d (common ancestor %d)",
-                self.finality.finalized_height, common,
-            )
-            return False
-
-        if common >= our_height - 1:
-            # No actual fork — the chains are compatible, failure must be
-            # something else (e.g. hash / merkle mismatch).
-            return False
-
-        logger.info(
-            "Chain fork detected at index %d — rolling back from height %d "
-            "(peer %s has longer chain at height %d)",
-            common + 1, our_height, endpoint, peer_height,
-        )
-
-        blocks_removed = self.chaindb.rollback_to(common)
-        logger.info("Rolled back %d block(s) to index %d", blocks_removed, common)
-
-        # Refresh cached sync-manager state after the rollback
-        new_tip = self._get_tip()
-        self.sync_manager.update_our_state(
-            self._get_height(),
-            new_tip.hash if new_tip else "",
-            self.finality.finalized_height,
-        )
-        return True
+        return await self._resolve_equal_height_fork(session, endpoint)
 
     @staticmethod
     def _fork_choice_block(block: Block) -> dict[str, Any]:
         payload = json.loads(block.model_dump_json())
+        # The old hash-only writer omitted effective_increment, but the paired
+        # core transaction committed it as increment. Restore the projection,
+        # not the historical block or its hash inputs.
+        records = {(r.domain_id, r.optimae_id): r for r in acceptance_records(block)}
+        for tx in payload["transactions"]:
+            evidence = tx["payload"]
+            if tx["tx_type"] == "optimae_accepted" and "candidate_archive_reference" in evidence:
+                record = records[(tx["domain_id"], evidence["optimae_id"])]
+                if "effective_increment" not in evidence and "increment" in record.payload:
+                    evidence["effective_increment"] = record.payload["increment"]
         payload["height"] = block.header.index
         payload["hash"] = block.hash
         return payload
 
+    def _preflight_champion_branch(self, blocks: list[Block], common: int) -> bool:
+        """Validate an entire alternative branch without changing local storage."""
+        from doin_node.blockchain.chain import Chain, ChainError
+
+        try:
+            probe = Chain()
+            genesis = self._get_block(0)
+            if genesis is None:
+                return False
+            if probe.initialize(genesis.header.generator_id).hash != genesis.hash:
+                return False
+            for index in range(1, common + 1):
+                probe.append_block(self._get_block(index))
+            best, seen = self._committed_champion_state(common + 1)
+            for block in blocks:
+                probe.append_block(block)
+                best, seen = advance_champions(block, best, seen, self._champion_directions())
+            return True
+        except (ValueError, ChainError) as exc:
+            logger.warning("Rejected peer branch before rollback: %s", exc)
+            return False
+
     async def _resolve_equal_height_fork(
         self, session, endpoint: str
     ) -> bool:
-        """Apply the configured heaviest-chain rule to competing equal tips."""
+        """Apply the configured heaviest-chain rule to equal or longer forks."""
         if not self.chaindb:
             logger.warning("Equal-height fork resolution requires chaindb")
             return False
@@ -5119,7 +5194,7 @@ class UnifiedNode:
         if (
             state is None
             or our_tip is None
-            or state.their_height != our_height
+            or state.their_height < our_height
             or not state.their_tip_hash
             or state.their_tip_hash == our_tip.hash
         ):
@@ -5138,8 +5213,8 @@ class UnifiedNode:
             return False
 
         branch_start = common + 1
-        branch_end = our_height - 1
-        if branch_start > branch_end:
+        branch_end = state.their_height - 1
+        if branch_start >= our_height:
             # AUD-F1-20260805-111: an empty divergent range means the
             # peer state is stale or changed during ancestor search
             # (tips differ but the common ancestor IS the tip index).
@@ -5151,13 +5226,15 @@ class UnifiedNode:
                 endpoint, common, our_height,
             )
             return False
-        local_blocks = self._get_blocks_range(branch_start, branch_end)
+        local_blocks = self._get_blocks_range(branch_start, our_height - 1)
         expected_count = branch_end - branch_start + 1
         peer_blocks: list[Block] = []
         for attempt in range(2):
-            peer_blocks = await fetch_blocks(
-                session, endpoint, branch_start, branch_end
-            )
+            peer_blocks = []
+            for start in range(branch_start, branch_end + 1, 50):
+                peer_blocks.extend(await fetch_blocks(
+                    session, endpoint, start, min(start + 49, branch_end)
+                ))
             if (
                 len(peer_blocks) == expected_count
                 and peer_blocks[-1].hash == state.their_tip_hash
@@ -5174,7 +5251,7 @@ class UnifiedNode:
                 and peer_blocks[-1].hash == state.their_tip_hash,
             )
         if (
-            len(local_blocks) != expected_count
+            len(local_blocks) != our_height - branch_start
             or len(peer_blocks) != expected_count
             or peer_blocks[-1].hash != state.their_tip_hash
         ):
@@ -5186,6 +5263,14 @@ class UnifiedNode:
                 len(peer_blocks),
                 expected_count,
             )
+            return False
+
+        # Fetches yield to the event loop; a local optimizer may have committed
+        # another block. Never roll back an unscored extension of our branch.
+        if self._get_height() != our_height or self._get_tip().hash != our_tip.hash:
+            logger.info("Local tip changed during fork fetch; deferring adoption")
+            return False
+        if not self._preflight_champion_branch(peer_blocks, common):
             return False
 
         self.fork_choice.clear()
@@ -5231,7 +5316,7 @@ class UnifiedNode:
                 len(peer_blocks),
             )
             self.chaindb.rollback_to(common)
-            restored = self._validate_and_append_blocks(local_blocks)
+            restored = self.chaindb.append_blocks(local_blocks)
             if restored != len(local_blocks):
                 raise RuntimeError(
                     "failed to restore local chain after fork-choice append"

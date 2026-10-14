@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from doin_core.models.block import Block, BlockHeader
-from doin_core.models.transaction import Transaction
+from doin_core.models.transaction import Transaction, TransactionType
 from doin_core.crypto.hashing import compute_merkle_root
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 
 class ChainError(Exception):
     """Raised when a chain operation fails."""
+
+
+def validate_accepted_transaction(tx: Transaction) -> None:
+    """Bind accepted bodies to their core IDs without restricting other ID schemes."""
+    if tx.tx_type != TransactionType.OPTIMAE_ACCEPTED:
+        return
+    try:
+        expected_id = tx.compute_id()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid accepted transaction: body cannot be hashed") from exc
+    if tx.id != expected_id:
+        raise ValueError("Invalid accepted transaction: body does not match transaction ID")
 
 
 class Chain:
@@ -198,6 +210,8 @@ class Chain:
         if block.hash != expected_hash:
             raise ChainError("Block hash mismatch")
 
+        self._validate_accepted_bodies(block)
+
         # External-payload references: additional check only. The id must be
         # bound to the reference payload and the payload must be well formed.
         from doin_core.archive.body import ArchiveRefusal
@@ -213,12 +227,22 @@ class Chain:
                 except ArchiveRefusal as exc:
                     raise ChainError(f"Invalid external reference transaction: {exc}") from exc
 
+    @staticmethod
+    def _validate_accepted_bodies(block: Block) -> None:
+        for tx in block.transactions:
+            try:
+                validate_accepted_transaction(tx)
+            except ValueError as exc:
+                raise ChainError(str(exc)) from exc
+
     def save(self, path: str | Path | None = None) -> None:
         """Persist the chain to a JSON file."""
         save_path = Path(path) if path else self._default_path()
         if save_path is None:
             raise ChainError("No save path specified and no data_dir configured")
 
+        for block in self._blocks:
+            self._validate_accepted_bodies(block)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         data = [json.loads(block.model_dump_json()) for block in self._blocks]
         save_path.write_text(json.dumps(data, indent=2))
@@ -231,7 +255,10 @@ class Chain:
             raise ChainError(f"Chain file not found: {load_path}")
 
         data = json.loads(load_path.read_text())
-        self._blocks = [Block.model_validate(b) for b in data]
+        blocks = [Block.model_validate(b) for b in data]
+        for block in blocks:
+            self._validate_accepted_bodies(block)
+        self._blocks = blocks
         self._block_index = {b.hash: i for i, b in enumerate(self._blocks)}
         logger.info("Chain loaded from %s (%d blocks)", load_path, len(self._blocks))
 

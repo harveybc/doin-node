@@ -47,13 +47,14 @@ def test_chain_dashboard_redacts_model_but_preserves_chain_payload_source() -> N
     assert "splits" in source["metrics"]
 
 
-def test_dashboard_versions_cover_only_active_trading_components() -> None:
+def test_dashboard_versions_cover_trading_and_predictor_components() -> None:
     assert set(_PACKAGE_VERSIONS) == {
         "agent-multi",
         "doin-core",
         "doin-node",
         "doin-plugins",
         "gym-fx",
+        "predictor",
         "trading-contracts",
     }
-    assert "predictor" not in _PACKAGE_VERSIONS
+    assert "predictor" in _PACKAGE_VERSIONS
