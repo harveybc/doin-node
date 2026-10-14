@@ -1,7 +1,7 @@
 {
   "initiative": "network-champion-contract-repair",
-  "current_stage": "system-verification-complete-isolated",
-  "production_modified": false,
+  "current_stage": "production-alpha-running",
+  "production_modified": true,
   "requirements": {
     "R1": "Only the originating optimizer contributes mintable accepted work",
     "R2": "Imported accepted optima strictly improve the committed domain champion",
@@ -16,7 +16,8 @@
   },
   "evidence": ["NETWORK_CHAMPION_CONTRACT_20261013.md", "POO_REPAIR_RETURN_20261013.md", "POO_MIGRATION_DASHBOARD_ADDENDUM_20261014.md", "../../tests/test_network_champion_contract_audit.py", "../../tests/test_network_champion_repair.py", "../../tests/test_archive_champion_projection.py"],
   "constraints": ["No live services, history or fitness changes", "No private data or TEST reads", "Protocol semantics reside in doin-core", "CPU-only synthetic tests"],
-  "verification": {"node_passed": 623, "core_passed": 322, "node_warnings": 29, "core_revision": "2c42883"},
-  "next_allowed_actions": ["Verify archive availability on each participant", "Prepare coordinated deployment with pinned node/core", "Preserve historical evidence", "Validate fleet equality and one genuine improvement after coordinated deployment"],
-  "deployment": "NOT_DEPLOYED"
+  "verification": {"node_passed": 627, "core_passed": 336, "node_warnings": 37, "core_revision": "9f9d3f7"},
+  "next_allowed_actions": ["Let the bounded autonomous controller verify every new block", "Preserve physical candidate archives and warehouse readback", "Close all four H4 terminals before the H72 successor", "Treat all tuning results as development evidence until prospective evaluation"],
+  "deployment": "H4_RUNNING_FIRST_REAL_BLOCK_VERIFIED",
+  "live_evidence": {"node_revision": "393049dd4591076d4012f6ff1974aa42c4a390cf", "core_revision": "9f9d3f757c5ee69c2995352a2370021fc837534c", "predictor_revision": "3e5d8b030f10b112dce37301e1b05c2264cd2bab", "plugins_revision": "2fc0523e6ee6fa371cee4d7862ca61c087a852fc", "identical_nodes": 4, "chain_height": 2, "tip_hash": "b44ca942ab20ead652fc349b8809da3f4d529ee488799dfa4c0f4e52318bd634", "full_chain_sha256": "1747c18ea902e5cf55d0ec9ab141d490f11125802d1c905a9ffecf05db80244b", "first_relative_error": -0.004466807460606459, "archive_readback": true, "warehouse_readback": true, "invalid_acceptance_count": 0, "campaign_scope": "DEVELOPMENT_TUNING", "test_opened": false}
 }
