@@ -1162,6 +1162,9 @@ async function refreshAll() {
     const championMetrics = metrics.series_grain === 'block_champion'
       ? chainMetrics.filter(metric => metric.series_grain === 'block_champion')
       : chainMetrics.filter(metric => metric.is_improvement);
+    bestChart.options.scales.x.title.text = metrics.series_grain === 'block_champion'
+      ? 'Block / finder'
+      : 'Generation';
 
     // Hash-only mode: one running-champion point per block. Legacy inline
     // mode: one point per accepted on-chain improvement.
